@@ -106,12 +106,18 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
-    if (f) setFileName(f.name)
+    if (f) {
+      setFileName(f.name)
+      setErrorMsg(null)
+    }
   }
 
   async function handleImport() {
     const f = inputRef.current?.files?.[0]
     if (!f) return
+
+    setErrorMsg(null)
+
     if (!unitId) {
       setErrorMsg("Unidade não identificada. Faça login novamente.")
       setStatus("error")
@@ -119,7 +125,6 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
     }
 
     setStatus("parsing")
-    setErrorMsg(null)
 
     try {
       const buf = await f.arrayBuffer()
@@ -165,6 +170,7 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
           setStatus("error")
           return
         }
+        console.log('[import] delete ok, inserindo', rows.length, 'linhas')
 
         for (let i = 0; i < rows.length; i += BATCH) {
           const batch = rows.slice(i, i + BATCH)
