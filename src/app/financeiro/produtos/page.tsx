@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { redirect } from "next/navigation"
 import { requireUser } from "@kph/auth/server"
 import { getCurrentUnit } from "@kph/auth/unit"
 import { createSupabaseServerClient } from "@kph/db/supabase/server"
@@ -84,6 +85,12 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
       if (!seen.has(k)) { seen.add(k); meses.push({ mes: r.mes_lancamento, ano: r.ano_lancamento }) }
     }
     meses.sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes)
+  }
+
+  const mesDisponivel = meses.some(m => m.mes === mes && m.ano === ano)
+  if (!mesDisponivel && meses.length > 0) {
+    const ultimo = meses[meses.length - 1]!
+    redirect(`/financeiro/produtos?mes=${ultimo.mes}&ano=${ultimo.ano}`)
   }
 
   return (
