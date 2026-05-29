@@ -45,6 +45,7 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
 
   const unit = await getCurrentUnit()
   const unitId = unit?.id ?? null
+  console.log('[produtos] unitId:', unitId)
 
   const supabase = await createSupabaseServerClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,19 +73,17 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
 
   // Available months for the selector
   let meses: { mes: number; ano: number }[] = []
-  if (unitId) {
-    const { data: mesData } = await db
-      .from("produtos_relatorio")
-      .select("mes_lancamento, ano_lancamento")
-      .eq("unit_id", unitId)
-    if (mesData) {
-      const seen = new Set<string>()
-      for (const r of mesData as { mes_lancamento: number; ano_lancamento: number }[]) {
-        const k = `${r.ano_lancamento}-${r.mes_lancamento}`
-        if (!seen.has(k)) { seen.add(k); meses.push({ mes: r.mes_lancamento, ano: r.ano_lancamento }) }
-      }
-      meses.sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mesesQuery: any = db.from("produtos_relatorio").select("mes_lancamento, ano_lancamento")
+  if (unitId) mesesQuery = mesesQuery.eq("unit_id", unitId)
+  const { data: mesData } = await mesesQuery
+  if (mesData) {
+    const seen = new Set<string>()
+    for (const r of mesData as { mes_lancamento: number; ano_lancamento: number }[]) {
+      const k = `${r.ano_lancamento}-${r.mes_lancamento}`
+      if (!seen.has(k)) { seen.add(k); meses.push({ mes: r.mes_lancamento, ano: r.ano_lancamento }) }
     }
+    meses.sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes)
   }
 
   return (
