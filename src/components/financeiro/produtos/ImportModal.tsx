@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import * as XLSX from "xlsx"
-import { upsertProdutos } from "@/app/financeiro/produtos/actions"
+import { deleteProdutosMes, insertProdutos } from "@/app/financeiro/produtos/actions"
 import type { ProdutoInsert } from "@/app/financeiro/produtos/actions"
 
 interface ImportModalProps {
@@ -142,22 +142,42 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
         return
       }
 
+      // Group by month so we can delete-then-insert per month (avoids ON CONFLICT duplicates)
+      const byMonth = new Map<string, ProdutoInsert[]>()
+      for (const row of allRows) {
+        const key = `${row.ano_lancamento}-${row.mes_lancamento}`
+        const bucket = byMonth.get(key) ?? []
+        bucket.push(row)
+        byMonth.set(key, bucket)
+      }
+
       setTotalRows(allRows.length)
       setStatus("uploading")
 
       const BATCH = 500
       let imported = 0
-      for (let i = 0; i < allRows.length; i += BATCH) {
-        const batch = allRows.slice(i, i + BATCH)
-        const result = await upsertProdutos(batch)
-        if (!result.ok) {
-          setErrorMsg(result.error ?? "Erro ao importar lote.")
+      for (const rows of byMonth.values()) {
+        const { mes_lancamento: mes, ano_lancamento: ano } = rows[0]!
+
+        const del = await deleteProdutosMes(unitId, mes, ano)
+        if (!del.ok) {
+          setErrorMsg(del.error ?? "Erro ao limpar mês existente.")
           setStatus("error")
           return
         }
-        imported += batch.length
-        setImportedRows(imported)
-        setProgress(Math.round((imported / allRows.length) * 100))
+
+        for (let i = 0; i < rows.length; i += BATCH) {
+          const batch = rows.slice(i, i + BATCH)
+          const result = await insertProdutos(batch)
+          if (!result.ok) {
+            setErrorMsg(result.error ?? "Erro ao importar lote.")
+            setStatus("error")
+            return
+          }
+          imported += batch.length
+          setImportedRows(imported)
+          setProgress(Math.round((imported / allRows.length) * 100))
+        }
       }
 
       setStatus("done")

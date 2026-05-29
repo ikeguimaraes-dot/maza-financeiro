@@ -29,7 +29,30 @@ export type ProdutoInsert = {
   ano_lancamento: number
 }
 
-export async function upsertProdutos(
+export async function deleteProdutosMes(
+  unitId: string,
+  mes: number,
+  ano: number
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db
+      .from("produtos_relatorio")
+      .delete()
+      .eq("unit_id", unitId)
+      .eq("mes_lancamento", mes)
+      .eq("ano_lancamento", ano)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+export async function insertProdutos(
   rows: ProdutoInsert[]
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   try {
@@ -40,10 +63,7 @@ export async function upsertProdutos(
     const db = supabase as any
     const { error, count } = await db
       .from("produtos_relatorio")
-      .upsert(rows, {
-        onConflict: "unit_id,nr_danfe,item_codigo,mes_lancamento,ano_lancamento",
-        ignoreDuplicates: false,
-      })
+      .insert(rows)
       .select("id", { count: "exact", head: true })
 
     if (error) return { ok: false, count: 0, error: error.message }
