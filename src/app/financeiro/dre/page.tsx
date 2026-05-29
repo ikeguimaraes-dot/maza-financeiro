@@ -1,5 +1,6 @@
 import Link from "next/link"
 import { requireUser } from "@kph/auth/server"
+import { getCurrentUnit } from "@kph/auth/unit"
 import { createSupabaseServerClient } from "@kph/db/supabase/server"
 import { KpiCard } from "@kph/ui/kpi-card"
 import { formatBRLCompact } from "@/lib/financeiro/utils"
@@ -172,12 +173,18 @@ export default async function DreGerencialPage({
   const sp = await searchParams
   const aba = sp.aba ?? "dre"
 
+  const unit = await getCurrentUnit()
+  const unitId = unit?.id ?? null
+
   const supabase = await createSupabaseServerClient()
 
   // ── Data fetching per tab ─────────────────────────────────────────────────
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any
+  // Adds unit_id filter when a unit is resolved; skips filter in bypass/dev mode
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const uq = (q: any) => unitId ? q.eq("unit_id", unitId) : q
 
   let dreRows: DreMensalRow[] = []
   let indicRows: IndicadorRow[] = []
@@ -201,9 +208,9 @@ export default async function DreGerencialPage({
   if (supabase) {
     if (aba === "dre") {
       const [dreRes, kpiRes, linhasRes] = await Promise.all([
-        db.from("dre_mensal").select("*").order("mes_ano").order("tipo"),
-        db.from("dre_kpis_mensais").select("*"),
-        db.from("dre_linhas_detalhadas").select("*").order("mes_ano").order("tipo").order("grupo"),
+        uq(db.from("dre_mensal").select("*")).order("mes_ano").order("tipo"),
+        uq(db.from("dre_kpis_mensais").select("*")),
+        uq(db.from("dre_linhas_detalhadas").select("*")).order("mes_ano").order("tipo").order("grupo"),
       ])
       if (dreRes.data) dreRows = dreRes.data as DreMensalRow[]
       if (kpiRes.data) kpiRows = kpiRes.data
@@ -212,28 +219,27 @@ export default async function DreGerencialPage({
 
     if (aba === "indicadores") {
       const [indRes, linhasRes] = await Promise.all([
-        db.from("dre_indicadores").select("*").order("mes_ano").order("tipo").order("indicador"),
-        db.from("dre_linhas_detalhadas").select("*").order("mes_ano").order("tipo").order("grupo"),
+        uq(db.from("dre_indicadores").select("*")).order("mes_ano").order("tipo").order("indicador"),
+        uq(db.from("dre_linhas_detalhadas").select("*")).order("mes_ano").order("tipo").order("grupo"),
       ])
       if (indRes.data) indicRows = indRes.data as IndicadorRow[]
       if (linhasRes.data) linhasRows = linhasRes.data as LinhaDetalhadaRow[]
     }
 
     if (aba === "receita") {
-      const { data } = await db.from("dre_receita_detalhada").select("*").order("mes_ano").order("bandeira")
+      const { data } = await uq(db.from("dre_receita_detalhada").select("*")).order("mes_ano").order("bandeira")
       if (data) receitaRows = data as ReceitaRow[]
     }
 
     if (aba === "despesas") {
       const [despRes, pesRes, manRes, prestRes, contRes, linhasRes] = await Promise.all([
-        db.from("dre_despesa_detalhada")
-          .select("mes_ano,tipo_despesa,classificacao_dre,valor")
+        uq(db.from("dre_despesa_detalhada").select("mes_ano,tipo_despesa,classificacao_dre,valor"))
           .not("tipo_despesa", "in", '("IMOBILIZADO","INVESTIMENTO")'),
-        db.from("dre_pessoal_detalhado").select("*").order("mes_ano").order("categoria"),
-        db.from("dre_manutencao_detalhada").select("*").order("mes_ano").order("valor"),
-        db.from("dre_prestadores").select("*").order("mes_ano").order("grupo").order("nome"),
-        db.from("dre_contratos_fixos").select("*").order("tipo").order("razao_social"),
-        db.from("dre_linhas_detalhadas").select("*").order("mes_ano").order("tipo").order("grupo"),
+        uq(db.from("dre_pessoal_detalhado").select("*")).order("mes_ano").order("categoria"),
+        uq(db.from("dre_manutencao_detalhada").select("*")).order("mes_ano").order("valor"),
+        uq(db.from("dre_prestadores").select("*")).order("mes_ano").order("grupo").order("nome"),
+        uq(db.from("dre_contratos_fixos").select("*")).order("tipo").order("razao_social"),
+        uq(db.from("dre_linhas_detalhadas").select("*")).order("mes_ano").order("tipo").order("grupo"),
       ])
 
       if (despRes.data) {
@@ -259,33 +265,32 @@ export default async function DreGerencialPage({
 
     if (aba === "folha") {
       const [folhaRes, linhasRes] = await Promise.all([
-        db.from("dre_folha").select("*").order("divisao").order("funcao").order("nome"),
-        db.from("dre_linhas_detalhadas").select("*").eq("grupo", "PESSOAL").order("mes_ano").order("tipo"),
+        uq(db.from("dre_folha").select("*")).order("divisao").order("funcao").order("nome"),
+        uq(db.from("dre_linhas_detalhadas").select("*")).eq("grupo", "PESSOAL").order("mes_ano").order("tipo"),
       ])
       if (folhaRes.data) folhaRows = folhaRes.data as FolhaRow[]
       if (linhasRes.data) linhasRows = linhasRes.data as LinhaDetalhadaRow[]
     }
 
     if (aba === "gorjeta") {
-      const { data } = await db.from("dre_gorjeta_mensal").select("*").order("mes_ano")
+      const { data } = await uq(db.from("dre_gorjeta_mensal").select("*")).order("mes_ano")
       if (data) gorjetaRows = data as GorjetaRow[]
     }
 
     if (aba === "historico") {
-      const { data } = await db.from("dre_faturamento_historico").select("*").order("mes_num")
+      const { data } = await uq(db.from("dre_faturamento_historico").select("*")).order("mes_num")
       if (data) historicoRows = data as HistoricoRow[]
     }
 
     if (aba === "auditoria") {
       const [dreARes, linhasARes, despARes, prestARes, contARes, recARes] = await Promise.all([
-        db.from("dre_mensal").select("*").order("mes_ano").order("tipo"),
-        db.from("dre_linhas_detalhadas").select("*").order("mes_ano").order("tipo").order("grupo"),
-        db.from("dre_despesa_detalhada")
-          .select("mes_ano,tipo_despesa,classificacao_dre,valor")
+        uq(db.from("dre_mensal").select("*")).order("mes_ano").order("tipo"),
+        uq(db.from("dre_linhas_detalhadas").select("*")).order("mes_ano").order("tipo").order("grupo"),
+        uq(db.from("dre_despesa_detalhada").select("mes_ano,tipo_despesa,classificacao_dre,valor"))
           .not("tipo_despesa","in",'("IMOBILIZADO","INVESTIMENTO")'),
-        db.from("dre_prestadores").select("mes_ano,grupo,nome,valor").order("mes_ano").order("grupo"),
-        db.from("dre_contratos_fixos").select("tipo,razao_social,descricao,valor_mensal"),
-        db.from("dre_receita_detalhada").select("mes_ano,bandeira,valor").order("mes_ano"),
+        uq(db.from("dre_prestadores").select("mes_ano,grupo,nome,valor")).order("mes_ano").order("grupo"),
+        uq(db.from("dre_contratos_fixos").select("tipo,razao_social,descricao,valor_mensal")),
+        uq(db.from("dre_receita_detalhada").select("mes_ano,bandeira,valor")).order("mes_ano"),
       ])
       if (dreARes.data)    dreRows            = dreARes.data    as DreMensalRow[]
       if (linhasARes.data) linhasRows         = linhasARes.data as LinhaDetalhadaRow[]
