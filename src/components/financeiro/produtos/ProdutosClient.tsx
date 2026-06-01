@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -41,18 +41,36 @@ type Props = {
   ano: number
   meses: { mes: number; ano: number }[]
   unitId: string | null
+  q?: string
 }
 
 const PAGE_SIZE = 50
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Props) {
+export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "" }: Props) {
   const router = useRouter()
   const [tab, setTab] = useState<"tabela" | "ranking" | "cmv">("tabela")
   const [showImport, setShowImport] = useState(false)
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
-  const [searchForn, setSearchForn] = useState("")
+  const [localQ, setLocalQ] = useState(q)
+
+  // Sync when URL changes externally (month nav)
+  useEffect(() => { setLocalQ(q) }, [q])
+
+  // Debounced server-side search via URL
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (localQ === q) return
+      const params = new URLSearchParams()
+      if (localQ) params.set("q", localQ)
+      params.set("mes", String(mes))
+      params.set("ano", String(ano))
+      router.push(`/financeiro/produtos?${params.toString()}`)
+    }, 500)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localQ])
   const [filterCat, setFilterCat] = useState("")
   const [filterCmv, setFilterCmv] = useState<"all" | "cmv" | "no_cmv">("all")
   const [page, setPage] = useState(0)
@@ -65,10 +83,10 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
 
   const filtered = useMemo(() => {
     let r = rows
-    if (searchForn.trim())
+    if (localQ.trim())
       r = r.filter(x =>
-        (x.fornecedor_nome ?? "").toLowerCase().includes(searchForn.toLowerCase()) ||
-        (x.item_descricao ?? "").toLowerCase().includes(searchForn.toLowerCase())
+        (x.fornecedor_nome ?? "").toLowerCase().includes(localQ.toLowerCase()) ||
+        (x.item_descricao ?? "").toLowerCase().includes(localQ.toLowerCase())
       )
     if (filterCat) r = r.filter(x => x.desc_gerencial === filterCat)
     if (filterCmv === "cmv")    r = r.filter(x => x.calcula_cmv === true)
@@ -83,7 +101,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
       })
     }
     return r
-  }, [rows, searchForn, filterCat, filterCmv, sortCol, sortDir])
+  }, [rows, localQ, filterCat, filterCmv, sortCol, sortDir])
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
   const pageRows   = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -153,7 +171,11 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
               value={`${ano}-${mes}`}
               onChange={e => {
                 const [a, m] = e.target.value.split("-")
-                router.push(`/financeiro/produtos?mes=${m}&ano=${a}`)
+                const params = new URLSearchParams()
+                if (localQ) params.set("q", localQ)
+                params.set("mes", m!)
+                params.set("ano", a!)
+                router.push(`/financeiro/produtos?${params.toString()}`)
               }}
               style={{
                 padding:"7px 12px", borderRadius:8, fontSize:12, fontWeight:500,
@@ -226,8 +248,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
           <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
             <input
               placeholder="Buscar fornecedor ou item…"
-              value={searchForn}
-              onChange={e => { setSearchForn(e.target.value); handleFilterChange() }}
+              value={localQ}
+              onChange={e => { setLocalQ(e.target.value); setPage(0) }}
               style={{
                 padding:"7px 12px", borderRadius:8, fontSize:12,
                 background:"var(--surface)", color:"var(--text)",

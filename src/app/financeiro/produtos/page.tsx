@@ -7,7 +7,7 @@ import { ProdutosClient } from "@/components/financeiro/produtos/ProdutosClient"
 
 export const dynamic = "force-dynamic"
 
-type SearchParams = Promise<{ mes?: string; ano?: string }>
+type SearchParams = Promise<{ mes?: string; ano?: string; q?: string }>
 
 export type ProdutoRow = {
   id: number
@@ -43,6 +43,7 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   const now = new Date()
   const mes = sp.mes ? parseInt(sp.mes, 10) : now.getMonth() + 1
   const ano = sp.ano ? parseInt(sp.ano, 10) : now.getFullYear()
+  const q   = sp.q?.trim() ?? ""
 
   const unit = await getCurrentUnit()
   const unitId = unit?.id ?? null
@@ -52,16 +53,19 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any
 
-  const uq = (q: any) => unitId ? q.eq("unit_id", unitId) : q
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const uq = (qb: any) => unitId ? qb.eq("unit_id", unitId) : qb
 
   // Current month
-  const { data: rows } = await uq(
-    db.from("produtos_relatorio").select("*")
-  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rowsQuery: any = uq(db.from("produtos_relatorio").select("*"))
     .eq("mes_lancamento", mes)
     .eq("ano_lancamento", ano)
     .order("fornecedor_nome")
     .order("item_descricao")
+    .limit(2000)
+  if (q) rowsQuery = rowsQuery.ilike("item_descricao", `%${q}%`)
+  const { data: rows } = await rowsQuery
 
   // Previous month for MoM comparison
   const prevMes = mes === 1 ? 12 : mes - 1
@@ -71,6 +75,22 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   )
     .eq("mes_lancamento", prevMes)
     .eq("ano_lancamento", prevAno)
+
+  // Diagnostic: OJO DE BIFE cost columns — remove after review
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let dq: any = db
+      .from("produtos_relatorio")
+      .select("item_descricao,q_estoque,v_embalagem,v_total_embalagem,v_custo_medio,v_custo_compra,v_custo_total,mes_lancamento,ano_lancamento")
+      .ilike("item_descricao", "%OJO DE BIFE%")
+      .limit(5)
+    if (unitId) dq = dq.eq("unit_id", unitId)
+    const { data: diagData } = await dq
+    if (diagData && diagData.length > 0)
+      console.log('[diagnóstico OJO DE BIFE]', JSON.stringify(diagData, null, 2))
+    else
+      console.log('[diagnóstico OJO DE BIFE] nenhum resultado encontrado')
+  }
 
   // Available months for the selector
   const { data: mesesData } = await db.rpc('get_produto_meses', { p_unit_id: unitId })
@@ -101,6 +121,7 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
         ano={ano}
         meses={meses}
         unitId={unitId}
+        q={q}
       />
     </div>
   )
