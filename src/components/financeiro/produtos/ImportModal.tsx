@@ -68,6 +68,15 @@ function mapRow(raw: Record<string, unknown>, unitId: string): ProdutoInsert | n
   const ano = toNum(raw["Ano Lançamento"])
   if (!mes || !ano) return null
 
+  const q_embalagem = toNum(raw["Q. Embalagem"])
+  const v_embalagem = toNum(raw["V. Embalagem"])
+  const vtRaw       = toNum(raw["V. Total Embalagem"])
+  // Fallback: recalculate when column is absent or zero
+  const v_total_embalagem =
+    vtRaw != null && vtRaw !== 0 ? vtRaw
+    : q_embalagem != null && v_embalagem != null ? q_embalagem * v_embalagem
+    : vtRaw
+
   return {
     unit_id:            unitId,
     fornecedor_nome:    toStr(raw["Fantasia Fornecedor"]),
@@ -78,10 +87,10 @@ function mapRow(raw: Record<string, unknown>, unitId: string): ProdutoInsert | n
     item_descricao:     toStr(raw["Descrição do Item"]),
     unidade_medida:     toStr(raw["Unidade Medida"]),
     tipo_item:          toStr(raw["Tipo Item"]),
-    q_embalagem:        toNum(raw["Q. Embalagem"]),
+    q_embalagem,
     q_estoque:          toNum(raw["Q. Estoque"]),
-    v_embalagem:        toNum(raw["V. Embalagem"]),
-    v_total_embalagem:  toNum(raw["V. Total Embalagem"]),
+    v_embalagem,
+    v_total_embalagem,
     v_custo_medio:      toNum(raw["V. Custo Médio"]),
     v_custo_compra:     toNum(raw["V. Custo Compra"]),
     v_custo_total:      toNum(raw["V. Custo Total"]),
