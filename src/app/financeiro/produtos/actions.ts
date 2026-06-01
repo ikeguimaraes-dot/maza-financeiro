@@ -170,10 +170,18 @@ export async function getRankingProdutos(
         custo_medio_sum: 0, custo_medio_n: 0,
         variacao_sum: 0, variacao_n: 0,
       }
-      a.custo_total    += Math.abs(r.v_custo_total ?? 0)
-      a.quantidade_total += r.q_estoque ?? 0
-      if (r.v_custo_medio != null) { a.custo_medio_sum += r.v_custo_medio; a.custo_medio_n++ }
-      if (r.perc_variacao != null) { a.variacao_sum   += r.perc_variacao;  a.variacao_n++ }
+      const ct = r.v_custo_total != null ? Number(r.v_custo_total) : 0
+      const qt = r.q_estoque     != null ? Number(r.q_estoque)     : 0
+      a.custo_total      += isFinite(ct) ? Math.abs(ct) : 0
+      a.quantidade_total += isFinite(qt) ? qt           : 0
+      if (r.v_custo_medio != null) {
+        const n = Number(r.v_custo_medio)
+        if (isFinite(n)) { a.custo_medio_sum += n; a.custo_medio_n++ }
+      }
+      if (r.perc_variacao != null) {
+        const n = Number(r.perc_variacao)
+        if (isFinite(n)) { a.variacao_sum += n; a.variacao_n++ }
+      }
       if (!a.item_codigo && r.item_codigo) a.item_codigo = r.item_codigo
       map.set(key, a)
     }
