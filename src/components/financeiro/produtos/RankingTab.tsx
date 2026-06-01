@@ -52,6 +52,14 @@ const tableStyle: CSSProperties = {
   background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10,
 }
 
+const selectStyle = (active: boolean): CSSProperties => ({
+  padding: "6px 12px", borderRadius: 8, fontSize: 12,
+  background: "var(--surface)",
+  color: active ? "var(--text)" : "var(--text-3)",
+  border: `1px solid ${active ? "var(--brand, #D4A574)" : "var(--border)"}`,
+  cursor: "pointer",
+})
+
 // ── Types ────────────────────────────────────────────────────────────────────
 type SubTab = "valor" | "quantidade" | "variacao"
 
@@ -69,10 +77,14 @@ export function RankingTab({ unitId, mes, ano }: Props) {
   const [drawerItem, setDrawerItem]   = useState<RankingItem | null>(null)
   const [historico, setHistorico]     = useState<HistoricoRow[]>([])
   const [loadingHist, setLoadingHist] = useState(false)
+  const [filterForn, setFilterForn]   = useState("")
+  const [filterCat, setFilterCat]     = useState("")
 
   useEffect(() => {
     setLoading(true)
     setData(null)
+    setFilterForn("")
+    setFilterCat("")
     getRankingProdutos(unitId, mes, ano).then(result => {
       setData(result)
       setLoading(false)
@@ -122,26 +134,88 @@ export function RankingTab({ unitId, mes, ano }: Props) {
   if (!data) return null
 
   const { porValor, porQuantidade, porVariacao, totalCmv } = data
-  const maxValor = porValor[0]?.custo_total ?? 1
+
+  // ── Filter options derived from all loaded items ────────────────────────────
+  const allItems = [...porValor, ...porQuantidade, ...porVariacao]
+  const fornOptions = [
+    ...new Set(allItems.map(x => x.fornecedor_nome).filter((v): v is string => v != null))
+  ].sort()
+  const catOptions = [
+    ...new Set(allItems.map(x => x.desc_gerencial).filter((v): v is string => v != null))
+  ].sort()
+
+  function applyFilters(items: RankingItem[]) {
+    let r = items
+    if (filterForn) r = r.filter(x => x.fornecedor_nome === filterForn)
+    if (filterCat)  r = r.filter(x => x.desc_gerencial  === filterCat)
+    return r
+  }
+
+  const filteredValor      = applyFilters(porValor)
+  const filteredQuantidade = applyFilters(porQuantidade)
+  const filteredVariacao   = applyFilters(porVariacao)
+  const activeFilters      = (filterForn ? 1 : 0) + (filterCat ? 1 : 0)
+  const maxValor           = filteredValor[0]?.custo_total ?? 1
 
   return (
     <>
-      {/* Sub-tab nav */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-        {SUB_TABS.map(({ id, label }) => {
-          const active = subTab === id
-          return (
-            <button key={id} onClick={() => setSubTab(id)} style={{
-              padding: "6px 16px", fontSize: 12, fontWeight: active ? 700 : 500,
-              color: active ? "var(--text)" : "var(--text-3)",
-              background: active ? "var(--surface-2)" : "transparent",
-              border: "1px solid", borderColor: active ? "var(--border)" : "transparent",
-              borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap",
-            }}>
-              {label}
-            </button>
-          )
-        })}
+      {/* Sub-tab nav + filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
+        {/* Sub-tabs */}
+        <div style={{ display: "flex", gap: 4 }}>
+          {SUB_TABS.map(({ id, label }) => {
+            const active = subTab === id
+            return (
+              <button key={id} onClick={() => setSubTab(id)} style={{
+                padding: "6px 16px", fontSize: 12, fontWeight: active ? 700 : 500,
+                color: active ? "var(--text)" : "var(--text-3)",
+                background: active ? "var(--surface-2)" : "transparent",
+                border: "1px solid", borderColor: active ? "var(--border)" : "transparent",
+                borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap",
+              }}>
+                {label}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Filters */}
+        <div style={{ display: "flex", gap: 8, marginLeft: "auto", alignItems: "center", flexWrap: "wrap" }}>
+          {fornOptions.length > 0 && (
+            <select value={filterForn} onChange={e => setFilterForn(e.target.value)}
+              style={selectStyle(!!filterForn)}>
+              <option value="">Todos fornecedores</option>
+              {fornOptions.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          )}
+          {catOptions.length > 0 && (
+            <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
+              style={selectStyle(!!filterCat)}>
+              <option value="">Todas categorias</option>
+              {catOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          {activeFilters > 0 && (
+            <>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 99,
+                background: "var(--brand, #D4A574)", color: "#1A1208", whiteSpace: "nowrap",
+              }}>
+                {activeFilters} ativo{activeFilters > 1 ? "s" : ""}
+              </span>
+              <button
+                onClick={() => { setFilterForn(""); setFilterCat("") }}
+                style={{
+                  padding: "5px 12px", borderRadius: 8, fontSize: 12,
+                  background: "transparent", color: "var(--text-3)",
+                  border: "1px solid var(--border)", cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                Limpar filtros
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── Por Valor ── */}
@@ -159,7 +233,7 @@ export function RankingTab({ unitId, mes, ano }: Props) {
               </tr>
             </thead>
             <tbody>
-              {porValor.map((r, i) => {
+              {filteredValor.map((r, i) => {
                 const pct  = totalCmv > 0 ? r.custo_total / totalCmv * 100 : 0
                 const barW = maxValor > 0 ? r.custo_total / maxValor * 100 : 0
                 return (
@@ -192,10 +266,18 @@ export function RankingTab({ unitId, mes, ano }: Props) {
                   </tr>
                 )
               })}
+              {filteredValor.length === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ padding: "24px", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+                    Nenhum produto encontrado com os filtros aplicados.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
           <p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8, textAlign: "right" }}>
-            Total CMV do mês: {fmtBRL(totalCmv)} · {porValor.length} produtos agregados (top 20 de {data.porValor.length <= 20 ? "todos" : "todos"})
+            Total CMV do mês: {fmtBRL(totalCmv)} · {filteredValor.length} produto{filteredValor.length !== 1 ? "s" : ""}
+            {activeFilters > 0 ? " (filtrado)" : " (top 20)"}
           </p>
         </div>
       )}
@@ -216,7 +298,7 @@ export function RankingTab({ unitId, mes, ano }: Props) {
               </tr>
             </thead>
             <tbody>
-              {porQuantidade.map((r, i) => (
+              {filteredQuantidade.map((r, i) => (
                 <tr key={i} {...rowProps(r)}>
                   <td style={{ ...tdS(), textAlign: "center", fontWeight: 800, color: rankColor(i) }}>{i + 1}</td>
                   <td style={{ ...tdS(), maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{r.item_descricao ?? "—"}</td>
@@ -227,6 +309,13 @@ export function RankingTab({ unitId, mes, ano }: Props) {
                   <td style={tdS("right")}>{fmtBRL(r.custo_medio)}</td>
                 </tr>
               ))}
+              {filteredQuantidade.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+                    Nenhum produto encontrado com os filtros aplicados.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -235,9 +324,11 @@ export function RankingTab({ unitId, mes, ano }: Props) {
       {/* ── Por Variação ── */}
       {subTab === "variacao" && (
         <>
-          {porVariacao.length === 0 ? (
+          {filteredVariacao.length === 0 ? (
             <p style={{ textAlign: "center", color: "var(--text-3)", fontSize: 13, padding: "32px 0" }}>
-              Nenhum produto com variação média positiva neste mês.
+              {activeFilters > 0
+                ? "Nenhum produto encontrado com os filtros aplicados."
+                : "Nenhum produto com variação média positiva neste mês."}
             </p>
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -254,7 +345,7 @@ export function RankingTab({ unitId, mes, ano }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {porVariacao.map((r, i) => (
+                  {filteredVariacao.map((r, i) => (
                     <tr key={i} {...rowProps(r)}>
                       <td style={{ ...tdS(), textAlign: "center", fontWeight: 800, color: rankColor(i) }}>{i + 1}</td>
                       <td style={{ ...tdS(), maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{r.item_descricao ?? "—"}</td>
