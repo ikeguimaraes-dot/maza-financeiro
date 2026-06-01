@@ -58,9 +58,18 @@ const MES_MAP: Record<string, number> = {
 const MES_NOME = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 const MES_PT: Record<string, number> = {
-  janeiro: 1, fevereiro: 2, março: 3, marco: 3,
-  abril: 4, maio: 5, junho: 6, julho: 7,
-  agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+  janeiro:   1,
+  fevereiro: 2,
+  março:     3, marco: 3,      // "março" com ç; "marco" sem ç como fallback
+  abril:     4,
+  maio:      5,
+  junho:     6,
+  julho:     7,
+  agosto:    8,
+  setembro:  9,
+  outubro:   10,
+  novembro:  11,
+  dezembro:  12,
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -93,9 +102,10 @@ function normalizeSpaces(s: string): string {
 }
 
 // "janeiro 2026" → "2026-1", etc.
+// Uses [^\s]+ instead of \w+ so ç/accented chars are captured correctly
 function parseMesAno(cell: string): string | null {
   const s = normalizeSpaces(cell).toLowerCase()
-  const m = s.match(/^(\w+)\s+(\d{4})$/)
+  const m = s.match(/^([^\s]+)\s+(\d{4})$/)
   if (!m) return null
   const mes = MES_PT[m[1]!]
   if (!mes) return null
@@ -343,6 +353,21 @@ const GORJETA_LABELS = [
 type GorjetaLabel = typeof GORJETA_LABELS[number]
 
 function parseGorjeta(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult {
+  // DEBUG — remove after confirming sheet structure
+  console.log("[parseGorjeta] sheet names:", wb.SheetNames)
+  if (wb.Sheets["Base Gorjeta"]) {
+    const _ws = wb.Sheets["Base Gorjeta"]
+    const _raw = XLSX.utils.sheet_to_json<unknown[]>(_ws, { header: 1, defval: null })
+    console.log("[parseGorjeta] first 5 rows:")
+    _raw.slice(0, 5).forEach((row, i) => {
+      const cells = (row as unknown[])
+        .map((v, j) => v !== null && v !== undefined && v !== "" ? `[${j}]=${JSON.stringify(v)}` : null)
+        .filter(Boolean)
+      console.log(`  row ${i}:`, cells.join("  "))
+    })
+  }
+  // END DEBUG
+
   if (!wb.Sheets["Base Gorjeta"]) return { rows: [], recon: [], missing: true }
 
   try {
@@ -811,9 +836,13 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
 
         {/* ── Review ── */}
         {status === "review" && reviewData && (() => {
+          // Receita difference that is positive and < 30% of DRE total is expected gorjeta
+          const isExpectedGorjetaDiff = (r: ReceitaReconItem) =>
+            r.diferenca > 0 && r.totalDRE > 0 && r.diferenca < 0.3 * r.totalDRE
+
           const hasDivergence = reviewData.reconciliation.some(r => !r.ok)
             || reviewData.gorjetaRecon.some(r => !r.ok)
-            || reviewData.receitaRecon.some(r => !r.ok)
+            || reviewData.receitaRecon.some(r => !r.ok && !isExpectedGorjetaDiff(r))
 
           return (
             <>
@@ -896,22 +925,32 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                     <span style={{ textAlign: "right" }}>Diferença</span>
                     <span style={{ textAlign: "center" }}></span>
                   </div>
-                  {reviewData.receitaRecon.map((r, i) => (
-                    <div key={r.mesAno} style={{
-                      display: "grid", gridTemplateColumns: "60px 1fr 1fr 90px 28px",
-                      padding: "6px 12px", fontSize: 12, gap: 0,
-                      borderTop: i > 0 ? "1px solid var(--border)" : undefined,
-                      background: r.ok ? "transparent" : "rgba(251,191,36,0.06)",
-                    }}>
-                      <span style={{ color: "var(--text-3)", fontSize: 11 }}>{mesAnoLabel(r.mesAno)}</span>
-                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalDRE)}</span>
-                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalReceita)}</span>
-                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ok ? "var(--text-3)" : "#f59e0b", fontWeight: r.ok ? 400 : 600 }}>
-                        {r.ok ? "—" : fmtR(r.diferenca)}
-                      </span>
-                      <span style={{ textAlign: "center" }}>{r.ok ? "✅" : "⚠️"}</span>
-                    </div>
-                  ))}
+                  {reviewData.receitaRecon.map((r, i) => {
+                    const gorjetaExp = !r.ok && isExpectedGorjetaDiff(r)
+                    return (
+                      <div key={r.mesAno} style={{
+                        display: "grid", gridTemplateColumns: "60px 1fr 1fr 1fr 28px",
+                        padding: "6px 12px", fontSize: 12, gap: 0,
+                        borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                        background: (!r.ok && !gorjetaExp) ? "rgba(251,191,36,0.06)" : "transparent",
+                      }}>
+                        <span style={{ color: "var(--text-3)", fontSize: 11 }}>{mesAnoLabel(r.mesAno)}</span>
+                        <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalDRE)}</span>
+                        <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalReceita)}</span>
+                        <span style={{
+                          textAlign: "right", fontVariantNumeric: "tabular-nums",
+                          color: gorjetaExp ? "var(--text-3)" : (!r.ok ? "#f59e0b" : "var(--text-3)"),
+                          fontWeight: (!r.ok && !gorjetaExp) ? 600 : 400,
+                          fontSize: gorjetaExp ? 10 : 12,
+                        }}>
+                          {r.ok ? "—" : gorjetaExp ? `✦ gorjetas (${fmtR(r.diferenca)})` : fmtR(r.diferenca)}
+                        </span>
+                        <span style={{ textAlign: "center" }}>
+                          {r.ok ? "✅" : gorjetaExp ? "✦" : "⚠️"}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
