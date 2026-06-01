@@ -10,12 +10,21 @@ import {
   insertDreGorjeta,
   deleteDreReceita,
   insertDreReceita,
+  deleteDreMensal,
+  insertDreMensal,
+  deleteDreKpis,
+  insertDreKpis,
+  deleteDreIndicadores,
+  insertDreIndicadores,
   getCurrentUnitId,
 } from "@/app/financeiro/dre/actions"
 import type {
   DreLinhaInsert,
   DreGorjetaInsert,
   DreReceitaInsert,
+  DreMensalInsert,
+  DreKpisInsert,
+  DreIndicadoresInsert,
 } from "@/app/financeiro/dre/actions"
 
 // ── Lookup maps ────────────────────────────────────────────────────────────────
@@ -224,11 +233,20 @@ interface ReceitaParseResult {
   parseError?: string
 }
 
+interface KpisParseResult {
+  rows: DreKpisInsert[]
+  clientesPorMes: Map<string, number>
+  ticketPorMes: Map<string, number>
+}
+
 interface ReviewData {
   realizadoRows: DreLinhaInsert[]
   orcadoRows: DreLinhaInsert[]
   gorjetaRows: DreGorjetaInsert[]
   receitaRows: DreReceitaInsert[]
+  mensalRows: DreMensalInsert[]
+  kpisRows: DreKpisInsert[]
+  indicadoresRows: DreIndicadoresInsert[]
   reconciliation: ReconciliationItem[]
   gorjetaRecon: GorjetaReconItem[]
   receitaRecon: ReceitaReconItem[]
@@ -570,6 +588,207 @@ function buildReceitaReconciliation(
   }).sort((a, b) => a.mesAno.localeCompare(b.mesAno))
 }
 
+// ── deriveDreMensal ───────────────────────────────────────────────────────────
+
+function deriveDreMensal(
+  realizadoTotais: TotaisDeclarados,
+  orcadoTotais: TotaisDeclarados,
+  clientesPorMes: Map<string, number>,
+  ticketPorMes: Map<string, number>,
+  unitId: string
+): DreMensalInsert[] {
+  const result: DreMensalInsert[] = []
+
+  const processType = (totais: TotaisDeclarados, tipo: "realizado" | "orcado") => {
+    for (const [mesAno, grupoMap] of totais) {
+      if (grupoMap.size === 0) continue
+      const g = (grupo: string) => grupoMap.get(grupo) ?? 0
+
+      const receita_bruta  = g("RECEITA")
+      const cmv            = g("CMV")
+      const pessoal        = g("PESSOAL")
+      const ocupacao       = g("OCUPAÇÃO")
+      const utilidades     = g("UTILIDADES")
+      const operacao       = g("OPERAÇÃO")
+      const manutencao     = g("MANUTENÇÃO")
+      const administrativa = g("ADMINISTRATIVA")
+      const marketing      = g("MARKETING")
+      const taxa_cartao    = g("TAXAS CARTÃO")
+      const impostos       = g("IMPOSTOS")
+      const desp_fin       = g("DESP. FINANCEIRAS")
+
+      // Cost groups come as negative values; summing gives EBITDA
+      const ebitda = receita_bruta + impostos + cmv + pessoal +
+        ocupacao + utilidades + operacao + manutencao +
+        administrativa + marketing + taxa_cartao
+
+      result.push({
+        unit_id: unitId, mes_ano: mesAno, tipo,
+        receita_bruta, cmv, pessoal, ocupacao, utilidades,
+        operacao, manutencao, administrativa, marketing,
+        taxa_cartao, impostos, ebitda,
+        resultado_liquido: ebitda + desp_fin,
+        clientes:     tipo === "realizado" ? (clientesPorMes.get(mesAno) ?? null) : null,
+        ticket_medio: tipo === "realizado" ? (ticketPorMes.get(mesAno) ?? null) : null,
+      })
+    }
+  }
+
+  processType(realizadoTotais, "realizado")
+  processType(orcadoTotais, "orcado")
+  return result
+}
+
+// ── parseKpis ─────────────────────────────────────────────────────────────────
+
+function parseKpis(
+  wb: XLSX.WorkBook,
+  realizadoRows: DreLinhaInsert[],
+  gorjetaRows: DreGorjetaInsert[],
+  unitId: string
+): KpisParseResult {
+  const clientesPorMes = new Map<string, number>()
+  const ticketPorMes   = new Map<string, number>()
+
+  try {
+    const ws = wb.Sheets["Base Realizado"]
+    if (ws) {
+      const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+
+      // Re-find header row and descColIdx (same logic as parseSheet)
+      let headerRowIdx = -1
+      let monthCols: MonthCol[] = []
+      let descColIdx = -1
+
+      for (let i = 0; i < Math.min(raw.length, 15); i++) {
+        const row = (raw[i] ?? []) as unknown[]
+        const cols = detectMonthCols(row)
+        if (cols.length >= 1) {
+          headerRowIdx = i; monthCols = cols
+          for (let j = 0; j < row.length; j++) {
+            const v = toStr(row[j])
+            if (!v) continue
+            const up = v.toUpperCase()
+            if (up === "DESCRIÇÃO" || up === "DESCRICAO") descColIdx = j
+          }
+          break
+        }
+      }
+      if (descColIdx === -1 && monthCols.length > 0) descColIdx = monthCols[0]!.colIdx - 2
+
+      // Scan rows before first group header for CLIENTES / TICKET MEDIO
+      if (headerRowIdx >= 0 && descColIdx >= 0) {
+        for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
+          const row = (raw[rowIdx] ?? []) as unknown[]
+          const descRaw = toStr(row[descColIdx])
+          if (!descRaw) continue
+          if (descRaw.trim() in GRUPO_MAP) break  // reached first group
+          const norm = normalizeSpaces(descRaw).toUpperCase()
+          if (norm.includes("CLIENTES")) {
+            for (const mc of monthCols) {
+              const v = toNum(row[mc.colIdx]); if (v !== null) clientesPorMes.set(mc.mesAno, v)
+            }
+          } else if (norm.includes("TICKET")) {
+            for (const mc of monthCols) {
+              const v = toNum(row[mc.colIdx]); if (v !== null) ticketPorMes.set(mc.mesAno, v)
+            }
+          }
+        }
+      }
+    }
+  } catch { /* sheet missing or parse error — continue with empty maps */ }
+
+  const gorjetaPorMes = new Map(gorjetaRows.map(g => [g.mes_ano, g.gorjeta_recebida ?? null]))
+  const impostosRows  = realizadoRows.filter(r => r.grupo === "IMPOSTOS")
+
+  const getImposto = (prefix: string, mes: string): number | null =>
+    impostosRows.find(r =>
+      r.mes_ano === mes && normalizeSpaces(r.descricao).toUpperCase().startsWith(prefix)
+    )?.valor ?? null
+
+  const meses = [...new Set(realizadoRows.map(r => r.mes_ano))].sort()
+
+  return {
+    rows: meses.map(mes => ({
+      unit_id: unitId,
+      mes_ano: mes,
+      clientes:           clientesPorMes.get(mes) ?? null,
+      ticket_medio:       ticketPorMes.get(mes)   ?? null,
+      gorjetas_recebidas: gorjetaPorMes.get(mes)  ?? null,
+      icms:   getImposto("(-) ICMS",   mes),
+      cofins: getImposto("(-) COFINS", mes),
+      pis:    getImposto("(-) PIS",    mes),
+      iss:    getImposto("(-) ISS",    mes),
+    })),
+    clientesPorMes,
+    ticketPorMes,
+  }
+}
+
+// ── parseIndicadores ──────────────────────────────────────────────────────────
+
+const INDIC_LABELS: [string, string][] = [
+  ["CMV",            "CMV"],
+  ["PESSOAL",        "PESSOAL"],
+  ["OCUPAÇÃO",       "OCUPAÇÃO"],
+  ["UTILIDADES",     "UTILIDADES"],
+  ["OPERAÇÃO",       "OPERAÇÃO"],
+  ["MANUTENÇÃO",     "MANUTENÇÃO"],
+  ["ADMINISTRATIVA", "ADMINISTRATIVA"],
+  ["MARKETING",      "MARKETING"],
+  ["TX CART",        "TAXAS CARTÃO"],
+  ["EBITDA",         "EBITDA"],
+]
+
+function parseIndicadores(wb: XLSX.WorkBook, unitId: string): DreIndicadoresInsert[] {
+  const sheetName = " 01-INDIC"
+  if (!wb.Sheets[sheetName]) return []
+
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+
+    interface IndicCol { colIdx: number; tipo: "realizado" | "orcado"; mesAno: string }
+    let headerRowIdx = -1
+    let indicCols: IndicCol[] = []
+
+    for (let i = 0; i < Math.min(raw.length, 10); i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const cols: IndicCol[] = []
+      for (let j = 0; j < row.length; j++) {
+        const cell = toStr(row[j])
+        if (!cell) continue
+        // Match "BD JAN.26" or "REAL JAN.26"
+        const m = normalizeSpaces(cell).toUpperCase().match(/^(BD|REAL)\s+([A-Z]{3})[.\s](\d{2})$/)
+        if (!m) continue
+        const tipo: "realizado" | "orcado" = m[1] === "REAL" ? "realizado" : "orcado"
+        const mesNum = MES_MAP[m[2]!]
+        if (!mesNum) continue
+        cols.push({ colIdx: j, tipo, mesAno: `20${m[3]}-${mesNum}` })
+      }
+      if (cols.length >= 2) { headerRowIdx = i; indicCols = cols; break }
+    }
+    if (indicCols.length === 0) return []
+
+    const result: DreIndicadoresInsert[] = []
+    for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
+      const row = (raw[rowIdx] ?? []) as unknown[]
+      const labelCell = toStr(row[1])
+      if (!labelCell) continue
+      const labelNorm = normalizeSpaces(labelCell).toUpperCase()
+      const match = INDIC_LABELS.find(([prefix]) => labelNorm.startsWith(prefix))
+      if (!match) continue
+      const [, indicador] = match
+      for (const ic of indicCols) {
+        result.push({ unit_id: unitId, mes_ano: ic.mesAno, tipo: ic.tipo, indicador, valor: toNum(row[ic.colIdx]) })
+      }
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
 // ── Batch insert helper ────────────────────────────────────────────────────────
 
 async function batchInsert<T>(
@@ -646,9 +865,18 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const mesesR = [...new Set(realizadoResult.rows.map(r => r.mes_ano))].sort()
       const latestMonth = mesesR.at(-1) ?? ""
 
+      const kpisResult      = parseKpis(wb, realizadoResult.rows, gorjetaResult.rows, unitId)
+      const mensalRows      = deriveDreMensal(
+        realizadoResult.totaisDeclarados, orcadoResult.totaisDeclarados,
+        kpisResult.clientesPorMes, kpisResult.ticketPorMes, unitId
+      )
+      const indicadoresRows = parseIndicadores(wb, unitId)
+
       const total =
         realizadoResult.rows.length + orcadoResult.rows.length +
-        gorjetaResult.rows.length + receitaResult.rows.length
+        gorjetaResult.rows.length   + receitaResult.rows.length +
+        mensalRows.length           + kpisResult.rows.length +
+        indicadoresRows.length
 
       if (total === 0) {
         setErrorMsg("Nenhuma linha válida encontrada no arquivo.")
@@ -665,19 +893,22 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         : []
 
       setReviewData({
-        realizadoRows: realizadoResult.rows,
-        orcadoRows:    orcadoResult.rows,
-        gorjetaRows:   gorjetaResult.rows,
-        receitaRows:   receitaResult.rows,
+        realizadoRows:  realizadoResult.rows,
+        orcadoRows:     orcadoResult.rows,
+        gorjetaRows:    gorjetaResult.rows,
+        receitaRows:    receitaResult.rows,
+        mensalRows,
+        kpisRows:       kpisResult.rows,
+        indicadoresRows,
         reconciliation,
-        gorjetaRecon:  gorjetaResult.recon,
+        gorjetaRecon:   gorjetaResult.recon,
         receitaRecon,
         latestMonth,
         descricoes: [...new Set(realizadoResult.rows.map(r => `${r.grupo} | ${r.descricao}`))].sort(),
         gorjetaMissing: gorjetaResult.missing,
-        gorjetaError:  gorjetaResult.parseError,
+        gorjetaError:   gorjetaResult.parseError,
         receitaMissing: receitaResult.missing,
-        receitaError:  receitaResult.parseError,
+        receitaError:   receitaResult.parseError,
       })
       setMonthsRealizado(mesesR)
       setMonthsOrcado([...new Set(orcadoResult.rows.map(r => r.mes_ano))].sort())
@@ -691,7 +922,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
 
   async function handleConfirm() {
     if (!reviewData || !unitId) return
-    const { realizadoRows, orcadoRows, gorjetaRows, receitaRows } = reviewData
+    const { realizadoRows, orcadoRows, gorjetaRows, receitaRows,
+            mensalRows, kpisRows, indicadoresRows } = reviewData
     setStatus("uploading")
 
     let imported = 0
@@ -732,6 +964,33 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         if (!delRc.ok) { setErrorMsg(delRc.error ?? "Erro ao limpar receita."); setStatus("error"); return }
         const errRc = await batchInsert(receitaRows, insertDreReceita, bump)
         if (errRc) { setErrorMsg(errRc); setStatus("error"); return }
+      }
+
+      // ── DRE Mensal ─────────────────────────────────────────────────────────
+      if (mensalRows.length > 0) {
+        setPhase("Importando DRE Mensal…")
+        const delM = await deleteDreMensal(unitId)
+        if (!delM.ok) { setErrorMsg(delM.error ?? "Erro ao limpar DRE mensal."); setStatus("error"); return }
+        const errM = await batchInsert(mensalRows, insertDreMensal, bump)
+        if (errM) { setErrorMsg(errM); setStatus("error"); return }
+      }
+
+      // ── KPIs mensais ───────────────────────────────────────────────────────
+      if (kpisRows.length > 0) {
+        setPhase("Importando KPIs…")
+        const delK = await deleteDreKpis(unitId)
+        if (!delK.ok) { setErrorMsg(delK.error ?? "Erro ao limpar KPIs."); setStatus("error"); return }
+        const errK = await batchInsert(kpisRows, insertDreKpis, bump)
+        if (errK) { setErrorMsg(errK); setStatus("error"); return }
+      }
+
+      // ── Indicadores ────────────────────────────────────────────────────────
+      if (indicadoresRows.length > 0) {
+        setPhase("Importando Indicadores…")
+        const delI = await deleteDreIndicadores(unitId)
+        if (!delI.ok) { setErrorMsg(delI.error ?? "Erro ao limpar indicadores."); setStatus("error"); return }
+        const errI = await batchInsert(indicadoresRows, insertDreIndicadores, bump)
+        if (errI) { setErrorMsg(errI); setStatus("error"); return }
       }
 
       setStatus("done")
@@ -956,8 +1215,49 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                 </div>
               )}
 
+              {/* Section: DRE Mensal / KPIs / Indicadores */}
+              {(reviewData.mensalRows.length > 0 || reviewData.kpisRows.length > 0 || reviewData.indicadoresRows.length > 0) && (
+                <div style={{ marginTop: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>DRE Mensal derivado</div>
+                  <div style={{
+                    border: "1px solid var(--border)", borderRadius: 8,
+                    padding: "10px 14px", fontSize: 12, color: "var(--text-3)",
+                    display: "flex", gap: 20, flexWrap: "wrap",
+                  }}>
+                    {reviewData.mensalRows.length > 0 && (() => {
+                      const real = reviewData.mensalRows.filter(r => r.tipo === "realizado").length
+                      const orc  = reviewData.mensalRows.filter(r => r.tipo === "orcado").length
+                      return (
+                        <span>
+                          dre_mensal:{" "}
+                          <strong style={{ color: "var(--text)" }}>{reviewData.mensalRows.length}</strong>
+                          {" "}linhas ({real} realizado, {orc} orçado)
+                        </span>
+                      )
+                    })()}
+                    {reviewData.kpisRows.length > 0 && (
+                      <span>
+                        dre_kpis_mensais:{" "}
+                        <strong style={{ color: "var(--text)" }}>{reviewData.kpisRows.length}</strong> meses
+                      </span>
+                    )}
+                    {reviewData.indicadoresRows.length > 0 && (() => {
+                      const real = reviewData.indicadoresRows.filter(r => r.tipo === "realizado").length
+                      const orc  = reviewData.indicadoresRows.filter(r => r.tipo === "orcado").length
+                      return (
+                        <span>
+                          dre_indicadores:{" "}
+                          <strong style={{ color: "var(--text)" }}>{reviewData.indicadoresRows.length}</strong>
+                          {" "}linhas ({real} real, {orc} orc)
+                        </span>
+                      )
+                    })()}
+                  </div>
+                </div>
+              )}
+
               {/* Summary */}
-              <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 16, marginBottom: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, marginBottom: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <span>Realizado: <strong style={{ color: "var(--text)" }}>{reviewData.realizadoRows.length}</strong></span>
                 <span>Orçado: <strong style={{ color: "var(--text)" }}>{reviewData.orcadoRows.length}</strong></span>
                 {reviewData.gorjetaRows.length > 0 && <span>Gorjeta: <strong style={{ color: "var(--text)" }}>{reviewData.gorjetaRows.length}</strong> meses</span>}
