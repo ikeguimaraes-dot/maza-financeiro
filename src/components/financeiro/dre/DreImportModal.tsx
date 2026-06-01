@@ -353,66 +353,68 @@ const GORJETA_LABELS = [
 type GorjetaLabel = typeof GORJETA_LABELS[number]
 
 function parseGorjeta(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult {
-  // DEBUG — remove after confirming sheet structure
-  console.log("[parseGorjeta] sheet names:", wb.SheetNames)
-  if (wb.Sheets["Base Gorjeta"]) {
-    const _ws = wb.Sheets["Base Gorjeta"]
-    const _raw = XLSX.utils.sheet_to_json<unknown[]>(_ws, { header: 1, defval: null })
-    console.log("[parseGorjeta] first 5 rows:")
-    _raw.slice(0, 5).forEach((row, i) => {
-      const cells = (row as unknown[])
-        .map((v, j) => v !== null && v !== undefined && v !== "" ? `[${j}]=${JSON.stringify(v)}` : null)
-        .filter(Boolean)
-      console.log(`  row ${i}:`, cells.join("  "))
-    })
-  }
-  // END DEBUG
-
   if (!wb.Sheets["Base Gorjeta"]) return { rows: [], recon: [], missing: true }
 
   try {
     const ws = wb.Sheets["Base Gorjeta"]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
 
-    // Find month header row (first 5 rows, need ≥ 2 month cols)
-    let headerRowIdx = -1
-    let monthCols: SimpleMonthCol[] = []
-    for (let i = 0; i < Math.min(raw.length, 5); i++) {
-      const cols = detectGorjetaMonthCols((raw[i] ?? []) as unknown[], 2026)
-      if (cols.length >= 2) { headerRowIdx = i; monthCols = cols; break }
+    const MONTH_ABBREVS = ["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"]
+    const MONTH_NUM: Record<string, number> = {
+      JAN:1, FEV:2, MAR:3, ABR:4, MAI:5, JUN:6,
+      JUL:7, AGO:8, SET:9, OUT:10, NOV:11, DEZ:12,
     }
-    if (monthCols.length === 0) throw new Error("Nenhuma coluna de mês encontrada.")
 
-    // Find label rows by scanning text in each row's first non-empty cell
+    // Find the row that has ≥ 3 cells whose text starts with a month abbreviation
+    const monthRow = (raw as unknown[][]).find(r =>
+      r.filter(cell =>
+        typeof cell === "string" &&
+        MONTH_ABBREVS.some(m => (cell as string).toUpperCase().startsWith(m))
+      ).length >= 3
+    )
+    if (!monthRow) throw new Error("Linha de meses não encontrada na aba 'Base Gorjeta'.")
+
+    const monthCols: SimpleMonthCol[] = []
+    monthRow.forEach((cell, idx) => {
+      if (typeof cell !== "string") return
+      const abbrev = MONTH_ABBREVS.find(m => (cell as string).toUpperCase().startsWith(m))
+      if (!abbrev) return
+      const mesNum = MONTH_NUM[abbrev]!
+      if (mesNum <= 4) {  // only Jan–Abr (realizado)
+        monthCols.push({ colIdx: idx, mesAno: `2026-${mesNum}` })
+      }
+    })
+    if (monthCols.length === 0) throw new Error("Nenhum mês Jan–Abr encontrado na linha de cabeçalho.")
+
+    const headerRowIdx = raw.indexOf(monthRow as unknown[])
+
+    // Labels are in col index 1 of each row (confirmed by debug)
+    const LABEL_COL = 1
     const labelRowIdx = new Map<GorjetaLabel, number>()
 
     for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
       const row = (raw[rowIdx] ?? []) as unknown[]
-      for (let colIdx = 0; colIdx < row.length; colIdx++) {
-        const cell = toStr(row[colIdx])
-        if (!cell) continue
-        const norm = normalizeSpaces(cell).toUpperCase()
+      const cell = toStr(row[LABEL_COL])
+      if (!cell) continue
+      const norm = normalizeSpaces(cell).toUpperCase()
 
-        for (const label of GORJETA_LABELS) {
-          if (labelRowIdx.has(label)) continue
-          const matches =
-            label === "TOTAL"  ? norm === "TOTAL" :
-            label === "13º"    ? norm.includes("13") :
-            norm.includes(label)
+      for (const label of GORJETA_LABELS) {
+        if (labelRowIdx.has(label)) continue
+        const matches =
+          label === "TOTAL" ? norm === "TOTAL" :
+          label === "13º"   ? norm.includes("13") :
+          norm.includes(label)
 
-          if (matches) {
-            // FÉRIAS and TOTAL: require at least one positive month value
-            if (label === "FÉRIAS" || label === "TOTAL") {
-              const hasPos = monthCols.some(mc => {
-                const v = toNum(row[mc.colIdx])
-                return v !== null && v > 0
-              })
-              if (!hasPos) continue
-            }
-            labelRowIdx.set(label, rowIdx)
+        if (matches) {
+          if (label === "FÉRIAS" || label === "TOTAL") {
+            const hasPos = monthCols.some(mc => {
+              const v = toNum(row[mc.colIdx])
+              return v !== null && v > 0
+            })
+            if (!hasPos) continue
           }
+          labelRowIdx.set(label, rowIdx)
         }
-        break  // only check first non-empty cell per row
       }
       if (labelRowIdx.size >= GORJETA_LABELS.length) break
     }
