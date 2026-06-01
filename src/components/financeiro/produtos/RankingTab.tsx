@@ -1,14 +1,13 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import type { CSSProperties } from "react"
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts"
-import { getHistoricoProduto } from "@/app/financeiro/produtos/actions"
-import type { HistoricoRow } from "@/app/financeiro/produtos/actions"
-import type { ProdutoRow } from "@/app/financeiro/produtos/page"
+import { getRankingProdutos, getHistoricoProduto } from "@/app/financeiro/produtos/actions"
+import type { HistoricoRow, RankingItem, RankingResult } from "@/app/financeiro/produtos/actions"
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -57,66 +56,47 @@ const tableStyle: CSSProperties = {
 type SubTab = "valor" | "quantidade" | "variacao"
 
 type Props = {
-  rows: ProdutoRow[]
   unitId: string | null
+  mes: number
+  ano: number
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
-export function RankingTab({ rows, unitId }: Props) {
-  const [subTab, setSubTab] = useState<SubTab>("valor")
-  const [drawerRow, setDrawerRow] = useState<ProdutoRow | null>(null)
-  const [historico, setHistorico] = useState<HistoricoRow[]>([])
+export function RankingTab({ unitId, mes, ano }: Props) {
+  const [subTab, setSubTab]           = useState<SubTab>("valor")
+  const [data, setData]               = useState<RankingResult | null>(null)
+  const [loadingRanking, setLoading]  = useState(true)
+  const [drawerItem, setDrawerItem]   = useState<RankingItem | null>(null)
+  const [historico, setHistorico]     = useState<HistoricoRow[]>([])
   const [loadingHist, setLoadingHist] = useState(false)
 
-  // ── Rankings ───────────────────────────────────────────────────────────────
-  const rankingValor = useMemo(() =>
-    [...rows]
-      .filter(r => r.v_custo_total != null)
-      .sort((a, b) => Math.abs(b.v_custo_total!) - Math.abs(a.v_custo_total!))
-      .slice(0, 20)
-  , [rows])
-
-  const rankingQtd = useMemo(() =>
-    [...rows]
-      .filter(r => r.q_estoque != null)
-      .sort((a, b) => (b.q_estoque ?? 0) - (a.q_estoque ?? 0))
-      .slice(0, 20)
-  , [rows])
-
-  const rankingVar = useMemo(() =>
-    [...rows]
-      .filter(r => r.perc_variacao != null && r.perc_variacao > 0)
-      .sort((a, b) => (b.perc_variacao ?? 0) - (a.perc_variacao ?? 0))
-      .slice(0, 20)
-  , [rows])
-
-  const maxValor = rankingValor[0] ? Math.abs(rankingValor[0].v_custo_total ?? 0) : 1
-  const totalValorAll = useMemo(
-    () => rankingValor.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0),
-    [rankingValor]
-  )
+  useEffect(() => {
+    setLoading(true)
+    setData(null)
+    getRankingProdutos(unitId, mes, ano).then(result => {
+      setData(result)
+      setLoading(false)
+    })
+  }, [unitId, mes, ano])
 
   // ── Drawer ─────────────────────────────────────────────────────────────────
-  async function openDrawer(row: ProdutoRow) {
-    setDrawerRow(row)
+  async function openDrawer(item: RankingItem) {
+    setDrawerItem(item)
     setHistorico([])
-    if (!row.item_codigo) return
+    if (!item.item_codigo) return
     setLoadingHist(true)
     try {
-      const data = await getHistoricoProduto(unitId, row.item_codigo)
-      setHistorico(data)
+      const rows = await getHistoricoProduto(unitId, item.item_codigo)
+      setHistorico(rows)
     } finally {
       setLoadingHist(false)
     }
   }
 
-  function closeDrawer() {
-    setDrawerRow(null)
-    setHistorico([])
-  }
+  function closeDrawer() { setDrawerItem(null); setHistorico([]) }
 
-  const rowProps = (row: ProdutoRow) => ({
-    onClick: () => openDrawer(row),
+  const rowProps = (item: RankingItem) => ({
+    onClick: () => openDrawer(item),
     style: { borderTop: "1px solid var(--border)", cursor: "pointer" } as CSSProperties,
     onMouseEnter: (e: React.MouseEvent<HTMLTableRowElement>) =>
       (e.currentTarget.style.background = "var(--surface-2)"),
@@ -130,6 +110,20 @@ export function RankingTab({ rows, unitId }: Props) {
     { id: "variacao",   label: "Por Variação" },
   ]
 
+  // ── Loading / empty ─────────────────────────────────────────────────────────
+  if (loadingRanking) {
+    return (
+      <div style={{ padding: "48px 0", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+        Calculando ranking…
+      </div>
+    )
+  }
+
+  if (!data) return null
+
+  const { porValor, porQuantidade, porVariacao, totalCmv } = data
+  const maxValor = porValor[0]?.custo_total ?? 1
+
   return (
     <>
       {/* Sub-tab nav */}
@@ -141,8 +135,7 @@ export function RankingTab({ rows, unitId }: Props) {
               padding: "6px 16px", fontSize: 12, fontWeight: active ? 700 : 500,
               color: active ? "var(--text)" : "var(--text-3)",
               background: active ? "var(--surface-2)" : "transparent",
-              border: "1px solid",
-              borderColor: active ? "var(--border)" : "transparent",
+              border: "1px solid", borderColor: active ? "var(--border)" : "transparent",
               borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap",
             }}>
               {label}
@@ -162,16 +155,15 @@ export function RankingTab({ rows, unitId }: Props) {
                 <th style={thS()}>Fornecedor</th>
                 <th style={thS()}>Categoria</th>
                 <th style={{ ...thS("right"), minWidth: 220 }}>Custo Total (R$)</th>
-                <th style={thS("right")}>% do Total</th>
+                <th style={thS("right")}>% do Total CMV</th>
               </tr>
             </thead>
             <tbody>
-              {rankingValor.map((r, i) => {
-                const val = Math.abs(r.v_custo_total ?? 0)
-                const pct = totalValorAll > 0 ? val / totalValorAll * 100 : 0
-                const barW = maxValor > 0 ? val / maxValor * 100 : 0
+              {porValor.map((r, i) => {
+                const pct  = totalCmv > 0 ? r.custo_total / totalCmv * 100 : 0
+                const barW = maxValor > 0 ? r.custo_total / maxValor * 100 : 0
                 return (
-                  <tr key={r.id} {...rowProps(r)}>
+                  <tr key={i} {...rowProps(r)}>
                     <td style={{ ...tdS(), textAlign: "center", fontWeight: 800, color: rankColor(i) }}>
                       {i + 1}
                     </td>
@@ -190,7 +182,7 @@ export function RankingTab({ rows, unitId }: Props) {
                           <div style={{ width: `${barW}%`, height: "100%", background: rankColor(i), borderRadius: 3 }} />
                         </div>
                         <span style={{ fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
-                          {fmtBRL(val)}
+                          {fmtBRL(r.custo_total)}
                         </span>
                       </div>
                     </td>
@@ -202,6 +194,9 @@ export function RankingTab({ rows, unitId }: Props) {
               })}
             </tbody>
           </table>
+          <p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8, textAlign: "right" }}>
+            Total CMV do mês: {fmtBRL(totalCmv)} · {porValor.length} produtos agregados (top 20 de {data.porValor.length <= 20 ? "todos" : "todos"})
+          </p>
         </div>
       )}
 
@@ -215,21 +210,21 @@ export function RankingTab({ rows, unitId }: Props) {
                 <th style={thS()}>Produto</th>
                 <th style={thS()}>Fornecedor</th>
                 <th style={thS()}>Categoria</th>
-                <th style={thS("right")}>Quantidade</th>
+                <th style={thS("right")}>Quantidade Total</th>
                 <th style={thS("right")}>Unidade</th>
                 <th style={thS("right")}>Custo Médio (R$)</th>
               </tr>
             </thead>
             <tbody>
-              {rankingQtd.map((r, i) => (
-                <tr key={r.id} {...rowProps(r)}>
+              {porQuantidade.map((r, i) => (
+                <tr key={i} {...rowProps(r)}>
                   <td style={{ ...tdS(), textAlign: "center", fontWeight: 800, color: rankColor(i) }}>{i + 1}</td>
                   <td style={{ ...tdS(), maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{r.item_descricao ?? "—"}</td>
                   <td style={{ ...tdS(), maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-3)" }}>{r.fornecedor_nome ?? "—"}</td>
                   <td style={{ ...tdS(), color: "var(--text-3)", whiteSpace: "nowrap" }}>{r.desc_gerencial ?? "—"}</td>
-                  <td style={{ ...tdS("right"), fontWeight: 600 }}>{fmtQty(r.q_estoque)}</td>
+                  <td style={{ ...tdS("right"), fontWeight: 600 }}>{fmtQty(r.quantidade_total)}</td>
                   <td style={{ ...tdS("right"), color: "var(--text-3)" }}>{r.unidade_medida ?? "—"}</td>
-                  <td style={tdS("right")}>{fmtBRL(r.v_custo_medio)}</td>
+                  <td style={tdS("right")}>{fmtBRL(r.custo_medio)}</td>
                 </tr>
               ))}
             </tbody>
@@ -240,9 +235,9 @@ export function RankingTab({ rows, unitId }: Props) {
       {/* ── Por Variação ── */}
       {subTab === "variacao" && (
         <>
-          {rankingVar.length === 0 ? (
+          {porVariacao.length === 0 ? (
             <p style={{ textAlign: "center", color: "var(--text-3)", fontSize: 13, padding: "32px 0" }}>
-              Nenhum produto com variação positiva neste mês.
+              Nenhum produto com variação média positiva neste mês.
             </p>
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -253,21 +248,21 @@ export function RankingTab({ rows, unitId }: Props) {
                     <th style={thS()}>Produto</th>
                     <th style={thS()}>Fornecedor</th>
                     <th style={thS()}>Categoria</th>
-                    <th style={thS("right")}>Variação %</th>
-                    <th style={thS("right")}>Custo Atual</th>
+                    <th style={thS("right")}>Variação Média %</th>
+                    <th style={thS("right")}>Custo Total</th>
                     <th style={thS("right")}>Custo Médio</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rankingVar.map((r, i) => (
-                    <tr key={r.id} {...rowProps(r)}>
+                  {porVariacao.map((r, i) => (
+                    <tr key={i} {...rowProps(r)}>
                       <td style={{ ...tdS(), textAlign: "center", fontWeight: 800, color: rankColor(i) }}>{i + 1}</td>
                       <td style={{ ...tdS(), maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{r.item_descricao ?? "—"}</td>
                       <td style={{ ...tdS(), maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-3)" }}>{r.fornecedor_nome ?? "—"}</td>
                       <td style={{ ...tdS(), color: "var(--text-3)", whiteSpace: "nowrap" }}>{r.desc_gerencial ?? "—"}</td>
-                      <td style={{ ...tdS("right"), fontWeight: 700, color: "#EF4444" }}>{fmtPct(r.perc_variacao)}</td>
-                      <td style={tdS("right")}>{fmtBRL(r.v_custo_compra)}</td>
-                      <td style={tdS("right")}>{fmtBRL(r.v_custo_medio)}</td>
+                      <td style={{ ...tdS("right"), fontWeight: 700, color: "#EF4444" }}>{fmtPct(r.variacao_media)}</td>
+                      <td style={tdS("right")}>{fmtBRL(r.custo_total)}</td>
+                      <td style={tdS("right")}>{fmtBRL(r.custo_medio)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -278,9 +273,9 @@ export function RankingTab({ rows, unitId }: Props) {
       )}
 
       {/* ── Histórico Drawer ── */}
-      {drawerRow && (
+      {drawerItem && (
         <HistoricoDrawer
-          row={drawerRow}
+          item={drawerItem}
           historico={historico}
           loading={loadingHist}
           onClose={closeDrawer}
@@ -292,15 +287,15 @@ export function RankingTab({ rows, unitId }: Props) {
 
 // ── Histórico Drawer ──────────────────────────────────────────────────────────
 type DrawerProps = {
-  row: ProdutoRow
+  item: RankingItem
   historico: HistoricoRow[]
   loading: boolean
   onClose: () => void
 }
 
-function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
+function HistoricoDrawer({ item, historico, loading, onClose }: DrawerProps) {
   const chartData = historico.map(h => ({
-    label: mesLabel(h.mes_lancamento, h.ano_lancamento),
+    label:      mesLabel(h.mes_lancamento, h.ano_lancamento),
     custoTotal: h.v_custo_total != null ? Math.abs(h.v_custo_total) : null,
     custoMedio: h.v_custo_medio,
     quantidade: h.q_estoque,
@@ -315,19 +310,15 @@ function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
 
   return (
     <>
-      {/* Backdrop */}
       <div onClick={onClose} style={{
-        position: "fixed", inset: 0, zIndex: 998,
-        background: "rgba(0,0,0,0.45)",
+        position: "fixed", inset: 0, zIndex: 998, background: "rgba(0,0,0,0.45)",
       }} />
 
-      {/* Panel */}
       <div style={{
         position: "fixed", top: 0, right: 0, bottom: 0, width: 520,
         zIndex: 999, background: "var(--surface)",
         borderLeft: "1px solid var(--border)",
-        display: "flex", flexDirection: "column",
-        overflowY: "auto",
+        display: "flex", flexDirection: "column", overflowY: "auto",
         boxShadow: "-8px 0 40px rgba(0,0,0,0.3)",
       }}>
         {/* Sticky header */}
@@ -341,10 +332,10 @@ function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
               Histórico do Produto
             </p>
             <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", margin: "0 0 4px", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {row.item_descricao ?? row.item_codigo ?? "—"}
+              {item.item_descricao ?? item.item_codigo ?? "—"}
             </h2>
             <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
-              {[row.fornecedor_nome, row.desc_gerencial].filter(Boolean).join(" · ")}
+              {[item.fornecedor_nome, item.desc_gerencial].filter(Boolean).join(" · ")}
             </p>
           </div>
           <button onClick={onClose} style={{
@@ -368,7 +359,6 @@ function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
 
           {!loading && historico.length > 0 && (
             <>
-              {/* Chart */}
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-3)", margin: "0 0 12px" }}>
                 Evolução — {historico.length} {historico.length === 1 ? "mês" : "meses"}
               </p>
@@ -386,13 +376,12 @@ function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
                       return [fmtBRL(n), name as string]
                     }}
                   />
-                  <Line yAxisId="brl" type="monotone" dataKey="custoTotal" stroke="#D4A574" strokeWidth={2} dot={{ r: 3 }} name="Custo Total" connectNulls />
+                  <Line yAxisId="brl" type="monotone" dataKey="custoTotal" stroke="#D4A574" strokeWidth={2} dot={{ r: 3 }} name="Custo Total"  connectNulls />
                   <Line yAxisId="brl" type="monotone" dataKey="custoMedio" stroke="#60A5FA" strokeWidth={2} dot={{ r: 3 }} name="Custo Médio" connectNulls />
                   <Line yAxisId="qty"  type="monotone" dataKey="quantidade" stroke="#4ADE80" strokeWidth={2} dot={{ r: 3 }} name="Quantidade"  connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* Legend */}
               <div style={{ display: "flex", gap: 16, margin: "10px 0 24px", flexWrap: "wrap" }}>
                 {([ ["#D4A574","Custo Total"], ["#60A5FA","Custo Médio"], ["#4ADE80","Quantidade"] ] as const).map(([color, label]) => (
                   <span key={label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-3)" }}>
@@ -402,7 +391,6 @@ function HistoricoDrawer({ row, historico, loading, onClose }: DrawerProps) {
                 ))}
               </div>
 
-              {/* History table */}
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-3)", margin: "0 0 10px" }}>
                 Registros por mês
               </p>

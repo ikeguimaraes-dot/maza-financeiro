@@ -369,7 +369,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
 
       {/* ── Ranking tab ── */}
       {hasData && tab === "ranking" && (
-        <RankingTab rows={rows} unitId={unitId} />
+        <RankingTab unitId={unitId} mes={mes} ano={ano} />
       )}
 
       {/* ── CMV tab ── */}

@@ -102,6 +102,108 @@ export async function getProdutosMeses(
   }
 }
 
+export type RankingItem = {
+  item_descricao: string | null
+  item_codigo: string | null
+  fornecedor_nome: string | null
+  desc_gerencial: string | null
+  unidade_medida: string | null
+  custo_total: number
+  quantidade_total: number
+  custo_medio: number
+  variacao_media: number | null
+}
+
+export type RankingResult = {
+  porValor: RankingItem[]
+  porQuantidade: RankingItem[]
+  porVariacao: RankingItem[]
+  totalCmv: number
+}
+
+export async function getRankingProdutos(
+  unitId: string | null,
+  mes: number,
+  ano: number
+): Promise<RankingResult> {
+  const empty: RankingResult = { porValor: [], porQuantidade: [], porVariacao: [], totalCmv: 0 }
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return empty
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    let q = db
+      .from("produtos_relatorio")
+      .select("item_descricao,item_codigo,fornecedor_nome,desc_gerencial,unidade_medida,v_custo_total,q_estoque,v_custo_medio,perc_variacao")
+      .eq("mes_lancamento", mes)
+      .eq("ano_lancamento", ano)
+      .eq("calcula_cmv", true)
+      .limit(5000)
+    if (unitId) q = q.eq("unit_id", unitId)
+    const { data } = await q
+    if (!data || data.length === 0) return empty
+
+    type Acc = {
+      item_descricao: string | null
+      item_codigo: string | null
+      fornecedor_nome: string | null
+      desc_gerencial: string | null
+      unidade_medida: string | null
+      custo_total: number
+      quantidade_total: number
+      custo_medio_sum: number
+      custo_medio_n: number
+      variacao_sum: number
+      variacao_n: number
+    }
+
+    const map = new Map<string, Acc>()
+    for (const r of data) {
+      const key = `${r.item_descricao}||${r.fornecedor_nome}||${r.desc_gerencial}||${r.unidade_medida}`
+      const a: Acc = map.get(key) ?? {
+        item_descricao: r.item_descricao,
+        item_codigo: r.item_codigo ?? null,
+        fornecedor_nome: r.fornecedor_nome,
+        desc_gerencial: r.desc_gerencial,
+        unidade_medida: r.unidade_medida,
+        custo_total: 0, quantidade_total: 0,
+        custo_medio_sum: 0, custo_medio_n: 0,
+        variacao_sum: 0, variacao_n: 0,
+      }
+      a.custo_total    += Math.abs(r.v_custo_total ?? 0)
+      a.quantidade_total += r.q_estoque ?? 0
+      if (r.v_custo_medio != null) { a.custo_medio_sum += r.v_custo_medio; a.custo_medio_n++ }
+      if (r.perc_variacao != null) { a.variacao_sum   += r.perc_variacao;  a.variacao_n++ }
+      if (!a.item_codigo && r.item_codigo) a.item_codigo = r.item_codigo
+      map.set(key, a)
+    }
+
+    const items: RankingItem[] = [...map.values()].map(a => ({
+      item_descricao:  a.item_descricao,
+      item_codigo:     a.item_codigo,
+      fornecedor_nome: a.fornecedor_nome,
+      desc_gerencial:  a.desc_gerencial,
+      unidade_medida:  a.unidade_medida,
+      custo_total:     a.custo_total,
+      quantidade_total: a.quantidade_total,
+      custo_medio:     a.custo_medio_n > 0 ? a.custo_medio_sum / a.custo_medio_n : 0,
+      variacao_media:  a.variacao_n > 0 ? a.variacao_sum / a.variacao_n : null,
+    }))
+
+    const totalCmv     = items.reduce((s, i) => s + i.custo_total, 0)
+    const porValor     = [...items].sort((a, b) => b.custo_total - a.custo_total).slice(0, 20)
+    const porQuantidade = [...items].sort((a, b) => b.quantidade_total - a.quantidade_total).slice(0, 20)
+    const porVariacao  = items
+      .filter(i => i.variacao_media != null && i.variacao_media > 0)
+      .sort((a, b) => (b.variacao_media ?? 0) - (a.variacao_media ?? 0))
+      .slice(0, 20)
+
+    return { porValor, porQuantidade, porVariacao, totalCmv }
+  } catch {
+    return empty
+  }
+}
+
 export type HistoricoRow = {
   mes_lancamento: number
   ano_lancamento: number
