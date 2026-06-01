@@ -36,8 +36,9 @@ const DESCRICAO_MAP: Record<string, string> = {
 }
 
 const MES_MAP: Record<string, number> = {
-  JAN: 1, FEV: 2, MAR: 3, ABR: 4, MAI: 5, JUN: 6,
-  JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12,
+  JAN: 1, FEV: 2, MAR: 3, ABR: 4,
+  MAI: 5, MAIO: 5,
+  JUN: 6, JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12,
 }
 
 function toNum(v: unknown): number | null {
@@ -68,7 +69,8 @@ function detectMonthCols(headerRow: unknown[]): MonthCol[] {
   for (let i = 0; i < headerRow.length; i++) {
     const cell = toStr(headerRow[i])
     if (!cell) continue
-    const m = cell.match(/^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
+    // Match "JAN 2026", "MAIO 2026", etc. — some months use 3 letters, MAIO uses 4
+    const m = cell.match(/^(JAN|FEV|MAR|ABR|MAIO?|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
     if (m) {
       const mesNum = MES_MAP[m[1]!]
       const year   = m[2]!
@@ -86,18 +88,43 @@ function parseBaseRealizado(wb: XLSX.WorkBook): DreLinhaInsert[] {
 
   const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
 
-  // Row index 4 (0-based) = row 5 in 1-based = month header row
-  const headerRow = (raw[4] ?? []) as unknown[]
-  const monthCols = detectMonthCols(headerRow)
-  if (monthCols.length === 0) throw new Error("Nenhuma coluna de mês detectada na linha 5.")
+  // Scan first 15 rows for the header row that contains month names.
+  // Do NOT hardcode row index — SheetJS may omit empty rows before it,
+  // and the column offset (A=0 vs B=0) can vary by xlsx version.
+  let headerRowIdx = -1
+  let monthCols: MonthCol[] = []
+  let descColIdx = -1
+  let contaColIdx = -1
+
+  for (let i = 0; i < Math.min(raw.length, 15); i++) {
+    const row = (raw[i] ?? []) as unknown[]
+    const cols = detectMonthCols(row)
+    if (cols.length >= 1) {
+      headerRowIdx = i
+      monthCols = cols
+      // Locate DESCRIÇÃO and CONTA in the same header row
+      for (let j = 0; j < row.length; j++) {
+        const v = toStr(row[j])
+        if (!v) continue
+        const up = v.toUpperCase()
+        if (up === "DESCRIÇÃO" || up === "DESCRICAO") descColIdx = j
+        else if (up === "CONTA") contaColIdx = j
+      }
+      break
+    }
+  }
+
+  if (monthCols.length === 0) throw new Error("Nenhuma coluna de mês detectada (procura até a linha 15).")
+  // If DESCRIÇÃO/CONTA headers not found, fall back to relative offsets from first month col
+  if (descColIdx  === -1) descColIdx  = monthCols[0]!.colIdx - 2
+  if (contaColIdx === -1) contaColIdx = monthCols[0]!.colIdx - 1
 
   const result: DreLinhaInsert[] = []
   let currentGrupo: string | null = null
 
-  // Data starts at row 6 (0-based index 5)
-  for (let rowIdx = 5; rowIdx < raw.length; rowIdx++) {
+  for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
     const row = (raw[rowIdx] ?? []) as unknown[]
-    const descRaw = toStr(row[1])  // col B
+    const descRaw = toStr(row[descColIdx])
     if (!descRaw) continue
 
     const desc = descRaw.trim()
@@ -109,7 +136,7 @@ function parseBaseRealizado(wb: XLSX.WorkBook): DreLinhaInsert[] {
 
     if (!currentGrupo) continue
 
-    const contaRaw = toStr(row[2])  // col C
+    const contaRaw = toStr(row[contaColIdx])
     const conta = contaRaw && !contaRaw.startsWith("x.x.") ? contaRaw : null
     const descBanco = DESCRICAO_MAP[desc] ?? desc
 
