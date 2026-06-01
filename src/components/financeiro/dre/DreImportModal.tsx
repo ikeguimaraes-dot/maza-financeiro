@@ -133,7 +133,10 @@ function parseSheet(
   if (descColIdx  === -1) descColIdx  = monthCols[0]!.colIdx - 2
   if (contaColIdx === -1) contaColIdx = monthCols[0]!.colIdx - 1
 
-  const result: DreLinhaInsert[] = []
+  // Buffer per-month so we can filter sparse months (realizado only)
+  const byMonth = new Map<string, DreLinhaInsert[]>()
+  for (const mc of monthCols) byMonth.set(mc.mesAno, [])
+
   let currentGrupo: string | null = null
 
   for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
@@ -158,7 +161,7 @@ function parseSheet(
       const val = toNum(row[mc.colIdx])
       if (val === null) continue
 
-      result.push({
+      byMonth.get(mc.mesAno)!.push({
         unit_id:       unitId,
         mes_ano:       mc.mesAno,
         tipo,
@@ -170,6 +173,17 @@ function parseSheet(
         custo_tipo:    null,
       })
     }
+  }
+
+  const result: DreLinhaInsert[] = []
+  for (const [, rows] of byMonth) {
+    // For realizado, discard months where fewer than 10 rows have a non-zero value
+    // (Excel artefact: future months carry a single stray value)
+    if (tipo === "realizado") {
+      const nonZero = rows.filter(r => r.valor !== null && r.valor !== 0).length
+      if (nonZero < 10) continue
+    }
+    result.push(...rows)
   }
 
   return result
