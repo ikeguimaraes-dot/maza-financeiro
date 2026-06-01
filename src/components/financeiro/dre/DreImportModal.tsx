@@ -59,11 +59,21 @@ function toStr(v: unknown): string | null {
   return s || null
 }
 
-function isGroupHeader(s: string): boolean {
-  const t = s.trim()
-  // Matches ALL-CAPS keys from GRUPO_MAP exactly, or mixed-case entries like "FATURAMENTO Liquido de Gorjeta"
-  return t in GRUPO_MAP
+function normalizeSpaces(s: string): string {
+  return s.trim().replace(/\s+/g, " ")
 }
+
+// CAPS rows that are legitimate detail lines (not group headers, not calculation rows)
+const SUB_ITENS = new Set(
+  [
+    "IR/INSS", "FGTS", "DSR",
+    "GRATIFICAÇÃO -  INSS", "GRATIFICAÇÃO 13. SALÁRIO",
+    "GRATIFICAÇÃO FGTS", "GRATIFICAÇÃO FÉRIAS",
+    "IPTU",
+    "(-) ICMS", "(-) COFINS", "(-) PIS/Pasep",
+    "(-) ISS", "IRPJ", "CSLL",
+  ].map(s => normalizeSpaces(s).toUpperCase())
+)
 
 interface MonthCol {
   mesAno: string
@@ -146,9 +156,17 @@ function parseSheet(
 
     const desc = descRaw.trim()
 
-    if (isGroupHeader(desc)) {
-      currentGrupo = GRUPO_MAP[desc] ?? null
+    if (desc in GRUPO_MAP) {
+      currentGrupo = GRUPO_MAP[desc]!
       continue
+    }
+
+    // ALL-CAPS line not in GRUPO_MAP: sub-item or calculation/total row
+    if (desc === desc.toUpperCase() && /\p{L}/u.test(desc)) {
+      if (!SUB_ITENS.has(normalizeSpaces(desc).toUpperCase())) {
+        currentGrupo = null  // calculation/total row — stop collecting until next group
+      }
+      // SUB_ITEM: fall through to detail processing
     }
 
     if (!currentGrupo) continue
