@@ -295,6 +295,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                     ["desc_gerencial","Categoria","left"],
                     ["q_estoque","Qtd Estoque","right"],
                     ["unidade_medida","Unidade","right"],
+                    ["v_total_embalagem","V. Total Emb.","right"],
                     ["v_custo_medio","Custo Médio","right"],
                     ["v_custo_compra","Custo Compra","right"],
                     ["v_custo_total","Custo Total","right"],
@@ -330,6 +331,9 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                     </td>
                     <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text-3)" }}>
                       {r.unidade_medida ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                      {fmtBRL(r.v_total_embalagem)}
                     </td>
                     <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
                       {fmtBRL(r.v_custo_medio)}
