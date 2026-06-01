@@ -9,6 +9,7 @@ import {
   type DreChartPoint,
 } from "@/components/financeiro/DreBarChart"
 import { DreTabNav } from "@/components/financeiro/dre/DreTabNav"
+import { DreImportButton } from "@/components/financeiro/dre/DreImportButton"
 import {
   DreDrillTable,
   type DreMensalRowClient,
@@ -424,6 +425,10 @@ export default async function DreGerencialPage({
           </p>
         </div>
 
+        {/* Right side: import button + month selector */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <DreImportButton />
+
         {/* Month selector — only visible on DRE tab */}
         {aba === "dre" && reMonths.length > 0 && (
           <nav style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -450,6 +455,7 @@ export default async function DreGerencialPage({
             })}
           </nav>
         )}
+        </div>
       </header>
 
       {/* Sub-tab navigation */}
