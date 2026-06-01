@@ -8,6 +8,7 @@ import {
 import { useRouter } from "next/navigation"
 import type { ProdutoRow } from "@/app/financeiro/produtos/page"
 import { ImportModal } from "./ImportModal"
+import { RankingTab } from "./RankingTab"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -47,7 +48,7 @@ const PAGE_SIZE = 50
 // ── Main component ─────────────────────────────────────────────────────────────
 export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "cmv">("tabela")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv">("tabela")
   const [showImport, setShowImport] = useState(false)
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
@@ -181,7 +182,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
-        {(["tabela", "cmv"] as const).map(t => {
+        {(["tabela", "ranking", "cmv"] as const).map(t => {
+          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV" }
           const active = tab === t
           return (
             <button key={t} onClick={() => setTab(t)} style={{
@@ -191,7 +193,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
               background:"transparent", border:"none", cursor:"pointer",
               whiteSpace:"nowrap", marginBottom:-1,
             }}>
-              {t === "tabela" ? "Tabela" : "CMV"}
+              {labels[t]}
             </button>
           )
         })}
@@ -363,6 +365,11 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId }: Prop
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Ranking tab ── */}
+      {hasData && tab === "ranking" && (
+        <RankingTab rows={rows} unitId={unitId} />
       )}
 
       {/* ── CMV tab ── */}

@@ -102,6 +102,42 @@ export async function getProdutosMeses(
   }
 }
 
+export type HistoricoRow = {
+  mes_lancamento: number
+  ano_lancamento: number
+  fornecedor_nome: string | null
+  q_estoque: number | null
+  v_custo_medio: number | null
+  v_custo_total: number | null
+  perc_variacao: number | null
+  desc_gerencial: string | null
+  item_descricao: string | null
+}
+
+export async function getHistoricoProduto(
+  unitId: string | null,
+  itemCodigo: string
+): Promise<HistoricoRow[]> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    let q = db
+      .from("produtos_relatorio")
+      .select("mes_lancamento,ano_lancamento,fornecedor_nome,q_estoque,v_custo_medio,v_custo_total,perc_variacao,desc_gerencial,item_descricao")
+      .eq("item_codigo", itemCodigo)
+      .order("ano_lancamento", { ascending: true })
+      .order("mes_lancamento", { ascending: true })
+      .limit(120)
+    if (unitId) q = q.eq("unit_id", unitId)
+    const { data } = await q
+    return (data ?? []) as HistoricoRow[]
+  } catch {
+    return []
+  }
+}
+
 export async function getCurrentUnitId(): Promise<string | null> {
   const unit = await getCurrentUnit()
   return unit?.id ?? null
