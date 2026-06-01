@@ -72,10 +72,15 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
     .eq("mes_lancamento", prevMes)
     .eq("ano_lancamento", prevAno)
 
-  // Available months for the selector
+  // Available months for the selector — limit 10000 to avoid Supabase 1000-row cap
   let meses: { mes: number; ano: number }[] = []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mesesQuery: any = db.from("produtos_relatorio").select("mes_lancamento, ano_lancamento")
+  let mesesQuery: any = db
+    .from("produtos_relatorio")
+    .select("mes_lancamento, ano_lancamento")
+    .order("ano_lancamento", { ascending: true })
+    .order("mes_lancamento", { ascending: true })
+    .limit(10000)
   if (unitId) mesesQuery = mesesQuery.eq("unit_id", unitId)
   const { data: mesData } = await mesesQuery
   if (mesData) {
@@ -84,7 +89,6 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
       const k = `${r.ano_lancamento}-${r.mes_lancamento}`
       if (!seen.has(k)) { seen.add(k); meses.push({ mes: r.mes_lancamento, ano: r.ano_lancamento }) }
     }
-    meses.sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes)
   }
 
   const mesDisponivel = meses.some(m => m.mes === mes && m.ano === ano)
