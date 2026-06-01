@@ -134,7 +134,7 @@ export async function getRankingProdutos(
     const db = supabase as any
     let q = db
       .from("produtos_relatorio")
-      .select("item_descricao,item_codigo,fornecedor_nome,desc_gerencial,unidade_medida,v_custo_total,q_estoque,v_custo_medio,perc_variacao")
+      .select("item_descricao,item_codigo,fornecedor_nome,desc_gerencial,unidade_medida,v_total_embalagem,v_custo_total,q_estoque,v_custo_medio,perc_variacao")
       .eq("mes_lancamento", mes)
       .eq("ano_lancamento", ano)
       .eq("calcula_cmv", true)
@@ -170,8 +170,8 @@ export async function getRankingProdutos(
         custo_medio_sum: 0, custo_medio_n: 0,
         variacao_sum: 0, variacao_n: 0,
       }
-      const ct = r.v_custo_total != null ? Number(r.v_custo_total) : 0
-      const qt = r.q_estoque     != null ? Number(r.q_estoque)     : 0
+      const ct = r.v_total_embalagem != null ? Number(r.v_total_embalagem) : 0
+      const qt = r.q_estoque         != null ? Number(r.q_estoque)         : 0
       a.custo_total      += isFinite(ct) ? Math.abs(ct) : 0
       a.quantidade_total += isFinite(qt) ? qt           : 0
       if (r.v_custo_medio != null) {

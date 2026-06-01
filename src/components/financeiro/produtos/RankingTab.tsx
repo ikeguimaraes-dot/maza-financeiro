@@ -154,7 +154,7 @@ export function RankingTab({ unitId, mes, ano }: Props) {
                 <th style={thS()}>Produto</th>
                 <th style={thS()}>Fornecedor</th>
                 <th style={thS()}>Categoria</th>
-                <th style={{ ...thS("right"), minWidth: 220 }}>Custo Total (R$)</th>
+                <th style={{ ...thS("right"), minWidth: 220 }}>Valor Comprado (R$)</th>
                 <th style={thS("right")}>% do Total CMV</th>
               </tr>
             </thead>
