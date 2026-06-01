@@ -47,6 +47,19 @@ const MES_MAP: Record<string, number> = {
   JUN: 6, JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12,
 }
 
+const MES_NOME = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+
+function mesAnoLabel(mesAno: string): string {
+  const [ano, mes] = mesAno.split("-")
+  return `${MES_NOME[Number(mes)] ?? mes}/${ano}`
+}
+
+function fmtR(v: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency", currency: "BRL", maximumFractionDigits: 0,
+  }).format(v)
+}
+
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null
   const n = Number(v)
@@ -95,15 +108,21 @@ function detectMonthCols(headerRow: unknown[]): MonthCol[] {
       }
     }
   }
-  // Determine avIdx: if next col is NOT another month col, treat it as AV
+  // avIdx: if next col is NOT another month col, treat it as AV
   const monthColIdxSet = new Set(cols.map(c => c.colIdx))
   for (const col of cols) {
     const nextIdx = col.colIdx + 1
-    if (!monthColIdxSet.has(nextIdx)) {
-      col.avIdx = nextIdx
-    }
+    if (!monthColIdxSet.has(nextIdx)) col.avIdx = nextIdx
   }
   return cols
+}
+
+// mesAno → grupoBanco → declared total from the group header row
+type TotaisDeclarados = Map<string, Map<string, number>>
+
+interface ParseResult {
+  rows: DreLinhaInsert[]
+  totaisDeclarados: TotaisDeclarados
 }
 
 function parseSheet(
@@ -111,7 +130,7 @@ function parseSheet(
   sheetName: string,
   tipo: "realizado" | "orcado",
   unitId: string
-): DreLinhaInsert[] {
+): ParseResult {
   const ws = wb.Sheets[sheetName]
   if (!ws) throw new Error(`Aba '${sheetName}' não encontrada no arquivo.`)
 
@@ -143,9 +162,10 @@ function parseSheet(
   if (descColIdx  === -1) descColIdx  = monthCols[0]!.colIdx - 2
   if (contaColIdx === -1) contaColIdx = monthCols[0]!.colIdx - 1
 
-  // Buffer per-month so we can filter sparse months (realizado only)
   const byMonth = new Map<string, DreLinhaInsert[]>()
   for (const mc of monthCols) byMonth.set(mc.mesAno, [])
+
+  const totaisDeclarados: TotaisDeclarados = new Map()
 
   let currentGrupo: string | null = null
 
@@ -158,6 +178,15 @@ function parseSheet(
 
     if (desc in GRUPO_MAP) {
       currentGrupo = GRUPO_MAP[desc]!
+      // Capture declared totals from the group header row
+      for (const mc of monthCols) {
+        const val = toNum(row[mc.colIdx])
+        if (val === null) continue
+        if (!totaisDeclarados.has(mc.mesAno)) totaisDeclarados.set(mc.mesAno, new Map())
+        const grupoMap = totaisDeclarados.get(mc.mesAno)!
+        // If same banco grupo appears twice (e.g. two Excel headers → RECEITA), accumulate
+        grupoMap.set(currentGrupo, (grupoMap.get(currentGrupo) ?? 0) + val)
+      }
       continue
     }
 
@@ -193,18 +222,69 @@ function parseSheet(
     }
   }
 
-  const result: DreLinhaInsert[] = []
-  for (const [, rows] of byMonth) {
-    // For realizado, discard months where fewer than 10 rows have a non-zero value
-    // (Excel artefact: future months carry a single stray value)
+  const rows: DreLinhaInsert[] = []
+  for (const [mesAno, monthRows] of byMonth) {
     if (tipo === "realizado") {
-      const nonZero = rows.filter(r => r.valor !== null && r.valor !== 0).length
-      if (nonZero < 10) continue
+      const nonZero = monthRows.filter(r => r.valor !== null && r.valor !== 0).length
+      if (nonZero < 10) {
+        // Sparse month — also remove its declared totals so reconciliation stays in sync
+        totaisDeclarados.delete(mesAno)
+        continue
+      }
     }
-    result.push(...rows)
+    rows.push(...monthRows)
   }
 
-  return result
+  return { rows, totaisDeclarados }
+}
+
+// ── Reconciliation types ───────────────────────────────────────────────────────
+
+interface ReconciliationItem {
+  grupo: string
+  declarado: number
+  capturado: number
+  diferenca: number
+  ok: boolean
+}
+
+interface ReviewData {
+  realizadoRows: DreLinhaInsert[]
+  orcadoRows: DreLinhaInsert[]
+  reconciliation: ReconciliationItem[]
+  latestMonth: string
+  descricoes: string[]
+}
+
+function buildReconciliation(
+  rows: DreLinhaInsert[],
+  totaisDeclarados: TotaisDeclarados,
+  latestMonth: string
+): ReconciliationItem[] {
+  // Sum captured values per grupo for the latest month
+  const capturado = new Map<string, number>()
+  for (const r of rows) {
+    if (r.mes_ano !== latestMonth) continue
+    capturado.set(r.grupo, (capturado.get(r.grupo) ?? 0) + (r.valor ?? 0))
+  }
+
+  const declaradoMes = totaisDeclarados.get(latestMonth) ?? new Map<string, number>()
+
+  // Union of all grupos that appear in either declared or captured
+  const grupos = new Set([...declaradoMes.keys(), ...capturado.keys()])
+
+  return [...grupos].map(grupo => {
+    const decl = declaradoMes.get(grupo) ?? 0
+    const capt = capturado.get(grupo) ?? 0
+    const diff = decl - capt
+    return {
+      grupo,
+      declarado: decl,
+      capturado: capt,
+      diferenca: diff,
+      ok: Math.abs(diff) <= 1,
+    }
+  }).sort((a, b) => a.grupo.localeCompare(b.grupo))
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -214,20 +294,21 @@ interface Props {
   onSuccess: () => void
 }
 
-type Status = "idle" | "loading_unit" | "ready" | "parsing" | "uploading" | "done" | "error"
+type Status = "idle" | "loading_unit" | "ready" | "parsing" | "review" | "uploading" | "done" | "error"
 
 export function DreImportModal({ onClose, onSuccess }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [fileName, setFileName]       = useState<string | null>(null)
-  const [unitId, setUnitId]           = useState<string | null>(null)
-  const [status, setStatus]           = useState<Status>("idle")
-  const [phase, setPhase]             = useState<string>("")
-  const [progress, setProgress]       = useState(0)
-  const [totalRows, setTotalRows]     = useState(0)
+  const [fileName, setFileName]   = useState<string | null>(null)
+  const [unitId, setUnitId]       = useState<string | null>(null)
+  const [status, setStatus]       = useState<Status>("idle")
+  const [phase, setPhase]         = useState<string>("")
+  const [progress, setProgress]   = useState(0)
+  const [totalRows, setTotalRows] = useState(0)
   const [importedRows, setImportedRows] = useState(0)
-  const [errorMsg, setErrorMsg]       = useState<string | null>(null)
+  const [errorMsg, setErrorMsg]   = useState<string | null>(null)
   const [monthsRealizado, setMonthsRealizado] = useState<string[]>([])
   const [monthsOrcado, setMonthsOrcado]       = useState<string[]>([])
+  const [reviewData, setReviewData] = useState<ReviewData | null>(null)
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -256,21 +337,52 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const buf = await f.arrayBuffer()
       const wb  = XLSX.read(buf, { type: "array" })
 
-      const realizadoRows = parseSheet(wb, "Base Realizado",       "realizado", unitId)
-      const orcadoRows    = parseSheet(wb, "04 -Base Orçado 2026", "orcado",    unitId)
+      const realizadoResult = parseSheet(wb, "Base Realizado",       "realizado", unitId)
+      const orcadoResult    = parseSheet(wb, "04 -Base Orçado 2026", "orcado",    unitId)
 
-      const total = realizadoRows.length + orcadoRows.length
+      const total = realizadoResult.rows.length + orcadoResult.rows.length
       if (total === 0) {
         setErrorMsg("Nenhuma linha válida encontrada nas abas 'Base Realizado' e '04 -Base Orçado 2026'.")
         setStatus("error")
         return
       }
 
-      setMonthsRealizado([...new Set(realizadoRows.map(r => r.mes_ano))].sort())
-      setMonthsOrcado([...new Set(orcadoRows.map(r => r.mes_ano))].sort())
-      setTotalRows(total)
-      setStatus("uploading")
+      const mesesR = [...new Set(realizadoResult.rows.map(r => r.mes_ano))].sort()
+      const latestMonth = mesesR.at(-1) ?? ""
 
+      const reconciliation = latestMonth
+        ? buildReconciliation(realizadoResult.rows, realizadoResult.totaisDeclarados, latestMonth)
+        : []
+
+      const descricoes = [...new Set(
+        realizadoResult.rows.map(r => `${r.grupo} | ${r.descricao}`)
+      )].sort()
+
+      setReviewData({
+        realizadoRows: realizadoResult.rows,
+        orcadoRows: orcadoResult.rows,
+        reconciliation,
+        latestMonth,
+        descricoes,
+      })
+      setMonthsRealizado(mesesR)
+      setMonthsOrcado([...new Set(orcadoResult.rows.map(r => r.mes_ano))].sort())
+      setTotalRows(total)
+      setStatus("review")
+    } catch (e) {
+      setErrorMsg(String(e))
+      setStatus("error")
+    }
+  }
+
+  async function handleConfirm() {
+    if (!reviewData || !unitId) return
+
+    const { realizadoRows, orcadoRows } = reviewData
+    const total = realizadoRows.length + orcadoRows.length
+    setStatus("uploading")
+
+    try {
       let imported = 0
 
       // ── Realizado ──────────────────────────────────────────────────────────
@@ -326,8 +438,10 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         border: "1px solid var(--border)",
         borderRadius: 12,
         padding: 28,
-        width: 520,
-        maxWidth: "90vw",
+        width: status === "review" ? 620 : 520,
+        maxWidth: "95vw",
+        maxHeight: "90vh",
+        overflowY: "auto",
       }}>
         {/* Title row */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -350,6 +464,7 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
           </p>
         )}
 
+        {/* ── File picker ── */}
         {(status === "idle" || status === "ready" || status === "loading_unit" || status === "error") && (
           <>
             <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 16, lineHeight: 1.5 }}>
@@ -397,7 +512,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                 disabled={busy}
                 style={{
                   padding: "8px 18px", borderRadius: 6, border: "1px solid var(--border)",
-                  background: "transparent", color: "var(--text-3)", cursor: busy ? "not-allowed" : "pointer", fontSize: 13,
+                  background: "transparent", color: "var(--text-3)",
+                  cursor: busy ? "not-allowed" : "pointer", fontSize: 13,
                 }}
               >
                 Cancelar
@@ -409,7 +525,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                   padding: "8px 20px", borderRadius: 6, border: "none",
                   background: (fileName && unitId && !busy) ? "var(--brand)" : "var(--surface-2)",
                   color: (fileName && unitId && !busy) ? "#fff" : "var(--text-3)",
-                  cursor: (fileName && unitId && !busy) ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 600,
+                  cursor: (fileName && unitId && !busy) ? "pointer" : "not-allowed",
+                  fontSize: 13, fontWeight: 600,
                 }}
               >
                 Importar
@@ -418,12 +535,143 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
           </>
         )}
 
+        {/* ── Parsing spinner ── */}
         {status === "parsing" && (
           <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-3)", fontSize: 14 }}>
             Lendo abas do Excel…
           </div>
         )}
 
+        {/* ── Review / reconciliation ── */}
+        {status === "review" && reviewData && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                Conferência — {mesAnoLabel(reviewData.latestMonth)}
+              </span>
+              <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: 8 }}>
+                (mês mais recente do realizado)
+              </span>
+            </div>
+
+            {/* Reconciliation table */}
+            <div style={{
+              border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 16,
+            }}>
+              {/* Table header */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 90px 90px 90px 28px",
+                gap: 0,
+                background: "var(--surface-2)",
+                padding: "6px 12px",
+                fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+              }}>
+                <span>Grupo</span>
+                <span style={{ textAlign: "right" }}>Declarado</span>
+                <span style={{ textAlign: "right" }}>Capturado</span>
+                <span style={{ textAlign: "right" }}>Diferença</span>
+                <span style={{ textAlign: "center" }}></span>
+              </div>
+
+              {reviewData.reconciliation.map((item, i) => (
+                <div
+                  key={item.grupo}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 90px 90px 90px 28px",
+                    gap: 0,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                    background: item.ok ? "transparent" : "rgba(251,191,36,0.06)",
+                    color: "var(--text)",
+                  }}
+                >
+                  <span style={{ color: "var(--text-3)", fontSize: 11 }}>{item.grupo}</span>
+                  <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {fmtR(item.declarado)}
+                  </span>
+                  <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {fmtR(item.capturado)}
+                  </span>
+                  <span style={{
+                    textAlign: "right", fontVariantNumeric: "tabular-nums",
+                    color: item.ok ? "var(--text-3)" : "#f59e0b",
+                    fontWeight: item.ok ? 400 : 600,
+                  }}>
+                    {item.ok ? "—" : fmtR(item.diferenca)}
+                  </span>
+                  <span style={{ textAlign: "center" }}>
+                    {item.ok ? "✅" : "⚠️"}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Summary */}
+            <div style={{
+              fontSize: 12, color: "var(--text-3)", marginBottom: 16,
+              display: "flex", gap: 16, flexWrap: "wrap",
+            }}>
+              <span>Realizado: <strong style={{ color: "var(--text)" }}>{reviewData.realizadoRows.length}</strong> linhas</span>
+              <span>Orçado: <strong style={{ color: "var(--text)" }}>{reviewData.orcadoRows.length}</strong> linhas</span>
+              <span>Meses realizado: <strong style={{ color: "var(--text)" }}>{monthsRealizado.map(mesAnoLabel).join(", ")}</strong></span>
+            </div>
+
+            {/* Descriptions list (informativo) */}
+            <details style={{ marginBottom: 16 }}>
+              <summary style={{ fontSize: 12, color: "var(--text-3)", cursor: "pointer", userSelect: "none" }}>
+                Linhas capturadas ({reviewData.descricoes.length} combinações grupo|descrição)
+              </summary>
+              <div style={{
+                marginTop: 8, maxHeight: 160, overflowY: "auto",
+                border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px",
+              }}>
+                {reviewData.descricoes.map(d => (
+                  <div key={d} style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.8 }}>{d}</div>
+                ))}
+              </div>
+            </details>
+
+            {/* Divergence note */}
+            {reviewData.reconciliation.some(r => !r.ok) && (
+              <div style={{
+                background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
+                borderRadius: 6, padding: "8px 12px", marginBottom: 16,
+                fontSize: 12, color: "#f59e0b", lineHeight: 1.5,
+              }}>
+                ⚠️ Há divergências entre o total declarado e as linhas capturadas.
+                Isso pode ocorrer no grupo PESSOAL (subtotal parcial) ou se alguma linha não foi mapeada.
+                O import continua disponível — verifique antes de confirmar.
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={onClose}
+                style={{
+                  padding: "8px 18px", borderRadius: 6, border: "1px solid var(--border)",
+                  background: "transparent", color: "var(--text-3)", cursor: "pointer", fontSize: 13,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirm}
+                style={{
+                  padding: "8px 20px", borderRadius: 6, border: "none",
+                  background: "var(--brand)", color: "#fff",
+                  cursor: "pointer", fontSize: 13, fontWeight: 600,
+                }}
+              >
+                Confirmar Importação
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Upload progress ── */}
         {status === "uploading" && (
           <div style={{ padding: "8px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, color: "var(--text-3)" }}>
@@ -442,6 +690,7 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
           </div>
         )}
 
+        {/* ── Done ── */}
         {status === "done" && (
           <div style={{ textAlign: "center", padding: "20px 0" }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
@@ -450,12 +699,12 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
             </p>
             {monthsRealizado.length > 0 && (
               <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>
-                Realizado: {monthsRealizado.join(", ")}
+                Realizado: {monthsRealizado.map(mesAnoLabel).join(", ")}
               </p>
             )}
             {monthsOrcado.length > 0 && (
               <p style={{ fontSize: 12, color: "var(--text-3)" }}>
-                Orçado: {monthsOrcado.join(", ")}
+                Orçado: {monthsOrcado.map(mesAnoLabel).join(", ")}
               </p>
             )}
           </div>
