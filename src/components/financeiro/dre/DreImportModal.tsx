@@ -6,11 +6,20 @@ import {
   deleteDreLinhasRealizado,
   deleteDreLinhasOrcado,
   insertDreLinhas,
+  deleteDreGorjeta,
+  insertDreGorjeta,
+  deleteDreReceita,
+  insertDreReceita,
   getCurrentUnitId,
 } from "@/app/financeiro/dre/actions"
-import type { DreLinhaInsert } from "@/app/financeiro/dre/actions"
+import type {
+  DreLinhaInsert,
+  DreGorjetaInsert,
+  DreReceitaInsert,
+} from "@/app/financeiro/dre/actions"
 
-// Excel section header → banco grupo
+// ── Lookup maps ────────────────────────────────────────────────────────────────
+
 const GRUPO_MAP: Record<string, string> = {
   "FATURAMENTO":                        "RECEITA",
   "FATURAMENTO Liquido de Gorjeta":     "RECEITA",
@@ -27,7 +36,6 @@ const GRUPO_MAP: Record<string, string> = {
   "IMPOSTOS":                           "IMPOSTOS",
 }
 
-// descricao Excel → descricao banco
 const DESCRICAO_MAP: Record<string, string> = {
   "Prestação de Serviço Pessoa Jurídica OP":  "PJ Operacional",
   "Prestação de Serviço Pessoa Jurídica ADM": "PJ Administrativo",
@@ -48,6 +56,14 @@ const MES_MAP: Record<string, number> = {
 }
 
 const MES_NOME = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+
+const MES_PT: Record<string, number> = {
+  janeiro: 1, fevereiro: 2, março: 3, marco: 3,
+  abril: 4, maio: 5, junho: 6, julho: 7,
+  agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function mesAnoLabel(mesAno: string): string {
   const [ano, mes] = mesAno.split("-")
@@ -76,7 +92,18 @@ function normalizeSpaces(s: string): string {
   return s.trim().replace(/\s+/g, " ")
 }
 
-// CAPS rows that are legitimate detail lines (not group headers, not calculation rows)
+// "janeiro 2026" → "2026-1", etc.
+function parseMesAno(cell: string): string | null {
+  const s = normalizeSpaces(cell).toLowerCase()
+  const m = s.match(/^(\w+)\s+(\d{4})$/)
+  if (!m) return null
+  const mes = MES_PT[m[1]!]
+  if (!mes) return null
+  return `${m[2]}-${mes}`
+}
+
+// ── SUB_ITENS (CAPS that are detail rows, not group/calc headers) ──────────────
+
 const SUB_ITENS = new Set(
   [
     "IR/INSS", "FGTS", "DSR",
@@ -88,10 +115,12 @@ const SUB_ITENS = new Set(
   ].map(s => normalizeSpaces(s).toUpperCase())
 )
 
+// ── MonthCol detection ─────────────────────────────────────────────────────────
+
 interface MonthCol {
   mesAno: string
   colIdx: number
-  avIdx: number  // -1 if no AV column
+  avIdx: number
 }
 
 function detectMonthCols(headerRow: unknown[]): MonthCol[] {
@@ -103,27 +132,105 @@ function detectMonthCols(headerRow: unknown[]): MonthCol[] {
     if (m) {
       const mesNum = MES_MAP[m[1]!]
       const year   = m[2]!
-      if (mesNum !== undefined) {
-        cols.push({ mesAno: `${year}-${mesNum}`, colIdx: i, avIdx: -1 })
-      }
+      if (mesNum !== undefined) cols.push({ mesAno: `${year}-${mesNum}`, colIdx: i, avIdx: -1 })
     }
   }
-  // avIdx: if next col is NOT another month col, treat it as AV
-  const monthColIdxSet = new Set(cols.map(c => c.colIdx))
+  const monthIdxSet = new Set(cols.map(c => c.colIdx))
   for (const col of cols) {
-    const nextIdx = col.colIdx + 1
-    if (!monthColIdxSet.has(nextIdx)) col.avIdx = nextIdx
+    if (!monthIdxSet.has(col.colIdx + 1)) col.avIdx = col.colIdx + 1
   }
   return cols
 }
 
-// mesAno → grupoBanco → declared total from the group header row
+// Month cols for gorjeta: accepts "JAN 2026" or bare "JAN" (defaults to defaultYear)
+interface SimpleMonthCol { mesAno: string; colIdx: number }
+
+function detectGorjetaMonthCols(headerRow: unknown[], defaultYear: number): SimpleMonthCol[] {
+  const cols: SimpleMonthCol[] = []
+  for (let i = 0; i < headerRow.length; i++) {
+    const cell = toStr(headerRow[i])
+    if (!cell) continue
+    const trimmed = normalizeSpaces(cell).toUpperCase()
+    const m2 = trimmed.match(/^(JAN|FEV|MAR|ABR|MAIO?|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
+    if (m2) {
+      const mesNum = MES_MAP[m2[1]!]
+      if (mesNum !== undefined) cols.push({ mesAno: `${m2[2]}-${mesNum}`, colIdx: i })
+      continue
+    }
+    const m1 = trimmed.match(/^(JAN|FEV|MAR|ABR|MAIO?|JUN|JUL|AGO|SET|OUT|NOV|DEZ)$/)
+    if (m1) {
+      const mesNum = MES_MAP[m1[1]!]
+      if (mesNum !== undefined) cols.push({ mesAno: `${defaultYear}-${mesNum}`, colIdx: i })
+    }
+  }
+  return cols
+}
+
+// ── Parse results & reconciliation types ──────────────────────────────────────
+
 type TotaisDeclarados = Map<string, Map<string, number>>
 
 interface ParseResult {
   rows: DreLinhaInsert[]
   totaisDeclarados: TotaisDeclarados
 }
+
+interface ReconciliationItem {
+  grupo: string
+  declarado: number
+  capturado: number
+  diferenca: number
+  ok: boolean
+}
+
+interface GorjetaReconItem {
+  mesAno: string
+  recebida: number
+  paga: number
+  retencaoCalc: number
+  retencaoDecl: number
+  ok: boolean
+}
+
+interface ReceitaReconItem {
+  mesAno: string
+  totalDRE: number
+  totalReceita: number
+  diferenca: number
+  ok: boolean
+}
+
+interface GorjetaParseResult {
+  rows: DreGorjetaInsert[]
+  recon: GorjetaReconItem[]
+  missing: boolean
+  parseError?: string
+}
+
+interface ReceitaParseResult {
+  rows: DreReceitaInsert[]
+  somaByMes: Map<string, number>
+  missing: boolean
+  parseError?: string
+}
+
+interface ReviewData {
+  realizadoRows: DreLinhaInsert[]
+  orcadoRows: DreLinhaInsert[]
+  gorjetaRows: DreGorjetaInsert[]
+  receitaRows: DreReceitaInsert[]
+  reconciliation: ReconciliationItem[]
+  gorjetaRecon: GorjetaReconItem[]
+  receitaRecon: ReceitaReconItem[]
+  latestMonth: string
+  descricoes: string[]
+  gorjetaMissing: boolean
+  gorjetaError?: string
+  receitaMissing: boolean
+  receitaError?: string
+}
+
+// ── parseSheet (realizado / orçado) ───────────────────────────────────────────
 
 function parseSheet(
   wb: XLSX.WorkBook,
@@ -158,7 +265,7 @@ function parseSheet(
     }
   }
 
-  if (monthCols.length === 0) throw new Error(`Nenhuma coluna de mês detectada na aba '${sheetName}' (procura até a linha 15).`)
+  if (monthCols.length === 0) throw new Error(`Nenhuma coluna de mês na aba '${sheetName}'.`)
   if (descColIdx  === -1) descColIdx  = monthCols[0]!.colIdx - 2
   if (contaColIdx === -1) contaColIdx = monthCols[0]!.colIdx - 1
 
@@ -166,36 +273,28 @@ function parseSheet(
   for (const mc of monthCols) byMonth.set(mc.mesAno, [])
 
   const totaisDeclarados: TotaisDeclarados = new Map()
-
   let currentGrupo: string | null = null
 
   for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
     const row = (raw[rowIdx] ?? []) as unknown[]
     const descRaw = toStr(row[descColIdx])
     if (!descRaw) continue
-
     const desc = descRaw.trim()
 
     if (desc in GRUPO_MAP) {
       currentGrupo = GRUPO_MAP[desc]!
-      // Capture declared totals from the group header row
       for (const mc of monthCols) {
         const val = toNum(row[mc.colIdx])
         if (val === null) continue
         if (!totaisDeclarados.has(mc.mesAno)) totaisDeclarados.set(mc.mesAno, new Map())
-        const grupoMap = totaisDeclarados.get(mc.mesAno)!
-        // If same banco grupo appears twice (e.g. two Excel headers → RECEITA), accumulate
-        grupoMap.set(currentGrupo, (grupoMap.get(currentGrupo) ?? 0) + val)
+        const gm = totaisDeclarados.get(mc.mesAno)!
+        gm.set(currentGrupo, (gm.get(currentGrupo) ?? 0) + val)
       }
       continue
     }
 
-    // ALL-CAPS line not in GRUPO_MAP: sub-item or calculation/total row
     if (desc === desc.toUpperCase() && /\p{L}/u.test(desc)) {
-      if (!SUB_ITENS.has(normalizeSpaces(desc).toUpperCase())) {
-        currentGrupo = null  // calculation/total row — stop collecting until next group
-      }
-      // SUB_ITEM: fall through to detail processing
+      if (!SUB_ITENS.has(normalizeSpaces(desc).toUpperCase())) currentGrupo = null
     }
 
     if (!currentGrupo) continue
@@ -207,17 +306,12 @@ function parseSheet(
     for (const mc of monthCols) {
       const val = toNum(row[mc.colIdx])
       if (val === null) continue
-
       byMonth.get(mc.mesAno)!.push({
-        unit_id:       unitId,
-        mes_ano:       mc.mesAno,
-        tipo,
-        grupo:         currentGrupo,
-        descricao:     descBanco,
-        conta,
-        valor:         val,
+        unit_id: unitId, mes_ano: mc.mesAno, tipo,
+        grupo: currentGrupo, descricao: descBanco, conta,
+        valor: val,
         av_percentual: mc.avIdx >= 0 ? toNum(row[mc.avIdx]) : null,
-        custo_tipo:    null,
+        custo_tipo: null,
       })
     }
   }
@@ -226,11 +320,7 @@ function parseSheet(
   for (const [mesAno, monthRows] of byMonth) {
     if (tipo === "realizado") {
       const nonZero = monthRows.filter(r => r.valor !== null && r.valor !== 0).length
-      if (nonZero < 10) {
-        // Sparse month — also remove its declared totals so reconciliation stays in sync
-        totaisDeclarados.delete(mesAno)
-        continue
-      }
+      if (nonZero < 10) { totaisDeclarados.delete(mesAno); continue }
     }
     rows.push(...monthRows)
   }
@@ -238,61 +328,240 @@ function parseSheet(
   return { rows, totaisDeclarados }
 }
 
-// ── Reconciliation types ───────────────────────────────────────────────────────
+// ── parseGorjeta ──────────────────────────────────────────────────────────────
 
-interface ReconciliationItem {
-  grupo: string
-  declarado: number
-  capturado: number
-  diferenca: number
-  ok: boolean
+const GORJETA_LABELS = [
+  "GORJETA RECEBIDA",
+  "GORJETA PAGA",
+  "RETENÇÃO",
+  "FÉRIAS",
+  "13º",
+  "FGTS",
+  "INSS",
+  "TOTAL",
+] as const
+type GorjetaLabel = typeof GORJETA_LABELS[number]
+
+function parseGorjeta(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult {
+  if (!wb.Sheets["Base Gorjeta"]) return { rows: [], recon: [], missing: true }
+
+  try {
+    const ws = wb.Sheets["Base Gorjeta"]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+
+    // Find month header row (first 5 rows, need ≥ 2 month cols)
+    let headerRowIdx = -1
+    let monthCols: SimpleMonthCol[] = []
+    for (let i = 0; i < Math.min(raw.length, 5); i++) {
+      const cols = detectGorjetaMonthCols((raw[i] ?? []) as unknown[], 2026)
+      if (cols.length >= 2) { headerRowIdx = i; monthCols = cols; break }
+    }
+    if (monthCols.length === 0) throw new Error("Nenhuma coluna de mês encontrada.")
+
+    // Find label rows by scanning text in each row's first non-empty cell
+    const labelRowIdx = new Map<GorjetaLabel, number>()
+
+    for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
+      const row = (raw[rowIdx] ?? []) as unknown[]
+      for (let colIdx = 0; colIdx < row.length; colIdx++) {
+        const cell = toStr(row[colIdx])
+        if (!cell) continue
+        const norm = normalizeSpaces(cell).toUpperCase()
+
+        for (const label of GORJETA_LABELS) {
+          if (labelRowIdx.has(label)) continue
+          const matches =
+            label === "TOTAL"  ? norm === "TOTAL" :
+            label === "13º"    ? norm.includes("13") :
+            norm.includes(label)
+
+          if (matches) {
+            // FÉRIAS and TOTAL: require at least one positive month value
+            if (label === "FÉRIAS" || label === "TOTAL") {
+              const hasPos = monthCols.some(mc => {
+                const v = toNum(row[mc.colIdx])
+                return v !== null && v > 0
+              })
+              if (!hasPos) continue
+            }
+            labelRowIdx.set(label, rowIdx)
+          }
+        }
+        break  // only check first non-empty cell per row
+      }
+      if (labelRowIdx.size >= GORJETA_LABELS.length) break
+    }
+
+    const getVal = (label: GorjetaLabel, colIdx: number): number | null => {
+      const ri = labelRowIdx.get(label)
+      if (ri === undefined) return null
+      return toNum(((raw[ri] ?? []) as unknown[])[colIdx])
+    }
+
+    const rows: DreGorjetaInsert[] = []
+    const recon: GorjetaReconItem[] = []
+
+    for (const mc of monthCols) {
+      const recebida = getVal("GORJETA RECEBIDA", mc.colIdx)
+      if (recebida === null || recebida === 0) continue
+
+      const paga        = getVal("GORJETA PAGA", mc.colIdx)
+      const retencaoDecl = getVal("RETENÇÃO", mc.colIdx)
+
+      rows.push({
+        unit_id: unitId,
+        mes_ano: mc.mesAno,
+        gorjeta_recebida: recebida,
+        gorjeta_paga:     paga,
+        retencao:         retencaoDecl,
+        ferias:           getVal("FÉRIAS", mc.colIdx),
+        decimo_terceiro:  getVal("13º", mc.colIdx),
+        fgts:             getVal("FGTS", mc.colIdx),
+        inss:             getVal("INSS", mc.colIdx),
+        encargos_total:   getVal("TOTAL", mc.colIdx),
+      })
+
+      if (paga !== null && retencaoDecl !== null) {
+        const retencaoCalc = recebida - paga
+        recon.push({
+          mesAno: mc.mesAno,
+          recebida, paga,
+          retencaoCalc,
+          retencaoDecl,
+          ok: Math.abs(retencaoCalc - retencaoDecl) <= 1,
+        })
+      }
+    }
+
+    return { rows, recon, missing: false }
+  } catch (e) {
+    return { rows: [], recon: [], missing: false, parseError: String(e) }
+  }
 }
 
-interface ReviewData {
-  realizadoRows: DreLinhaInsert[]
-  orcadoRows: DreLinhaInsert[]
-  reconciliation: ReconciliationItem[]
-  latestMonth: string
-  descricoes: string[]
+// ── parseReceita ──────────────────────────────────────────────────────────────
+
+function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
+  if (!wb.Sheets["B.Receita"]) return { rows: [], somaByMes: new Map(), missing: true }
+
+  try {
+    const ws = wb.Sheets["B.Receita"]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+
+    let headerRowIdx = -1
+    let bandeiraCol = -1, valorCol = -1, classCol = -1, grupoCol = -1, mesCol = -1
+
+    for (let i = 0; i < Math.min(raw.length, 5); i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      let found = false
+      for (let j = 0; j < row.length; j++) {
+        const v = toStr(row[j])
+        if (!v) continue
+        const up = normalizeSpaces(v).toUpperCase()
+        if      (up === "BANDEIRA")                              { bandeiraCol = j; found = true }
+        else if (up === "VALOR")                                  valorCol    = j
+        else if (up === "CLASSIFICAÇÃO" || up === "CLASSIFICACAO") classCol   = j
+        else if (up === "GRUPO")                                  grupoCol    = j
+        else if (up.includes("PAGTO"))                            mesCol      = j
+      }
+      if (found) { headerRowIdx = i; break }
+    }
+
+    if (headerRowIdx === -1 || valorCol === -1 || mesCol === -1) {
+      throw new Error("Aba 'B.Receita': colunas BANDEIRA, VALOR ou MÊS PAGTO não encontradas.")
+    }
+
+    const aggMap = new Map<string, DreReceitaInsert>()
+
+    for (let rowIdx = headerRowIdx + 1; rowIdx < raw.length; rowIdx++) {
+      const row = (raw[rowIdx] ?? []) as unknown[]
+      const mesCell = toStr(row[mesCol])
+      if (!mesCell) continue
+      const mesAno = parseMesAno(mesCell)
+      if (!mesAno) continue
+
+      const valor = toNum(row[valorCol])
+      if (valor === null) continue
+
+      const bandeira      = bandeiraCol >= 0 ? toStr(row[bandeiraCol]) : null
+      const classificacao = classCol    >= 0 ? toStr(row[classCol])    : null
+      const grupo         = grupoCol    >= 0 ? toStr(row[grupoCol])    : null
+
+      const key = `${mesAno}||${bandeira ?? ""}||${classificacao ?? ""}||${grupo ?? ""}`
+      if (aggMap.has(key)) {
+        aggMap.get(key)!.valor += valor
+      } else {
+        aggMap.set(key, { unit_id: unitId, mes_ano: mesAno, bandeira, classificacao, grupo, valor })
+      }
+    }
+
+    const rows = [...aggMap.values()]
+    const somaByMes = new Map<string, number>()
+    for (const r of rows) somaByMes.set(r.mes_ano, (somaByMes.get(r.mes_ano) ?? 0) + r.valor)
+
+    return { rows, somaByMes, missing: false }
+  } catch (e) {
+    return { rows: [], somaByMes: new Map(), missing: false, parseError: String(e) }
+  }
 }
 
-function buildReconciliation(
+// ── Reconciliation builders ────────────────────────────────────────────────────
+
+function buildDreReconciliation(
   rows: DreLinhaInsert[],
   totaisDeclarados: TotaisDeclarados,
   latestMonth: string
 ): ReconciliationItem[] {
-  // Sum captured values per grupo for the latest month
   const capturado = new Map<string, number>()
   for (const r of rows) {
     if (r.mes_ano !== latestMonth) continue
     capturado.set(r.grupo, (capturado.get(r.grupo) ?? 0) + (r.valor ?? 0))
   }
-
-  const declaradoMes = totaisDeclarados.get(latestMonth) ?? new Map<string, number>()
-
-  // Union of all grupos that appear in either declared or captured
-  const grupos = new Set([...declaradoMes.keys(), ...capturado.keys()])
-
+  const declMes = totaisDeclarados.get(latestMonth) ?? new Map<string, number>()
+  const grupos = new Set([...declMes.keys(), ...capturado.keys()])
   return [...grupos].map(grupo => {
-    const decl = declaradoMes.get(grupo) ?? 0
+    const decl = declMes.get(grupo) ?? 0
     const capt = capturado.get(grupo) ?? 0
     const diff = decl - capt
-    return {
-      grupo,
-      declarado: decl,
-      capturado: capt,
-      diferenca: diff,
-      ok: Math.abs(diff) <= 1,
-    }
+    return { grupo, declarado: decl, capturado: capt, diferenca: diff, ok: Math.abs(diff) <= 1 }
   }).sort((a, b) => a.grupo.localeCompare(b.grupo))
+}
+
+function buildReceitaReconciliation(
+  realizadoRows: DreLinhaInsert[],
+  somaByMes: Map<string, number>
+): ReceitaReconItem[] {
+  const receitaDRE = new Map<string, number>()
+  for (const r of realizadoRows) {
+    if (r.grupo !== "RECEITA") continue
+    receitaDRE.set(r.mes_ano, (receitaDRE.get(r.mes_ano) ?? 0) + (r.valor ?? 0))
+  }
+  return [...somaByMes.entries()].map(([mesAno, totalReceita]) => {
+    const totalDRE = receitaDRE.get(mesAno) ?? 0
+    const diferenca = totalDRE - totalReceita
+    return { mesAno, totalDRE, totalReceita, diferenca, ok: Math.abs(diferenca) <= 1 }
+  }).sort((a, b) => a.mesAno.localeCompare(b.mesAno))
+}
+
+// ── Batch insert helper ────────────────────────────────────────────────────────
+
+async function batchInsert<T>(
+  rows: T[],
+  insertFn: (batch: T[]) => Promise<{ ok: boolean; count: number; error?: string }>,
+  onBatch: (n: number) => void,
+  batchSize = 500
+): Promise<string | null> {
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const result = await insertFn(rows.slice(i, i + batchSize))
+    if (!result.ok) return result.error ?? "Erro desconhecido"
+    onBatch(Math.min(batchSize, rows.length - i))
+  }
+  return null
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-interface Props {
-  onClose: () => void
-  onSuccess: () => void
-}
+interface Props { onClose: () => void; onSuccess: () => void }
 
 type Status = "idle" | "loading_unit" | "ready" | "parsing" | "review" | "uploading" | "done" | "error"
 
@@ -318,7 +587,7 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
     setStatus("loading_unit")
     const id = await getCurrentUnitId()
     if (!id) {
-      setErrorMsg("Não foi possível determinar o unit_id. Verifique se você está autenticado.")
+      setErrorMsg("Não foi possível determinar o unit_id. Verifique se está autenticado.")
       setStatus("error")
       return
     }
@@ -329,7 +598,6 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
   async function handleImport() {
     const f = inputRef.current?.files?.[0]
     if (!f || !unitId) return
-
     setErrorMsg(null)
     setStatus("parsing")
 
@@ -340,30 +608,49 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const realizadoResult = parseSheet(wb, "Base Realizado",       "realizado", unitId)
       const orcadoResult    = parseSheet(wb, "04 -Base Orçado 2026", "orcado",    unitId)
 
-      const total = realizadoResult.rows.length + orcadoResult.rows.length
-      if (total === 0) {
-        setErrorMsg("Nenhuma linha válida encontrada nas abas 'Base Realizado' e '04 -Base Orçado 2026'.")
-        setStatus("error")
-        return
-      }
+      let gorjetaResult: GorjetaParseResult
+      try { gorjetaResult = parseGorjeta(wb, unitId) }
+      catch (e) { gorjetaResult = { rows: [], recon: [], missing: false, parseError: String(e) } }
+
+      let receitaResult: ReceitaParseResult
+      try { receitaResult = parseReceita(wb, unitId) }
+      catch (e) { receitaResult = { rows: [], somaByMes: new Map(), missing: false, parseError: String(e) } }
 
       const mesesR = [...new Set(realizadoResult.rows.map(r => r.mes_ano))].sort()
       const latestMonth = mesesR.at(-1) ?? ""
 
+      const total =
+        realizadoResult.rows.length + orcadoResult.rows.length +
+        gorjetaResult.rows.length + receitaResult.rows.length
+
+      if (total === 0) {
+        setErrorMsg("Nenhuma linha válida encontrada no arquivo.")
+        setStatus("error")
+        return
+      }
+
       const reconciliation = latestMonth
-        ? buildReconciliation(realizadoResult.rows, realizadoResult.totaisDeclarados, latestMonth)
+        ? buildDreReconciliation(realizadoResult.rows, realizadoResult.totaisDeclarados, latestMonth)
         : []
 
-      const descricoes = [...new Set(
-        realizadoResult.rows.map(r => `${r.grupo} | ${r.descricao}`)
-      )].sort()
+      const receitaRecon = receitaResult.rows.length > 0
+        ? buildReceitaReconciliation(realizadoResult.rows, receitaResult.somaByMes)
+        : []
 
       setReviewData({
         realizadoRows: realizadoResult.rows,
-        orcadoRows: orcadoResult.rows,
+        orcadoRows:    orcadoResult.rows,
+        gorjetaRows:   gorjetaResult.rows,
+        receitaRows:   receitaResult.rows,
         reconciliation,
+        gorjetaRecon:  gorjetaResult.recon,
+        receitaRecon,
         latestMonth,
-        descricoes,
+        descricoes: [...new Set(realizadoResult.rows.map(r => `${r.grupo} | ${r.descricao}`))].sort(),
+        gorjetaMissing: gorjetaResult.missing,
+        gorjetaError:  gorjetaResult.parseError,
+        receitaMissing: receitaResult.missing,
+        receitaError:  receitaResult.parseError,
       })
       setMonthsRealizado(mesesR)
       setMonthsOrcado([...new Set(orcadoResult.rows.map(r => r.mes_ano))].sort())
@@ -377,41 +664,47 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
 
   async function handleConfirm() {
     if (!reviewData || !unitId) return
-
-    const { realizadoRows, orcadoRows } = reviewData
-    const total = realizadoRows.length + orcadoRows.length
+    const { realizadoRows, orcadoRows, gorjetaRows, receitaRows } = reviewData
     setStatus("uploading")
 
-    try {
-      let imported = 0
+    let imported = 0
+    const bump = (n: number) => {
+      imported += n
+      setImportedRows(imported)
+      setProgress(Math.round((imported / totalRows) * 100))
+    }
 
+    try {
       // ── Realizado ──────────────────────────────────────────────────────────
       setPhase("Importando Realizado…")
       const delR = await deleteDreLinhasRealizado(unitId)
       if (!delR.ok) { setErrorMsg(delR.error ?? "Erro ao limpar realizado."); setStatus("error"); return }
-
-      const BATCH = 500
-      for (let i = 0; i < realizadoRows.length; i += BATCH) {
-        const batch = realizadoRows.slice(i, i + BATCH)
-        const result = await insertDreLinhas(batch)
-        if (!result.ok) { setErrorMsg(result.error ?? "Erro ao inserir realizado."); setStatus("error"); return }
-        imported += batch.length
-        setImportedRows(imported)
-        setProgress(Math.round((imported / total) * 100))
-      }
+      const errR = await batchInsert(realizadoRows, insertDreLinhas, bump)
+      if (errR) { setErrorMsg(errR); setStatus("error"); return }
 
       // ── Orçado ─────────────────────────────────────────────────────────────
       setPhase("Importando Orçado…")
       const delO = await deleteDreLinhasOrcado(unitId)
       if (!delO.ok) { setErrorMsg(delO.error ?? "Erro ao limpar orçado."); setStatus("error"); return }
+      const errO = await batchInsert(orcadoRows, insertDreLinhas, bump)
+      if (errO) { setErrorMsg(errO); setStatus("error"); return }
 
-      for (let i = 0; i < orcadoRows.length; i += BATCH) {
-        const batch = orcadoRows.slice(i, i + BATCH)
-        const result = await insertDreLinhas(batch)
-        if (!result.ok) { setErrorMsg(result.error ?? "Erro ao inserir orçado."); setStatus("error"); return }
-        imported += batch.length
-        setImportedRows(imported)
-        setProgress(Math.round((imported / total) * 100))
+      // ── Gorjeta ────────────────────────────────────────────────────────────
+      if (gorjetaRows.length > 0) {
+        setPhase("Importando Gorjeta…")
+        const delG = await deleteDreGorjeta(unitId)
+        if (!delG.ok) { setErrorMsg(delG.error ?? "Erro ao limpar gorjeta."); setStatus("error"); return }
+        const errG = await batchInsert(gorjetaRows, insertDreGorjeta, bump)
+        if (errG) { setErrorMsg(errG); setStatus("error"); return }
+      }
+
+      // ── Receita ────────────────────────────────────────────────────────────
+      if (receitaRows.length > 0) {
+        setPhase("Importando Receita…")
+        const delRc = await deleteDreReceita(unitId)
+        if (!delRc.ok) { setErrorMsg(delRc.error ?? "Erro ao limpar receita."); setStatus("error"); return }
+        const errRc = await batchInsert(receitaRows, insertDreReceita, bump)
+        if (errRc) { setErrorMsg(errRc); setStatus("error"); return }
       }
 
       setStatus("done")
@@ -423,6 +716,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
   }
 
   const busy = status === "loading_unit" || status === "parsing" || status === "uploading"
+
+  // ── JSX ────────────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -438,26 +733,21 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         border: "1px solid var(--border)",
         borderRadius: 12,
         padding: 28,
-        width: status === "review" ? 620 : 520,
+        width: status === "review" ? 640 : 520,
         maxWidth: "95vw",
         maxHeight: "90vh",
         overflowY: "auto",
       }}>
-        {/* Title row */}
+        {/* Title */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
-            Importar DRE (.xlsx)
-          </span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Importar DRE (.xlsx)</span>
           {!busy && (
-            <button
-              onClick={onClose}
-              style={{ background: "none", border: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 18 }}
-            >
+            <button onClick={onClose}
+              style={{ background: "none", border: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 18 }}>
               ✕
             </button>
           )}
         </div>
-
         {unitId && (
           <p style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 16 }}>
             unit_id: <code style={{ fontSize: 10 }}>{unitId}</code>
@@ -468,32 +758,23 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         {(status === "idle" || status === "ready" || status === "loading_unit" || status === "error") && (
           <>
             <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 16, lineHeight: 1.5 }}>
-              Selecione o arquivo Excel da DRE. As abas <strong>"Base Realizado"</strong> e{" "}
-              <strong>"04 -Base Orçado 2026"</strong> serão importadas em sequência.
+              Selecione o arquivo Excel da DRE. Abas importadas:{" "}
+              <strong>Base Realizado</strong>, <strong>04 -Base Orçado 2026</strong>,{" "}
+              <strong>Base Gorjeta</strong> e <strong>B.Receita</strong>.
             </p>
-
             <label style={{
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              display: "flex", flexDirection: "column", alignItems: "center",
               border: "2px dashed var(--border)", borderRadius: 8, padding: "24px 16px",
               cursor: "pointer", gap: 8, marginBottom: 16,
               background: fileName ? "var(--surface-2)" : "transparent",
             }}>
               <span style={{ fontSize: 28 }}>📂</span>
-              {status === "loading_unit" ? (
-                <span style={{ fontSize: 13, color: "var(--text-3)" }}>Verificando autenticação…</span>
-              ) : (
-                <span style={{ fontSize: 13, color: "var(--text-3)" }}>
-                  {fileName ?? "Clique ou arraste o arquivo .xlsx"}
-                </span>
-              )}
-              <input
-                ref={inputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                style={{ display: "none" }}
-                onChange={handleFileChange}
-                disabled={busy}
-              />
+              {status === "loading_unit"
+                ? <span style={{ fontSize: 13, color: "var(--text-3)" }}>Verificando autenticação…</span>
+                : <span style={{ fontSize: 13, color: "var(--text-3)" }}>{fileName ?? "Clique ou arraste o arquivo .xlsx"}</span>
+              }
+              <input ref={inputRef} type="file" accept=".xlsx,.xls"
+                style={{ display: "none" }} onChange={handleFileChange} disabled={busy} />
             </label>
 
             {errorMsg && (
@@ -501,192 +782,195 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                 background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
                 borderRadius: 6, padding: "10px 14px", marginBottom: 16,
                 fontSize: 13, color: "#f87171",
-              }}>
-                {errorMsg}
-              </div>
+              }}>{errorMsg}</div>
             )}
 
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button
-                onClick={onClose}
-                disabled={busy}
-                style={{
-                  padding: "8px 18px", borderRadius: 6, border: "1px solid var(--border)",
-                  background: "transparent", color: "var(--text-3)",
-                  cursor: busy ? "not-allowed" : "pointer", fontSize: 13,
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleImport}
-                disabled={!fileName || !unitId || busy}
-                style={{
-                  padding: "8px 20px", borderRadius: 6, border: "none",
-                  background: (fileName && unitId && !busy) ? "var(--brand)" : "var(--surface-2)",
-                  color: (fileName && unitId && !busy) ? "#fff" : "var(--text-3)",
-                  cursor: (fileName && unitId && !busy) ? "pointer" : "not-allowed",
-                  fontSize: 13, fontWeight: 600,
-                }}
-              >
-                Importar
-              </button>
+              <button onClick={onClose} disabled={busy} style={{
+                padding: "8px 18px", borderRadius: 6, border: "1px solid var(--border)",
+                background: "transparent", color: "var(--text-3)",
+                cursor: busy ? "not-allowed" : "pointer", fontSize: 13,
+              }}>Cancelar</button>
+              <button onClick={handleImport} disabled={!fileName || !unitId || busy} style={{
+                padding: "8px 20px", borderRadius: 6, border: "none",
+                background: (fileName && unitId && !busy) ? "var(--brand)" : "var(--surface-2)",
+                color: (fileName && unitId && !busy) ? "#fff" : "var(--text-3)",
+                cursor: (fileName && unitId && !busy) ? "pointer" : "not-allowed",
+                fontSize: 13, fontWeight: 600,
+              }}>Importar</button>
             </div>
           </>
         )}
 
-        {/* ── Parsing spinner ── */}
+        {/* ── Parsing ── */}
         {status === "parsing" && (
           <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-3)", fontSize: 14 }}>
             Lendo abas do Excel…
           </div>
         )}
 
-        {/* ── Review / reconciliation ── */}
-        {status === "review" && reviewData && (
-          <>
-            <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
-                Conferência — {mesAnoLabel(reviewData.latestMonth)}
-              </span>
-              <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: 8 }}>
-                (mês mais recente do realizado)
-              </span>
-            </div>
+        {/* ── Review ── */}
+        {status === "review" && reviewData && (() => {
+          const hasDivergence = reviewData.reconciliation.some(r => !r.ok)
+            || reviewData.gorjetaRecon.some(r => !r.ok)
+            || reviewData.receitaRecon.some(r => !r.ok)
 
-            {/* Reconciliation table */}
-            <div style={{
-              border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 16,
-            }}>
-              {/* Table header */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 90px 90px 90px 28px",
-                gap: 0,
-                background: "var(--surface-2)",
-                padding: "6px 12px",
-                fontSize: 11, fontWeight: 600, color: "var(--text-3)",
-              }}>
-                <span>Grupo</span>
-                <span style={{ textAlign: "right" }}>Declarado</span>
-                <span style={{ textAlign: "right" }}>Capturado</span>
-                <span style={{ textAlign: "right" }}>Diferença</span>
-                <span style={{ textAlign: "center" }}></span>
+          return (
+            <>
+              {/* Section: DRE groups */}
+              <div style={{ marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                  Conferência DRE — {mesAnoLabel(reviewData.latestMonth)}
+                </span>
+                <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: 8 }}>(mês mais recente)</span>
               </div>
+              <ReconTable items={reviewData.reconciliation} />
 
-              {reviewData.reconciliation.map((item, i) => (
-                <div
-                  key={item.grupo}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 90px 90px 90px 28px",
-                    gap: 0,
-                    padding: "6px 12px",
-                    fontSize: 12,
-                    borderTop: i > 0 ? "1px solid var(--border)" : undefined,
-                    background: item.ok ? "transparent" : "rgba(251,191,36,0.06)",
-                    color: "var(--text)",
-                  }}
-                >
-                  <span style={{ color: "var(--text-3)", fontSize: 11 }}>{item.grupo}</span>
-                  <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtR(item.declarado)}
-                  </span>
-                  <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtR(item.capturado)}
-                  </span>
-                  <span style={{
-                    textAlign: "right", fontVariantNumeric: "tabular-nums",
-                    color: item.ok ? "var(--text-3)" : "#f59e0b",
-                    fontWeight: item.ok ? 400 : 600,
+              {/* Section: Gorjeta */}
+              <div style={{ marginTop: 16, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Gorjeta</span>
+                {reviewData.gorjetaMissing && (
+                  <span style={{ fontSize: 11, color: "var(--text-3)", marginLeft: 8 }}>aba não encontrada — ignorada</span>
+                )}
+                {reviewData.gorjetaError && (
+                  <span style={{ fontSize: 11, color: "#f87171", marginLeft: 8 }}>{reviewData.gorjetaError}</span>
+                )}
+              </div>
+              {reviewData.gorjetaRecon.length > 0 && (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "60px 90px 90px 90px 90px 28px",
+                    background: "var(--surface-2)", padding: "6px 12px",
+                    fontSize: 11, fontWeight: 600, color: "var(--text-3)", gap: 0,
                   }}>
-                    {item.ok ? "—" : fmtR(item.diferenca)}
-                  </span>
-                  <span style={{ textAlign: "center" }}>
-                    {item.ok ? "✅" : "⚠️"}
-                  </span>
+                    <span>Mês</span>
+                    <span style={{ textAlign: "right" }}>Recebida</span>
+                    <span style={{ textAlign: "right" }}>Paga</span>
+                    <span style={{ textAlign: "right" }}>Ret. calc.</span>
+                    <span style={{ textAlign: "right" }}>Ret. decl.</span>
+                    <span style={{ textAlign: "center" }}></span>
+                  </div>
+                  {reviewData.gorjetaRecon.map((g, i) => (
+                    <div key={g.mesAno} style={{
+                      display: "grid", gridTemplateColumns: "60px 90px 90px 90px 90px 28px",
+                      padding: "6px 12px", fontSize: 12, gap: 0,
+                      borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                      background: g.ok ? "transparent" : "rgba(251,191,36,0.06)",
+                    }}>
+                      <span style={{ color: "var(--text-3)", fontSize: 11 }}>{mesAnoLabel(g.mesAno)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(g.recebida)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(g.paga)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(g.retencaoCalc)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: g.ok ? "var(--text-3)" : "#f59e0b", fontWeight: g.ok ? 400 : 600 }}>
+                        {fmtR(g.retencaoDecl)}
+                      </span>
+                      <span style={{ textAlign: "center" }}>{g.ok ? "✅" : "⚠️"}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+              {reviewData.gorjetaRows.length === 0 && !reviewData.gorjetaMissing && !reviewData.gorjetaError && (
+                <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>Nenhuma linha de gorjeta com valor.</p>
+              )}
 
-            {/* Summary */}
-            <div style={{
-              fontSize: 12, color: "var(--text-3)", marginBottom: 16,
-              display: "flex", gap: 16, flexWrap: "wrap",
-            }}>
-              <span>Realizado: <strong style={{ color: "var(--text)" }}>{reviewData.realizadoRows.length}</strong> linhas</span>
-              <span>Orçado: <strong style={{ color: "var(--text)" }}>{reviewData.orcadoRows.length}</strong> linhas</span>
-              <span>Meses realizado: <strong style={{ color: "var(--text)" }}>{monthsRealizado.map(mesAnoLabel).join(", ")}</strong></span>
-            </div>
-
-            {/* Descriptions list (informativo) */}
-            <details style={{ marginBottom: 16 }}>
-              <summary style={{ fontSize: 12, color: "var(--text-3)", cursor: "pointer", userSelect: "none" }}>
-                Linhas capturadas ({reviewData.descricoes.length} combinações grupo|descrição)
-              </summary>
-              <div style={{
-                marginTop: 8, maxHeight: 160, overflowY: "auto",
-                border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px",
-              }}>
-                {reviewData.descricoes.map(d => (
-                  <div key={d} style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.8 }}>{d}</div>
-                ))}
+              {/* Section: Receita */}
+              <div style={{ marginTop: 16, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Receita por mês</span>
+                {reviewData.receitaMissing && (
+                  <span style={{ fontSize: 11, color: "var(--text-3)", marginLeft: 8 }}>aba não encontrada — ignorada</span>
+                )}
+                {reviewData.receitaError && (
+                  <span style={{ fontSize: 11, color: "#f87171", marginLeft: 8 }}>{reviewData.receitaError}</span>
+                )}
               </div>
-            </details>
+              {reviewData.receitaRecon.length > 0 && (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "60px 1fr 1fr 90px 28px",
+                    background: "var(--surface-2)", padding: "6px 12px",
+                    fontSize: 11, fontWeight: 600, color: "var(--text-3)", gap: 0,
+                  }}>
+                    <span>Mês</span>
+                    <span style={{ textAlign: "right" }}>DRE</span>
+                    <span style={{ textAlign: "right" }}>Planilha</span>
+                    <span style={{ textAlign: "right" }}>Diferença</span>
+                    <span style={{ textAlign: "center" }}></span>
+                  </div>
+                  {reviewData.receitaRecon.map((r, i) => (
+                    <div key={r.mesAno} style={{
+                      display: "grid", gridTemplateColumns: "60px 1fr 1fr 90px 28px",
+                      padding: "6px 12px", fontSize: 12, gap: 0,
+                      borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                      background: r.ok ? "transparent" : "rgba(251,191,36,0.06)",
+                    }}>
+                      <span style={{ color: "var(--text-3)", fontSize: 11 }}>{mesAnoLabel(r.mesAno)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalDRE)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(r.totalReceita)}</span>
+                      <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.ok ? "var(--text-3)" : "#f59e0b", fontWeight: r.ok ? 400 : 600 }}>
+                        {r.ok ? "—" : fmtR(r.diferenca)}
+                      </span>
+                      <span style={{ textAlign: "center" }}>{r.ok ? "✅" : "⚠️"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            {/* Divergence note */}
-            {reviewData.reconciliation.some(r => !r.ok) && (
-              <div style={{
-                background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
-                borderRadius: 6, padding: "8px 12px", marginBottom: 16,
-                fontSize: 12, color: "#f59e0b", lineHeight: 1.5,
-              }}>
-                ⚠️ Há divergências entre o total declarado e as linhas capturadas.
-                Isso pode ocorrer no grupo PESSOAL (subtotal parcial) ou se alguma linha não foi mapeada.
-                O import continua disponível — verifique antes de confirmar.
+              {/* Summary */}
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 16, marginBottom: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <span>Realizado: <strong style={{ color: "var(--text)" }}>{reviewData.realizadoRows.length}</strong></span>
+                <span>Orçado: <strong style={{ color: "var(--text)" }}>{reviewData.orcadoRows.length}</strong></span>
+                {reviewData.gorjetaRows.length > 0 && <span>Gorjeta: <strong style={{ color: "var(--text)" }}>{reviewData.gorjetaRows.length}</strong> meses</span>}
+                {reviewData.receitaRows.length > 0 && <span>Receita: <strong style={{ color: "var(--text)" }}>{reviewData.receitaRows.length}</strong> linhas</span>}
+                <span>Meses realizado: <strong style={{ color: "var(--text)" }}>{monthsRealizado.map(mesAnoLabel).join(", ")}</strong></span>
               </div>
-            )}
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button
-                onClick={onClose}
-                style={{
+              {/* Descriptions */}
+              <details style={{ marginBottom: 12 }}>
+                <summary style={{ fontSize: 12, color: "var(--text-3)", cursor: "pointer", userSelect: "none" }}>
+                  Linhas DRE capturadas ({reviewData.descricoes.length} grupo|descrição)
+                </summary>
+                <div style={{ marginTop: 8, maxHeight: 140, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px" }}>
+                  {reviewData.descricoes.map(d => (
+                    <div key={d} style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.8 }}>{d}</div>
+                  ))}
+                </div>
+              </details>
+
+              {hasDivergence && (
+                <div style={{
+                  background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
+                  borderRadius: 6, padding: "8px 12px", marginBottom: 12,
+                  fontSize: 12, color: "#f59e0b", lineHeight: 1.5,
+                }}>
+                  ⚠️ Há divergências. Verifique antes de confirmar — o import está disponível mesmo assim.
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={onClose} style={{
                   padding: "8px 18px", borderRadius: 6, border: "1px solid var(--border)",
                   background: "transparent", color: "var(--text-3)", cursor: "pointer", fontSize: 13,
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirm}
-                style={{
+                }}>Cancelar</button>
+                <button onClick={handleConfirm} style={{
                   padding: "8px 20px", borderRadius: 6, border: "none",
                   background: "var(--brand)", color: "#fff",
                   cursor: "pointer", fontSize: 13, fontWeight: 600,
-                }}
-              >
-                Confirmar Importação
-              </button>
-            </div>
-          </>
-        )}
+                }}>Confirmar Importação</button>
+              </div>
+            </>
+          )
+        })()}
 
-        {/* ── Upload progress ── */}
+        {/* ── Uploading ── */}
         {status === "uploading" && (
           <div style={{ padding: "8px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, color: "var(--text-3)" }}>
-              <span>{phase}</span>
-              <span>{importedRows} / {totalRows}</span>
+              <span>{phase}</span><span>{importedRows} / {totalRows}</span>
             </div>
             <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{
-                height: "100%", background: "var(--brand)",
-                width: `${progress}%`, transition: "width 0.3s ease",
-              }} />
+              <div style={{ height: "100%", background: "var(--brand)", width: `${progress}%`, transition: "width 0.3s ease" }} />
             </div>
-            <p style={{ fontSize: 12, color: "var(--text-3)", marginTop: 10, textAlign: "center" }}>
-              {progress}% concluído
-            </p>
+            <p style={{ fontSize: 12, color: "var(--text-3)", marginTop: 10, textAlign: "center" }}>{progress}% concluído</p>
           </div>
         )}
 
@@ -694,22 +978,52 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         {status === "done" && (
           <div style={{ textAlign: "center", padding: "20px 0" }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
-            <p style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>
-              {importedRows} linhas importadas
-            </p>
+            <p style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{importedRows} linhas importadas</p>
             {monthsRealizado.length > 0 && (
-              <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>
-                Realizado: {monthsRealizado.map(mesAnoLabel).join(", ")}
-              </p>
+              <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>Realizado: {monthsRealizado.map(mesAnoLabel).join(", ")}</p>
             )}
             {monthsOrcado.length > 0 && (
-              <p style={{ fontSize: 12, color: "var(--text-3)" }}>
-                Orçado: {monthsOrcado.map(mesAnoLabel).join(", ")}
-              </p>
+              <p style={{ fontSize: 12, color: "var(--text-3)" }}>Orçado: {monthsOrcado.map(mesAnoLabel).join(", ")}</p>
             )}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── Recon table sub-component (DRE groups) ─────────────────────────────────────
+
+function ReconTable({ items }: { items: ReconciliationItem[] }) {
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 4 }}>
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 28px",
+        background: "var(--surface-2)", padding: "6px 12px",
+        fontSize: 11, fontWeight: 600, color: "var(--text-3)", gap: 0,
+      }}>
+        <span>Grupo</span>
+        <span style={{ textAlign: "right" }}>Declarado</span>
+        <span style={{ textAlign: "right" }}>Capturado</span>
+        <span style={{ textAlign: "right" }}>Diferença</span>
+        <span style={{ textAlign: "center" }}></span>
+      </div>
+      {items.map((item, i) => (
+        <div key={item.grupo} style={{
+          display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 28px",
+          padding: "6px 12px", fontSize: 12, gap: 0,
+          borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+          background: item.ok ? "transparent" : "rgba(251,191,36,0.06)",
+        }}>
+          <span style={{ color: "var(--text-3)", fontSize: 11 }}>{item.grupo}</span>
+          <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(item.declarado)}</span>
+          <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtR(item.capturado)}</span>
+          <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: item.ok ? "var(--text-3)" : "#f59e0b", fontWeight: item.ok ? 400 : 600 }}>
+            {item.ok ? "—" : fmtR(item.diferenca)}
+          </span>
+          <span style={{ textAlign: "center" }}>{item.ok ? "✅" : "⚠️"}</span>
+        </div>
+      ))}
     </div>
   )
 }
