@@ -85,6 +85,7 @@ export async function getProdutosMeses(
       .from("produtos_relatorio")
       .select("mes_lancamento, ano_lancamento")
       .eq("unit_id", unitId)
+      .limit(10000)
     if (!data) return []
     const map = new Map<string, number>()
     for (const r of data) {
@@ -138,7 +139,7 @@ export async function getRankingProdutos(
       .eq("mes_lancamento", mes)
       .eq("ano_lancamento", ano)
       .eq("calcula_cmv", true)
-      .limit(5000)
+      .limit(10000)
     if (unitId) q = q.eq("unit_id", unitId)
     const { data } = await q
     if (!data || data.length === 0) return empty

@@ -63,7 +63,7 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
     .eq("ano_lancamento", ano)
     .order("fornecedor_nome")
     .order("item_descricao")
-    .limit(2000)
+    .limit(10000)
   if (q) rowsQuery = rowsQuery.ilike("item_descricao", `%${q}%`)
   const { data: rows } = await rowsQuery
 
@@ -75,6 +75,7 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   )
     .eq("mes_lancamento", prevMes)
     .eq("ano_lancamento", prevAno)
+    .limit(10000)
 
   // Diagnostic: OJO DE BIFE cost columns — remove after review
   {
