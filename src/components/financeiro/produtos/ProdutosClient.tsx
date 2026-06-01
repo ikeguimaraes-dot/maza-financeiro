@@ -147,7 +147,9 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
     return map
   }, [prevCmvRows])
 
-  const hasData = rows.length > 0
+  const hasData       = rows.length > 0
+  const totalComprado = rows.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0)
+  const fornUnicos    = new Set(rows.map(r => r.fornecedor_nome).filter(Boolean)).size
 
   return (
     <>
@@ -201,6 +203,27 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           </button>
         </div>
       </header>
+
+      {/* ── Summary KPIs ── */}
+      {hasData && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:12, marginBottom:20 }}>
+          {([
+            { label:"Total Comprado",  value: fmtBRL(totalComprado),                        sub: mesLabel(mes, ano) },
+            { label:"Itens CMV",       value: cmvRows.length.toLocaleString("pt-BR"),        sub: `de ${rows.length.toLocaleString("pt-BR")} itens` },
+            { label:"Fornecedores",    value: fornUnicos.toLocaleString("pt-BR"),            sub: "únicos no mês" },
+          ]).map(({ label, value, sub }) => (
+            <div key={label} style={{
+              background:"var(--surface)", border:"1px solid var(--border)",
+              borderRadius:10, padding:"14px 16px",
+            }}>
+              <p style={{ fontSize:10, fontWeight:700, letterSpacing:0.8, textTransform:"uppercase",
+                color:"var(--text-3)", margin:0 }}>{label}</p>
+              <p style={{ fontSize:20, fontWeight:700, color:"var(--text)", margin:"4px 0 0" }}>{value}</p>
+              <p style={{ fontSize:11, color:"var(--text-3)", margin:0 }}>{sub}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
@@ -357,6 +380,17 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ borderTop:"2px solid var(--border)", background:"var(--surface-2)" }}>
+                  <td colSpan={5} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
+                    {filterCat ? `Total ${filterCat}` : "Total geral"}
+                  </td>
+                  <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
+                    {fmtBRL(filtered.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0))}
+                  </td>
+                  <td colSpan={5} />
+                </tr>
+              </tfoot>
             </table>
           </div>
 
