@@ -1,6 +1,7 @@
 "use server"
 
 import { createSupabaseServerClient } from "@kph/db/supabase/server"
+import { getCurrentUnit } from "@kph/auth/unit"
 
 export type DreLinhaInsert = {
   unit_id: string
@@ -51,4 +52,29 @@ export async function insertDreLinhas(
   } catch (e) {
     return { ok: false, count: 0, error: String(e) }
   }
+}
+
+export async function deleteDreLinhasOrcado(
+  unitId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db
+      .from("dre_linhas_detalhadas")
+      .delete()
+      .eq("unit_id", unitId)
+      .eq("tipo", "orcado")
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+export async function getCurrentUnitId(): Promise<string | null> {
+  const unit = await getCurrentUnit()
+  return unit?.id ?? null
 }
