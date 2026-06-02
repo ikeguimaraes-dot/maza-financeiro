@@ -552,6 +552,7 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
       const row = (raw[rowIdx] ?? []) as unknown[]
       const mesCell = toStr(row[mesCol])
       if (!mesCell) continue
+      if (rowIdx === headerRowIdx + 1) console.log('[MDNA receita] primeiro mesCell:', mesCell)
       const mesAno = parseMesAno(mesCell)
       if (!mesAno) continue
 
@@ -1274,6 +1275,7 @@ function parseMdnaLinhas(
 
   console.log('[MDNA] grupos detectados:', gruposCount)
   console.log('[MDNA] linhas geradas:', rows.length)
+  console.log('[MDNA] totaisDeclarados:', [...totaisDeclarados.entries()].map(([m,g]) => [m, [...g.entries()]]))
 
   return { rows, totaisDeclarados }
 }
@@ -1322,6 +1324,9 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult
   try {
     const ws  = wb.Sheets["Base Gorjeta"]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+    console.log('[MDNA gorjeta] raw[3]:', raw[3])
+    console.log('[MDNA gorjeta] raw[4]:', raw[4])
+    console.log('[MDNA gorjeta] raw[6]:', raw[6])
     // col[3]=jan(2026-1), col[4]=fev(2026-2), col[5]=mar(2026-3), col[6]=abr(2026-4)
     const mesMap: [number, string][] = [[3, "2026-1"], [4, "2026-2"], [5, "2026-3"], [6, "2026-4"]]
     // row3=recebida, row4=paga, row6=retencao (0-indexed)
