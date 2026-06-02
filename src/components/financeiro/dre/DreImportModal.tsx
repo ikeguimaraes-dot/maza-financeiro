@@ -1341,6 +1341,7 @@ function parseMdnaLinhas(
           }
         }
       }
+      if (CMV_SEM_FILHAS.has(canon)) grupoAtual = null
       continue
     }
 
