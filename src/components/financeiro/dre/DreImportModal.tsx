@@ -1227,8 +1227,8 @@ function parseMdnaLinhas(
   console.log('[MDNA] row40:', raw[40])
   console.log('[MDNA] row41:', raw[41])
 
-  const DESC_COL  = 1
-  const CONTA_COL = 2
+  const DESC_COL  = 0
+  const CONTA_COL = 1
 
   const rows: DreLinhaInsert[] = []
   const totaisDeclarados: TotaisDeclarados = new Map()
@@ -1280,13 +1280,13 @@ function parseMdnaLinhas(
 
 function parseRealizadoMDNA(wb: XLSX.WorkBook, unitId: string): ParseResult {
   return parseMdnaLinhas(wb, "01 Base Realizado", "realizado", unitId, [
-    [3, "2026-1"], [5, "2026-2"], [7, "2026-3"], [9, "2026-4"],
+    [2, "2026-1"], [4, "2026-2"], [6, "2026-3"], [8, "2026-4"],
   ])
 }
 
 function parseOrcadoMDNA(wb: XLSX.WorkBook, unitId: string): ParseResult {
   return parseMdnaLinhas(wb, "04 -Base Orçado 2026", "orcado", unitId, [
-    [4, "2026-1"], [5, "2026-2"], [6, "2026-3"], [7, "2026-4"],
+    [3, "2026-1"], [4, "2026-2"], [5, "2026-3"], [6, "2026-4"],
   ])
 }
 
@@ -1306,7 +1306,7 @@ function parsePrestadoresMDNA(wb: XLSX.WorkBook, unitId: string): DrePrestadores
       for (const [colIdx, mes_ano] of mesMap) {
         const valor = toNum(row[colIdx])
         if (valor === null || valor === 0) continue
-        result.push({ unit_id: unitId, mes_ano, nome, grupo: "OPERAÇÃO", valor })
+        result.push({ unit_id: unitId, mes_ano, nome, grupo: "PJ OP", valor })
       }
     }
     console.log('[MDNA prestadores] total linhas geradas:', result.length)
