@@ -1240,10 +1240,21 @@ const MDNA_IGNORAR = new Set([
 
 // Grupos sem linhas filhas na planilha MDNA: o valor do próprio grupo
 // vira uma linha sintética para que capturado == declarado na conferência.
-const CMV_SEM_FILHAS = new Set(["CMV"])
+const CMV_SEM_FILHAS = new Set(["CMV", "DESP. FINANCEIRAS", "IMPOSTOS"])
 
 // Descrições de linhas filhas que devem ser ignoradas (contabilizadas em outro parser)
 const MDNA_IGNORAR_DESC = new Set(["Gorjetas Recebidas"])
+
+// Sub-grupos da planilha MDNA que estão em IGNORAR E têm filhas próprias.
+// Quando encontrados, resetam grupoAtual para null, impedindo que suas
+// filhas sejam capturadas no grupo anterior.
+const MDNA_IGNORAR_GRUPO = new Set([
+  "CUSTOS DOS PRODUTOS VENDIDOS",
+  "ROYALTIES",
+  "DEPRECIAÇÃO",
+  "DESPESAS PRÉ-OPERACIONAIS",
+  "CÁLCULO DO IR ADICIONAL",
+])
 
 function findHeaderRow(raw: unknown[][], needle: string): number {
   const up = needle.toUpperCase()
@@ -1308,7 +1319,10 @@ function parseMdnaLinhas(
     const d = dRaw.trim()
     const dUpper = d.toUpperCase()
 
-    if (MDNA_IGNORAR.has(dUpper)) continue
+    if (MDNA_IGNORAR.has(dUpper)) {
+      if (MDNA_IGNORAR_GRUPO.has(dUpper)) grupoAtual = null
+      continue
+    }
 
     const canon = MDNA_GRUPOS[d] ?? MDNA_GRUPOS[d.replace(/\s+$/, "")]
     if (canon) {
