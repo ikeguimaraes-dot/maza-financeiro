@@ -241,6 +241,17 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
   const hasLinhas = linhas.length > 0
   const hasRealMes = realMeses.includes(mesSel)
 
+  console.log('[OrcReal debug]', {
+    mesSel,
+    totalLinhas: linhas.length,
+    orcado: linhas.filter(l => l.mes_ano === mesSel && l.tipo === 'orcado').length,
+    realizado: linhas.filter(l => l.mes_ano === mesSel && l.tipo === 'realizado').length,
+    pessoalOrc: orcForMes('PESSOAL'),
+    pessoalRe: reForMes('PESSOAL'),
+    allMesAno: [...new Set(linhas.map(l => l.mes_ano))],
+    allTipo: [...new Set(linhas.map(l => l.tipo))],
+  })
+
   return (
     <div style={{ display: "grid", gap: 32 }}>
 
