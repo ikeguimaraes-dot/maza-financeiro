@@ -1076,17 +1076,13 @@ function parsePessoal(wb: XLSX.WorkBook, unitId: string): DrePessoalInsert[] {
     const ws  = wb.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
     const result: DrePessoalInsert[] = []
-    // build mesMap dynamically from row[0] headers starting at col 2
-    const headerRow0 = (raw[0] ?? []) as unknown[]
-    const mesMap: [number, string][] = []
-    for (let j = 2; j < headerRow0.length; j++) {
-      const h = toStr(headerRow0[j])?.toUpperCase().trim() ?? ""
-      const m = h.match(/^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
-      if (!m) continue
-      const mesNum = MES_MAP[m[1]!]
-      if (!mesNum) continue
-      mesMap.push([j, `${m[2]}-${mesNum}`])
-    }
+    // col[2]=JAN, col[3]=FEV, col[4]=MAR, col[5]=ABR (null values are skipped below)
+    const mesMap: [number, string][] = [
+      [2, "2026-1"],
+      [3, "2026-2"],
+      [4, "2026-3"],
+      [5, "2026-4"],
+    ]
     // data from row index 2
     for (let i = 2; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
@@ -1116,41 +1112,33 @@ function parseManutencao(wb: XLSX.WorkBook, unitId: string): DreManutencaoInsert
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
     // find header row: scan first 6 rows for FORNECEDOR and CATEGORIA
     let fornCol = -1, catCol = -1, dataStart = 4
-    const mesColsMan: [number, string][] = []
     for (let i = 0; i < Math.min(raw.length, 6); i++) {
       const row = (raw[i] ?? []) as unknown[]
-      let foundForn = false
       for (let j = 0; j < row.length; j++) {
         const h = toStr(row[j])?.toUpperCase().trim() ?? ""
-        if (h.includes("FORNECEDOR") && fornCol === -1) { fornCol = j; foundForn = true }
+        if (h.includes("FORNECEDOR") && fornCol === -1) fornCol = j
         if (h === "CATEGORIA" && catCol === -1) catCol = j
-        // detect month columns: "JAN", "JAN 2026", etc.
-        const mm = h.match(/^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)(\s+\d{4})?$/)
-        if (mm) {
-          const mesNum = MES_MAP[mm[1]!]
-          const ano = mm[2] ? mm[2].trim() : "2026"
-          if (mesNum) mesColsMan.push([j, `${ano}-${mesNum}`])
-        }
       }
-      if (foundForn) { dataStart = i + 1; break }
+      if (fornCol !== -1) { dataStart = i + 1; break }
     }
-    if (fornCol === -1 && mesColsMan.length === 0) return []
+    if (fornCol === -1) return []
+    // col[5]=JAN, col[8]=FEV, col[11]=MAR, col[14]=ABR (null values skipped below)
+    const mesMap: [number, string][] = [
+      [5,  "2026-1"],
+      [8,  "2026-2"],
+      [11, "2026-3"],
+      [14, "2026-4"],
+    ]
     const result: DreManutencaoInsert[] = []
     for (let i = dataStart; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
-      const fornecedor = fornCol !== -1 ? toStr(row[fornCol]) : null
-      const categoria  = catCol  !== -1 ? toStr(row[catCol])  : null
-      if (mesColsMan.length > 0) {
-        for (const [colIdx, mes_ano] of mesColsMan) {
-          const valor = toNum(row[colIdx])
-          if (valor === null || valor === 0) continue
-          result.push({ unit_id: unitId, mes_ano, fornecedor, categoria, valor })
-        }
-      } else {
-        // fallback: no month columns found, read first numeric cell after fornCol
-        const valor = toNum(row[fornCol + 1])
+      const fornecedor = toStr(row[fornCol])
+      if (!fornecedor) continue
+      const categoria = catCol !== -1 ? toStr(row[catCol]) : null
+      for (const [colIdx, mes_ano] of mesMap) {
+        const valor = toNum(row[colIdx])
         if (valor === null || valor === 0) continue
-        result.push({ unit_id: unitId, mes_ano: null, fornecedor, categoria, valor })
+        result.push({ unit_id: unitId, mes_ano, fornecedor, categoria, valor })
       }
     }
     return result
