@@ -1221,12 +1221,19 @@ function parseMdnaLinhas(
 
   const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
 
+  console.log('[MDNA] aba:', sheetName, 'total rows:', raw.length)
+  console.log('[MDNA] row4 (header):', raw[4])
+  console.log('[MDNA] row5:', raw[5])
+  console.log('[MDNA] row40:', raw[40])
+  console.log('[MDNA] row41:', raw[41])
+
   const DESC_COL  = 1
   const CONTA_COL = 2
 
   const rows: DreLinhaInsert[] = []
   const totaisDeclarados: TotaisDeclarados = new Map()
   let currentGrupo: string | null = null
+  let gruposCount = 0
 
   for (let rowIdx = 5; rowIdx < raw.length; rowIdx++) {
     const row    = (raw[rowIdx] ?? []) as unknown[]
@@ -1238,6 +1245,7 @@ function parseMdnaLinhas(
     const grupoMapped = MDNA_GRUPO_MAP[descUp]
     if (grupoMapped) {
       currentGrupo = grupoMapped
+      gruposCount++
       for (const [colIdx, mesAno] of mesMap) {
         const val = toNum(row[colIdx])
         if (val === null) continue
@@ -1264,6 +1272,9 @@ function parseMdnaLinhas(
     }
   }
 
+  console.log('[MDNA] grupos detectados:', gruposCount)
+  console.log('[MDNA] linhas geradas:', rows.length)
+
   return { rows, totaisDeclarados }
 }
 
@@ -1284,6 +1295,8 @@ function parsePrestadoresMDNA(wb: XLSX.WorkBook, unitId: string): DrePrestadores
   try {
     const ws  = wb.Sheets["Prestadores de Serviço PJ"]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    console.log('[MDNA prestadores] row3:', raw[3])
+    console.log('[MDNA prestadores] row4:', raw[4])
     const mesMap: [number, string][] = [[1, "2026-1"], [2, "2026-2"], [3, "2026-3"]]
     const result: DrePrestadoresInsert[] = []
     for (let i = 4; i < raw.length; i++) {
@@ -1296,6 +1309,8 @@ function parsePrestadoresMDNA(wb: XLSX.WorkBook, unitId: string): DrePrestadores
         result.push({ unit_id: unitId, mes_ano, nome, grupo: "OPERAÇÃO", valor })
       }
     }
+    console.log('[MDNA prestadores] total linhas geradas:', result.length)
+    console.log('[MDNA prestadores] primeira linha:', result[0])
     return result
   } catch {
     return []
