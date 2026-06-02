@@ -1140,14 +1140,13 @@ function parseManutencao(wb: XLSX.WorkBook, unitId: string): DreManutencaoInsert
 // ── parsePrestadores ──────────────────────────────────────────────────────────
 
 function parsePrestadores(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInsert[] {
-  const result: DrePrestadoresInsert[] = []
+  const agg = new Map<string, { mes_ano: string; nome: string; grupo: string; valor: number }>()
   const abas: [string, string][] = [["Planilha4", "PJ OP"], ["Planilha5", "PJ ADM"]]
   for (const [sheetName, grupo] of abas) {
     if (!wb.Sheets[sheetName]) continue
     try {
       const ws  = wb.Sheets[sheetName]
       const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
-      // data from row index 1 (row 0 = headers)
       for (let i = 1; i < raw.length; i++) {
         const row = (raw[i] ?? []) as unknown[]
         const mesAnoRaw = toStr(row[0])
@@ -1157,13 +1156,19 @@ function parsePrestadores(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInse
         if (!nome) continue
         const valor = toNum(row[2])
         if (valor === null || valor === 0) continue
-        result.push({ unit_id: unitId, mes_ano, nome, grupo, valor })
+        const key = `${mes_ano}||${nome}||${grupo}`
+        const existing = agg.get(key)
+        if (existing) {
+          existing.valor += valor
+        } else {
+          agg.set(key, { mes_ano, nome, grupo, valor })
+        }
       }
     } catch {
       // skip this sheet on error
     }
   }
-  return result
+  return [...agg.values()].map(r => ({ unit_id: unitId, ...r }))
 }
 
 // ── Batch insert helper ────────────────────────────────────────────────────────
