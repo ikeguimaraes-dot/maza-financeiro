@@ -1220,7 +1220,31 @@ const MDNA_IGNORAR = new Set([
   "ÍNDICE",
   "CHECK",
   "(-) IRPJ/CSLL",
+  "CÁLCULO DO IR ADICIONAL",
+  "IR/INSS",
+  "FGTS",
+  "DSR",
+  "IPTU",
+  "DEPRECIAÇÃO",
+  "ROYALTIES",
+  "DESPESAS PRÉ-OPERACIONAIS",
+  "(-) ICMS",
+  "(-) ISS",
+  "(-) PIS/COFINS",
+  "(-) PIS/PASEP",
+  "IRPJ",
+  "CSLL",
+  "CLIENTES",
+  "TICKET MEDIO",
+  "GRATIFICAÇÃO -  INSS",
+  "GRATIFICAÇÃO 13. SALÁRIO",
+  "GRATIFICAÇÃO FGTS",
+  "GRATIFICAÇÃO FÉRIAS",
 ])
+
+// Grupos sem linhas filhas na planilha MDNA: o valor do próprio grupo
+// vira uma linha sintética para que capturado == declarado na conferência.
+const CMV_SEM_FILHAS = new Set(["CMV"])
 
 function findHeaderRow(raw: unknown[][], needle: string): number {
   const up = needle.toUpperCase()
@@ -1295,6 +1319,13 @@ function parseMdnaLinhas(
         if (v !== null && v !== 0) {
           if (!totaisDeclarados.has(mes)) totaisDeclarados.set(mes, new Map())
           totaisDeclarados.get(mes)!.set(canon, v)
+          if (CMV_SEM_FILHAS.has(canon)) {
+            rows.push({
+              unit_id: unitId, mes_ano: mes, tipo,
+              grupo: canon, descricao: canon, conta: null,
+              valor: v, av_percentual: null, custo_tipo: null,
+            })
+          }
         }
       }
       continue
