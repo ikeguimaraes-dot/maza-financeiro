@@ -1219,12 +1219,8 @@ const MDNA_IGNORAR = new Set([
   "RECEITA LÍQUIDA",
   "ÍNDICE",
   "CHECK",
-  "(-) IRPJ/CSLL",
   "CÁLCULO DO IR ADICIONAL",
-  "IR/INSS",
-  "FGTS",
   "DSR",
-  "IPTU",
   "DEPRECIAÇÃO",
   "ROYALTIES",
   "DESPESAS PRÉ-OPERACIONAIS",
@@ -1245,6 +1241,9 @@ const MDNA_IGNORAR = new Set([
 // Grupos sem linhas filhas na planilha MDNA: o valor do próprio grupo
 // vira uma linha sintética para que capturado == declarado na conferência.
 const CMV_SEM_FILHAS = new Set(["CMV"])
+
+// Descrições de linhas filhas que devem ser ignoradas (contabilizadas em outro parser)
+const MDNA_IGNORAR_DESC = new Set(["Gorjetas Recebidas"])
 
 function findHeaderRow(raw: unknown[][], needle: string): number {
   const up = needle.toUpperCase()
@@ -1331,7 +1330,7 @@ function parseMdnaLinhas(
       continue
     }
 
-    if (grupoAtual) {
+    if (grupoAtual && !MDNA_IGNORAR_DESC.has(d)) {
       for (const [colIdx, mes] of mesCols) {
         const v = toNum(row[colIdx])
         if (v !== null && v !== 0) {
