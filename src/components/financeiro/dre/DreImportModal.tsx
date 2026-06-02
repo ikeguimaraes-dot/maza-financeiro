@@ -727,18 +727,31 @@ function parseKpis(
 
 // ── parseIndicadores ──────────────────────────────────────────────────────────
 
-const INDIC_LABELS: [string, string][] = [
-  ["CMV",            "CMV"],
-  ["PESSOAL",        "PESSOAL"],
-  ["OCUPAÇÃO",       "OCUPAÇÃO"],
-  ["UTILIDADES",     "UTILIDADES"],
-  ["OPERAÇÃO",       "OPERAÇÃO"],
-  ["MANUTENÇÃO",     "MANUTENÇÃO"],
-  ["ADMINISTRATIVA", "ADMINISTRATIVA"],
-  ["MARKETING",      "MARKETING"],
-  ["TX CART",        "TAXAS CARTÃO"],
-  ["EBITDA",         "EBITDA"],
-]
+const INDIC_SLUG: Record<string, string> = {
+  "CMV":                  "cmv",
+  "PESSOAL":              "pessoal",
+  "OCUPAÇÃO":             "ocupacao",
+  "UTILIDADES/ CONSUMO":  "utilidades",
+  "UTILIDADES":           "utilidades",
+  "OPERAÇÃO":             "operacao",
+  "MANUTENÇÃO E CONSERV": "manutencao",
+  "MANUTENÇÃO":           "manutencao",
+  "ADMINISTRATIVA":       "administrativa",
+  "MARKETING":            "marketing",
+  "TX CARTÕES":           "taxa_cartao",
+  "TAXAS CARTÃO":         "taxa_cartao",
+  "EBITDA":               "ebitda",
+  "RESULTADO LÍQUIDO":    "resultado_liquido",
+  "RESULTADO":            "resultado_liquido",
+}
+
+function resolveIndicSlug(label: string): string | null {
+  const upper = normalizeSpaces(label).toUpperCase()
+  for (const key of Object.keys(INDIC_SLUG)) {
+    if (upper.startsWith(key.toUpperCase())) return INDIC_SLUG[key]!
+  }
+  return null
+}
 
 function parseIndicadores(wb: XLSX.WorkBook, unitId: string): DreIndicadoresInsert[] {
   const sheetName = " 01-INDIC"
@@ -775,12 +788,10 @@ function parseIndicadores(wb: XLSX.WorkBook, unitId: string): DreIndicadoresInse
       const row = (raw[rowIdx] ?? []) as unknown[]
       const labelCell = toStr(row[1])
       if (!labelCell) continue
-      const labelNorm = normalizeSpaces(labelCell).toUpperCase()
-      const match = INDIC_LABELS.find(([prefix]) => labelNorm.startsWith(prefix))
-      if (!match) continue
-      const [, indicador] = match
+      const slug = resolveIndicSlug(labelCell)
+      if (!slug) continue
       for (const ic of indicCols) {
-        result.push({ unit_id: unitId, mes_ano: ic.mesAno, tipo: ic.tipo, indicador, valor: toNum(row[ic.colIdx]) })
+        result.push({ unit_id: unitId, mes_ano: ic.mesAno, tipo: ic.tipo, indicador: slug, valor: toNum(row[ic.colIdx]) })
       }
     }
     return result
