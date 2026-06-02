@@ -1030,6 +1030,10 @@ function parseFolha(wb: XLSX.WorkBook, unitId: string): DreFolhaInsert[] {
   try {
     const ws  = wb.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    console.log("[parseFolha] sheet:", ws ? "achou" : "NAO achou")
+    console.log("[parseFolha] primeiras 5 linhas:")
+    raw.slice(0, 5).forEach((r, i) =>
+      console.log(`  row ${i}:`, JSON.stringify((r as unknown[]).slice(0, 8))))
     const result: DreFolhaInsert[] = []
     // data from row index 4 (r5 in Excel)
     // sheet starts at col B → SheetJS index 0 = col B
