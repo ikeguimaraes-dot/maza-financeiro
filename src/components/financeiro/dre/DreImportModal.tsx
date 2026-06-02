@@ -1075,12 +1075,18 @@ function parsePessoal(wb: XLSX.WorkBook, unitId: string): DrePessoalInsert[] {
   try {
     const ws  = wb.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
-    console.log("[parsePessoal] row 0 (headers):", JSON.stringify((raw[0] ?? []) as unknown[]))
-    console.log("[parsePessoal] row 1:", JSON.stringify((raw[1] ?? []) as unknown[]))
-    console.log("[parsePessoal] row 2 (1a linha dados):", JSON.stringify((raw[2] ?? []) as unknown[]))
     const result: DrePessoalInsert[] = []
-    // col 2 = JAN 2026 (mes_ano "2026-1"), col 3 = FEV 2026 ("2026-2")
-    const mesMap: [number, string][] = [[2, "2026-1"], [3, "2026-2"]]
+    // build mesMap dynamically from row[0] headers starting at col 2
+    const headerRow0 = (raw[0] ?? []) as unknown[]
+    const mesMap: [number, string][] = []
+    for (let j = 2; j < headerRow0.length; j++) {
+      const h = toStr(headerRow0[j])?.toUpperCase().trim() ?? ""
+      const m = h.match(/^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
+      if (!m) continue
+      const mesNum = MES_MAP[m[1]!]
+      if (!mesNum) continue
+      mesMap.push([j, `${m[2]}-${mesNum}`])
+    }
     // data from row index 2
     for (let i = 2; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
@@ -1108,31 +1114,44 @@ function parseManutencao(wb: XLSX.WorkBook, unitId: string): DreManutencaoInsert
   try {
     const ws  = wb.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
-    // find header row: scan first 6 rows for FORNECEDOR/CATEGORIA/VALOR
-    let fornCol = -1, catCol = -1, valCol = -1, dataStart = 4
+    // find header row: scan first 6 rows for FORNECEDOR and CATEGORIA
+    let fornCol = -1, catCol = -1, dataStart = 4
+    const mesColsMan: [number, string][] = []
     for (let i = 0; i < Math.min(raw.length, 6); i++) {
       const row = (raw[i] ?? []) as unknown[]
+      let foundForn = false
       for (let j = 0; j < row.length; j++) {
         const h = toStr(row[j])?.toUpperCase().trim() ?? ""
-        if (h.includes("FORNECEDOR") && fornCol === -1) fornCol = j
+        if (h.includes("FORNECEDOR") && fornCol === -1) { fornCol = j; foundForn = true }
         if (h === "CATEGORIA" && catCol === -1) catCol = j
-        if (h === "VALOR" && valCol === -1) valCol = j
+        // detect month columns: "JAN", "JAN 2026", etc.
+        const mm = h.match(/^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)(\s+\d{4})?$/)
+        if (mm) {
+          const mesNum = MES_MAP[mm[1]!]
+          const ano = mm[2] ? mm[2].trim() : "2026"
+          if (mesNum) mesColsMan.push([j, `${ano}-${mesNum}`])
+        }
       }
-      if (fornCol !== -1 && catCol !== -1 && valCol !== -1) { dataStart = i + 1; break }
+      if (foundForn) { dataStart = i + 1; break }
     }
-    if (valCol === -1) return []
+    if (fornCol === -1 && mesColsMan.length === 0) return []
     const result: DreManutencaoInsert[] = []
     for (let i = dataStart; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
-      const valor = toNum(fornCol !== -1 ? row[valCol] : row[valCol])
-      if (valor === null || valor === 0) continue
-      result.push({
-        unit_id:    unitId,
-        mes_ano:    null,
-        fornecedor: fornCol !== -1 ? toStr(row[fornCol]) : null,
-        categoria:  catCol  !== -1 ? toStr(row[catCol])  : null,
-        valor,
-      })
+      const fornecedor = fornCol !== -1 ? toStr(row[fornCol]) : null
+      const categoria  = catCol  !== -1 ? toStr(row[catCol])  : null
+      if (mesColsMan.length > 0) {
+        for (const [colIdx, mes_ano] of mesColsMan) {
+          const valor = toNum(row[colIdx])
+          if (valor === null || valor === 0) continue
+          result.push({ unit_id: unitId, mes_ano, fornecedor, categoria, valor })
+        }
+      } else {
+        // fallback: no month columns found, read first numeric cell after fornCol
+        const valor = toNum(row[fornCol + 1])
+        if (valor === null || valor === 0) continue
+        result.push({ unit_id: unitId, mes_ano: null, fornecedor, categoria, valor })
+      }
     }
     return result
   } catch {
@@ -1145,26 +1164,37 @@ function parseManutencao(wb: XLSX.WorkBook, unitId: string): DreManutencaoInsert
 function parsePrestadores(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInsert[] {
   const agg = new Map<string, { mes_ano: string; nome: string; grupo: string; valor: number }>()
   const abas: [string, string][] = [["Planilha4", "PJ OP"], ["Planilha5", "PJ ADM"]]
+  // pivot layout: col[4]=nome, col[5..8]=JAN..ABR
+  const colMes: [number, string][] = [
+    [5, "2026-1"], [6, "2026-2"], [7, "2026-3"], [8, "2026-4"],
+  ]
   for (const [sheetName, grupo] of abas) {
     if (!wb.Sheets[sheetName]) continue
     try {
       const ws  = wb.Sheets[sheetName]
       const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
-      for (let i = 1; i < raw.length; i++) {
+      // find header row: look for "Rótulos de Linha" or similar at col[4]
+      let dataStart = 1
+      for (let i = 0; i < Math.min(raw.length, 5); i++) {
+        const h = toStr(((raw[i] ?? []) as unknown[])[4])?.toLowerCase() ?? ""
+        if (h.includes("rótulos") || h.includes("rotulos") || h.includes("linha")) {
+          dataStart = i + 1; break
+        }
+      }
+      for (let i = dataStart; i < raw.length; i++) {
         const row = (raw[i] ?? []) as unknown[]
-        const mesAnoRaw = toStr(row[0])
-        const mes_ano = mesAnoRaw ? parseMesAno(mesAnoRaw) : null
-        if (!mes_ano) continue
-        const nome = toStr(row[1])
+        const nome = toStr(row[4])
         if (!nome) continue
-        const valor = toNum(row[2])
-        if (valor === null || valor === 0) continue
-        const key = `${mes_ano}||${nome}||${grupo}`
-        const existing = agg.get(key)
-        if (existing) {
-          existing.valor += valor
-        } else {
-          agg.set(key, { mes_ano, nome, grupo, valor })
+        for (const [colIdx, mes_ano] of colMes) {
+          const valor = toNum(row[colIdx])
+          if (valor === null || valor === 0) continue
+          const key = `${mes_ano}||${nome}||${grupo}`
+          const existing = agg.get(key)
+          if (existing) {
+            existing.valor += valor
+          } else {
+            agg.set(key, { mes_ano, nome, grupo, valor })
+          }
         }
       }
     } catch {
