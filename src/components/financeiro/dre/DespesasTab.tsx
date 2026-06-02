@@ -71,6 +71,11 @@ const mesLabel = (m: string) => {
   return MESES_SHORT[(num - 1) % 12] ?? m
 }
 
+const normalizeMes = (m: string) => {
+  const [ano, mes] = m.split("-")
+  return `${ano}-${parseInt(mes ?? "0")}`
+}
+
 const SectionHeader = ({ children }: { children: React.ReactNode }) => (
   <p style={{
     fontSize: 10, fontWeight: 700, letterSpacing: 1,
@@ -109,7 +114,7 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
     return toN(a) - toN(b)
   })
 
-  const [mesSel, setMesSel] = useState(() => realMeses.at(-1) ?? meses.at(-1) ?? "")
+  const [mesSel, setMesSel] = useState(() => normalizeMes(realMeses.at(-1) ?? meses.at(-1) ?? ""))
   const [grupoSel, setGrupoSel] = useState<string | null>(null)
   const [fvFilter, setFvFilter] = useState<"all" | "F" | "V">("all")
 
@@ -249,7 +254,7 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
             {realMeses.map((m) => (
               <button
                 key={m}
-                onClick={() => { setMesSel(m); setGrupoSel(null) }}
+                onClick={() => { setMesSel(normalizeMes(m)); setGrupoSel(null) }}
                 style={{
                   padding: "6px 14px", borderRadius: 8, fontSize: 12,
                   fontWeight: mesSel === m ? 700 : 500,
