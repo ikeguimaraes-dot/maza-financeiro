@@ -22,6 +22,14 @@ import {
   insertDreFaturamento,
   deleteDreContratos,
   insertDreContratos,
+  deleteDreFolha,
+  insertDreFolha,
+  deleteDrePessoal,
+  insertDrePessoal,
+  deleteDreManutencao,
+  insertDreManutencao,
+  deleteDrePrestadores,
+  insertDrePrestadores,
   getCurrentUnitId,
 } from "@/app/financeiro/dre/actions"
 import type {
@@ -34,6 +42,10 @@ import type {
   DreDespesaInsert,
   DreFaturamentoInsert,
   DreContratosInsert,
+  DreFolhaInsert,
+  DrePessoalInsert,
+  DreManutencaoInsert,
+  DrePrestadoresInsert,
 } from "@/app/financeiro/dre/actions"
 
 // ── Lookup maps ────────────────────────────────────────────────────────────────
@@ -259,6 +271,10 @@ interface ReviewData {
   despesaRows: DreDespesaInsert[]
   faturamentoRows: DreFaturamentoInsert[]
   contratosRows: DreContratosInsert[]
+  folhaRows: DreFolhaInsert[]
+  pessoalRows: DrePessoalInsert[]
+  manutencaoRows: DreManutencaoInsert[]
+  prestadoresRows: DrePrestadoresInsert[]
   reconciliation: ReconciliationItem[]
   gorjetaRecon: GorjetaReconItem[]
   receitaRecon: ReceitaReconItem[]
@@ -1006,6 +1022,140 @@ function parseContratos(wb: XLSX.WorkBook, unitId: string): DreContratosInsert[]
   }
 }
 
+// ── parseFolha ────────────────────────────────────────────────────────────────
+
+function parseFolha(wb: XLSX.WorkBook, unitId: string): DreFolhaInsert[] {
+  const sheetName = "Base Folha"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DreFolhaInsert[] = []
+    // data from row index 4 (r5 in Excel)
+    for (let i = 4; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const salario = toNum(row[7])
+      if (salario === null || salario <= 0) continue
+      const nomeRaw = toStr(row[2])
+      if (!nomeRaw) continue
+      const is_vaga = nomeRaw.toLowerCase().includes("vaga")
+      result.push({
+        unit_id: unitId,
+        tipo:     toStr(row[0]),
+        nome:     nomeRaw,
+        funcao:   toStr(row[3]),
+        divisao:  toStr(row[4]),
+        admissao: excelDateToISO(row[5]),
+        salario,
+        custo_total: null,
+        is_vaga,
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+// ── parsePessoal ──────────────────────────────────────────────────────────────
+
+function parsePessoal(wb: XLSX.WorkBook, unitId: string): DrePessoalInsert[] {
+  const sheetName = "Planilha2"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DrePessoalInsert[] = []
+    // col 2 = JAN 2026 (mes_ano "2026-1"), col 3 = FEV 2026 ("2026-2")
+    const mesMap: [number, string][] = [[2, "2026-1"], [3, "2026-2"]]
+    // data from row index 2
+    for (let i = 2; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const categoria = toStr(row[1])
+      if (!categoria) continue
+      const catUpper = categoria.toUpperCase().trim()
+      if (catUpper === "PESSOAL") continue
+      for (const [colIdx, mesAno] of mesMap) {
+        const valor = toNum(row[colIdx])
+        if (valor === null || valor === 0) continue
+        result.push({ unit_id: unitId, mes_ano: mesAno, categoria, valor })
+      }
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+// ── parseManutencao ───────────────────────────────────────────────────────────
+
+function parseManutencao(wb: XLSX.WorkBook, unitId: string): DreManutencaoInsert[] {
+  const sheetName = "Planilha3"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    // find header row: scan first 6 rows for FORNECEDOR/CATEGORIA/VALOR
+    let fornCol = -1, catCol = -1, valCol = -1, dataStart = 4
+    for (let i = 0; i < Math.min(raw.length, 6); i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      for (let j = 0; j < row.length; j++) {
+        const h = toStr(row[j])?.toUpperCase().trim() ?? ""
+        if (h.includes("FORNECEDOR") && fornCol === -1) fornCol = j
+        if (h === "CATEGORIA" && catCol === -1) catCol = j
+        if (h === "VALOR" && valCol === -1) valCol = j
+      }
+      if (fornCol !== -1 && catCol !== -1 && valCol !== -1) { dataStart = i + 1; break }
+    }
+    if (valCol === -1) return []
+    const result: DreManutencaoInsert[] = []
+    for (let i = dataStart; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const valor = toNum(fornCol !== -1 ? row[valCol] : row[valCol])
+      if (valor === null || valor === 0) continue
+      result.push({
+        unit_id:    unitId,
+        mes_ano:    null,
+        fornecedor: fornCol !== -1 ? toStr(row[fornCol]) : null,
+        categoria:  catCol  !== -1 ? toStr(row[catCol])  : null,
+        valor,
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+// ── parsePrestadores ──────────────────────────────────────────────────────────
+
+function parsePrestadores(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInsert[] {
+  const result: DrePrestadoresInsert[] = []
+  const abas: [string, string][] = [["Planilha4", "PJ OP"], ["Planilha5", "PJ ADM"]]
+  for (const [sheetName, grupo] of abas) {
+    if (!wb.Sheets[sheetName]) continue
+    try {
+      const ws  = wb.Sheets[sheetName]
+      const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+      // data from row index 1 (row 0 = headers)
+      for (let i = 1; i < raw.length; i++) {
+        const row = (raw[i] ?? []) as unknown[]
+        const mesAnoRaw = toStr(row[0])
+        const mes_ano = mesAnoRaw ? parseMesAno(mesAnoRaw) : null
+        if (!mes_ano) continue
+        const nome = toStr(row[1])
+        if (!nome) continue
+        const valor = toNum(row[2])
+        if (valor === null || valor === 0) continue
+        result.push({ unit_id: unitId, mes_ano, nome, grupo, valor })
+      }
+    } catch {
+      // skip this sheet on error
+    }
+  }
+  return result
+}
+
 // ── Batch insert helper ────────────────────────────────────────────────────────
 
 async function batchInsert<T>(
@@ -1091,13 +1241,19 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const despesaRows     = parseDespesa(wb, unitId)
       const faturamentoRows = parseFaturamento(wb, unitId)
       const contratosRows   = parseContratos(wb, unitId)
+      const folhaRows       = parseFolha(wb, unitId)
+      const pessoalRows     = parsePessoal(wb, unitId)
+      const manutencaoRows  = parseManutencao(wb, unitId)
+      const prestadoresRows = parsePrestadores(wb, unitId)
 
       const total =
         realizadoResult.rows.length + orcadoResult.rows.length +
         gorjetaResult.rows.length   + receitaResult.rows.length +
         mensalRows.length           + kpisResult.rows.length +
         indicadoresRows.length      + despesaRows.length +
-        faturamentoRows.length      + contratosRows.length
+        faturamentoRows.length      + contratosRows.length +
+        folhaRows.length            + pessoalRows.length +
+        manutencaoRows.length       + prestadoresRows.length
 
       if (total === 0) {
         setErrorMsg("Nenhuma linha válida encontrada no arquivo.")
@@ -1124,6 +1280,10 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         despesaRows,
         faturamentoRows,
         contratosRows,
+        folhaRows,
+        pessoalRows,
+        manutencaoRows,
+        prestadoresRows,
         reconciliation,
         gorjetaRecon:   gorjetaResult.recon,
         receitaRecon,
@@ -1148,7 +1308,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
     if (!reviewData || !unitId) return
     const { realizadoRows, orcadoRows, gorjetaRows, receitaRows,
             mensalRows, kpisRows, indicadoresRows,
-            despesaRows, faturamentoRows, contratosRows } = reviewData
+            despesaRows, faturamentoRows, contratosRows,
+            folhaRows, pessoalRows, manutencaoRows, prestadoresRows } = reviewData
     setStatus("uploading")
 
     let imported = 0
@@ -1243,6 +1404,42 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         if (!delC.ok) { setErrorMsg(delC.error ?? "Erro ao limpar contratos."); setStatus("error"); return }
         const errC = await batchInsert(contratosRows, insertDreContratos, bump)
         if (errC) { setErrorMsg(errC); setStatus("error"); return }
+      }
+
+      // ── Folha ──────────────────────────────────────────────────────────────
+      if (folhaRows.length > 0) {
+        setPhase("Importando Folha…")
+        const delFo = await deleteDreFolha(unitId)
+        if (!delFo.ok) { setErrorMsg(delFo.error ?? "Erro ao limpar folha."); setStatus("error"); return }
+        const errFo = await batchInsert(folhaRows, insertDreFolha, bump)
+        if (errFo) { setErrorMsg(errFo); setStatus("error"); return }
+      }
+
+      // ── Pessoal detalhado ──────────────────────────────────────────────────
+      if (pessoalRows.length > 0) {
+        setPhase("Importando Pessoal…")
+        const delPe = await deleteDrePessoal(unitId)
+        if (!delPe.ok) { setErrorMsg(delPe.error ?? "Erro ao limpar pessoal."); setStatus("error"); return }
+        const errPe = await batchInsert(pessoalRows, insertDrePessoal, bump)
+        if (errPe) { setErrorMsg(errPe); setStatus("error"); return }
+      }
+
+      // ── Manutenção ─────────────────────────────────────────────────────────
+      if (manutencaoRows.length > 0) {
+        setPhase("Importando Manutenção…")
+        const delMa = await deleteDreManutencao(unitId)
+        if (!delMa.ok) { setErrorMsg(delMa.error ?? "Erro ao limpar manutenção."); setStatus("error"); return }
+        const errMa = await batchInsert(manutencaoRows, insertDreManutencao, bump)
+        if (errMa) { setErrorMsg(errMa); setStatus("error"); return }
+      }
+
+      // ── Prestadores ────────────────────────────────────────────────────────
+      if (prestadoresRows.length > 0) {
+        setPhase("Importando Prestadores…")
+        const delPr = await deleteDrePrestadores(unitId)
+        if (!delPr.ok) { setErrorMsg(delPr.error ?? "Erro ao limpar prestadores."); setStatus("error"); return }
+        const errPr = await batchInsert(prestadoresRows, insertDrePrestadores, bump)
+        if (errPr) { setErrorMsg(errPr); setStatus("error"); return }
       }
 
       setStatus("done")
@@ -1546,6 +1743,54 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                         {" "}contratos
                       </span>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Section: Pessoal e Detalhes */}
+              {(reviewData.folhaRows.length > 0 || reviewData.pessoalRows.length > 0 || reviewData.manutencaoRows.length > 0 || reviewData.prestadoresRows.length > 0) && (
+                <div style={{ marginTop: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Pessoal e Detalhes</div>
+                  <div style={{
+                    border: "1px solid var(--border)", borderRadius: 8,
+                    padding: "10px 14px", fontSize: 12, color: "var(--text-3)",
+                    display: "flex", flexDirection: "column", gap: 8,
+                  }}>
+                    {reviewData.folhaRows.length > 0 && (() => {
+                      const vagas = reviewData.folhaRows.filter(r => r.is_vaga).length
+                      return (
+                        <span>
+                          Folha:{" "}
+                          <strong style={{ color: "var(--text)" }}>{reviewData.folhaRows.length}</strong>
+                          {" "}colaboradores{vagas > 0 ? ` (${vagas} vagas)` : ""}
+                        </span>
+                      )
+                    })()}
+                    {reviewData.pessoalRows.length > 0 && (
+                      <span>
+                        Pessoal detalhado:{" "}
+                        <strong style={{ color: "var(--text)" }}>{reviewData.pessoalRows.length}</strong>
+                        {" "}linhas (Jan+Fev)
+                      </span>
+                    )}
+                    {reviewData.manutencaoRows.length > 0 && (
+                      <span>
+                        Manutenção:{" "}
+                        <strong style={{ color: "var(--text)" }}>{reviewData.manutencaoRows.length}</strong>
+                        {" "}lançamentos
+                      </span>
+                    )}
+                    {reviewData.prestadoresRows.length > 0 && (() => {
+                      const op  = reviewData.prestadoresRows.filter(r => r.grupo === "PJ OP").length
+                      const adm = reviewData.prestadoresRows.filter(r => r.grupo === "PJ ADM").length
+                      return (
+                        <span>
+                          Prestadores PJ:{" "}
+                          <strong style={{ color: "var(--text)" }}>{reviewData.prestadoresRows.length}</strong>
+                          {" "}linhas ({op} OP, {adm} ADM)
+                        </span>
+                      )
+                    })()}
                   </div>
                 </div>
               )}
