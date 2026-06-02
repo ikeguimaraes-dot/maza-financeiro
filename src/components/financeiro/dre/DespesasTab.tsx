@@ -163,21 +163,41 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
 
   // ── Linhas-based helpers ────────────────────────────────────────────────────
 
-  const orcForMes = (grupo: string, descricao?: string) =>
-    linhas.find(
-      (l) => l.mes_ano === mesSel && l.tipo === "orcado" &&
-        l.grupo === grupo && (descricao ? l.descricao === descricao : l.descricao.endsWith("Total"))
-    )?.valor ?? null
+  const orcForMes = (grupo: string, descricao?: string) => {
+    if (descricao) {
+      return linhas.find(l =>
+        l.mes_ano === mesSel && l.tipo === "orcado" &&
+        l.grupo === grupo && l.descricao === descricao
+      )?.valor ?? null
+    }
+    const doGrupo = linhas.filter(l =>
+      l.mes_ano === mesSel && l.tipo === "orcado" && l.grupo === grupo
+    )
+    if (doGrupo.length === 0) return null
+    return doGrupo.reduce((acc, l) => acc + (l.valor ?? 0), 0)
+  }
 
-  const reForMes = (grupo: string, descricao?: string) =>
-    linhas.find(
-      (l) => l.mes_ano === mesSel && l.tipo === "realizado" &&
-        l.grupo === grupo && (descricao ? l.descricao === descricao : l.descricao.endsWith("Total"))
-    )?.valor ?? null
+  const reForMes = (grupo: string, descricao?: string) => {
+    if (descricao) {
+      return linhas.find(l =>
+        l.mes_ano === mesSel && l.tipo === "realizado" &&
+        l.grupo === grupo && l.descricao === descricao
+      )?.valor ?? null
+    }
+    const doGrupo = linhas.filter(l =>
+      l.mes_ano === mesSel && l.tipo === "realizado" && l.grupo === grupo
+    )
+    if (doGrupo.length === 0) return null
+    return doGrupo.reduce((acc, l) => acc + (l.valor ?? 0), 0)
+  }
 
   // Receita líquida for % calc
   const rlOrc = linhas.find(l => l.mes_ano === mesSel && l.tipo === "orcado" && l.descricao === "Receita Líquida")?.valor ?? null
   const rlRe  = linhas.find(l => l.mes_ano === mesSel && l.tipo === "realizado" && l.descricao === "Receita Líquida")?.valor ?? null
+  console.log('[rlOrcRe debug]', {
+    rlOrc, rlRe, mesSel,
+    receitaDescs: [...new Set(linhas.filter(l => l.mes_ano === mesSel && l.grupo === "RECEITA").map(l => l.descricao))],
+  })
 
   function pctOf(v: number | null, base: number | null) {
     if (v === null || base === null || base === 0) return null
@@ -240,17 +260,6 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
 
   const hasLinhas = linhas.length > 0
   const hasRealMes = realMeses.includes(mesSel)
-
-  console.log('[OrcReal debug]', {
-    mesSel,
-    totalLinhas: linhas.length,
-    orcado: linhas.filter(l => l.mes_ano === mesSel && l.tipo === 'orcado').length,
-    realizado: linhas.filter(l => l.mes_ano === mesSel && l.tipo === 'realizado').length,
-    pessoalOrc: orcForMes('PESSOAL'),
-    pessoalRe: reForMes('PESSOAL'),
-    allMesAno: [...new Set(linhas.map(l => l.mes_ano))],
-    allTipo: [...new Set(linhas.map(l => l.tipo))],
-  })
 
   return (
     <div style={{ display: "grid", gap: 32 }}>

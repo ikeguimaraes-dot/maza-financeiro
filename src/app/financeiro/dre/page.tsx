@@ -233,14 +233,16 @@ export default async function DreGerencialPage({
     }
 
     if (aba === "despesas") {
-      const [despRes, pesRes, manRes, prestRes, contRes, linhasRes] = await Promise.all([
+      const linhasRes = await uq(db.from("dre_linhas_detalhadas").select("*"))
+        .order("mes_ano").order("tipo").order("grupo")
+
+      const [despRes, pesRes, manRes, prestRes, contRes] = await Promise.all([
         uq(db.from("dre_despesa_detalhada").select("mes_ano,tipo_despesa,classificacao_dre,valor"))
           .not("tipo_despesa", "in", '("IMOBILIZADO","INVESTIMENTO")'),
         uq(db.from("dre_pessoal_detalhado").select("*")).order("mes_ano").order("categoria"),
         uq(db.from("dre_manutencao_detalhada").select("*")).order("mes_ano").order("valor"),
         uq(db.from("dre_prestadores").select("*")).order("mes_ano").order("grupo").order("nome"),
         uq(db.from("dre_contratos_fixos").select("*")).order("tipo").order("razao_social"),
-        uq(db.from("dre_linhas_detalhadas").select("*")).order("mes_ano").order("tipo").order("grupo"),
       ])
 
       if (despRes.data) {
