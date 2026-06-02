@@ -218,12 +218,9 @@ export async function insertDreMensal(
     if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
-    const { error, count } = await db
-      .from("dre_mensal")
-      .insert(rows)
-      .select("id", { count: "exact", head: true })
+    const { error } = await db.from("dre_mensal").insert(rows)
     if (error) return { ok: false, count: 0, error: error.message }
-    return { ok: true, count: count ?? rows.length }
+    return { ok: true, count: rows.length }
   } catch (e) {
     return { ok: false, count: 0, error: String(e) }
   }
@@ -267,12 +264,9 @@ export async function insertDreKpis(
     if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
-    const { error, count } = await db
-      .from("dre_kpis_mensais")
-      .insert(rows)
-      .select("id", { count: "exact", head: true })
+    const { error } = await db.from("dre_kpis_mensais").insert(rows)
     if (error) return { ok: false, count: 0, error: error.message }
-    return { ok: true, count: count ?? rows.length }
+    return { ok: true, count: rows.length }
   } catch (e) {
     return { ok: false, count: 0, error: String(e) }
   }
@@ -312,12 +306,9 @@ export async function insertDreIndicadores(
     if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
-    const { error, count } = await db
-      .from("dre_indicadores")
-      .insert(rows)
-      .select("id", { count: "exact", head: true })
+    const { error } = await db.from("dre_indicadores").insert(rows)
     if (error) return { ok: false, count: 0, error: error.message }
-    return { ok: true, count: count ?? rows.length }
+    return { ok: true, count: rows.length }
   } catch (e) {
     return { ok: false, count: 0, error: String(e) }
   }
