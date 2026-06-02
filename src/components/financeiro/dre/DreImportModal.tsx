@@ -16,6 +16,12 @@ import {
   insertDreKpis,
   deleteDreIndicadores,
   insertDreIndicadores,
+  deleteDreDespesa,
+  insertDreDespesa,
+  deleteDreFaturamento,
+  insertDreFaturamento,
+  deleteDreContratos,
+  insertDreContratos,
   getCurrentUnitId,
 } from "@/app/financeiro/dre/actions"
 import type {
@@ -25,6 +31,9 @@ import type {
   DreMensalInsert,
   DreKpisInsert,
   DreIndicadoresInsert,
+  DreDespesaInsert,
+  DreFaturamentoInsert,
+  DreContratosInsert,
 } from "@/app/financeiro/dre/actions"
 
 // ── Lookup maps ────────────────────────────────────────────────────────────────
@@ -247,6 +256,9 @@ interface ReviewData {
   mensalRows: DreMensalInsert[]
   kpisRows: DreKpisInsert[]
   indicadoresRows: DreIndicadoresInsert[]
+  despesaRows: DreDespesaInsert[]
+  faturamentoRows: DreFaturamentoInsert[]
+  contratosRows: DreContratosInsert[]
   reconciliation: ReconciliationItem[]
   gorjetaRecon: GorjetaReconItem[]
   receitaRecon: ReceitaReconItem[]
@@ -811,6 +823,130 @@ function parseIndicadores(wb: XLSX.WorkBook, unitId: string): DreIndicadoresInse
   }
 }
 
+// ── parseDespesa ──────────────────────────────────────────────────────────────
+
+function excelDateToISO(v: unknown): string | null {
+  if (v instanceof Date) {
+    const y = v.getFullYear()
+    const mo = String(v.getMonth() + 1).padStart(2, "0")
+    const d  = String(v.getDate()).padStart(2, "0")
+    return `${y}-${mo}-${d}`
+  }
+  if (typeof v === "number") {
+    const info = XLSX.SSF.parse_date_code(v)
+    if (!info) return null
+    return `${info.y}-${String(info.m).padStart(2, "0")}-${String(info.d).padStart(2, "0")}`
+  }
+  if (typeof v === "string") {
+    const parts = v.trim().split("/")
+    if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`
+  }
+  return null
+}
+
+function parseDespesa(wb: XLSX.WorkBook, unitId: string): DreDespesaInsert[] {
+  const sheetName = "B. Despesa"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws = wb.Sheets[sheetName]
+    ws["!ref"] = "A1:I3241"
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DreDespesaInsert[] = []
+    for (let i = 1; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const valor = toNum(row[7])
+      if (valor === null || valor === 0) continue
+      const mesAnoRaw = toStr(row[8])
+      const mes_ano = mesAnoRaw ? (parseMesAno(mesAnoRaw) ?? mesAnoRaw) : null
+      if (!mes_ano) continue
+      result.push({
+        unit_id: unitId,
+        mes_ano,
+        data_competencia: excelDateToISO(row[0]),
+        descricao: toStr(row[3]),
+        categoria: toStr(row[6]),
+        valor,
+        tipo_despesa: toStr(row[5]),
+        classificacao_dre: null,
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+// ── parseFaturamento ──────────────────────────────────────────────────────────
+
+const MES_NOMES_FAT: Record<string, number> = {
+  janeiro: 1, fevereiro: 2, março: 3, marco: 3,
+  abril: 4, maio: 5, junho: 6, julho: 7,
+  agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+}
+
+function parseFaturamento(wb: XLSX.WorkBook, unitId: string): DreFaturamentoInsert[] {
+  const sheetName = "Base Faturamento"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DreFaturamentoInsert[] = []
+    // data rows: index 5–16 (Janeiro=5 … Dezembro=16), skip index 17 (Total)
+    for (let i = 5; i <= 16; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const nomeMes = toStr(row[0])
+      if (!nomeMes) continue
+      const mes_num = MES_NOMES_FAT[nomeMes.toLowerCase().trim()]
+      if (!mes_num) continue
+      result.push({
+        unit_id: unitId,
+        mes_num,
+        categoria: "Restaurante",
+        rec_2022:    toNum(row[1]),
+        rec_2023:    toNum(row[2]),
+        rec_2024:    toNum(row[4]),
+        rec_2025:    toNum(row[6]),
+        rec_2026_bd: toNum(row[8]),
+        clientes_bd: toNum(row[10]),
+        ticket_bd:   toNum(row[11]),
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+// ── parseContratos ────────────────────────────────────────────────────────────
+
+function parseContratos(wb: XLSX.WorkBook, unitId: string): DreContratosInsert[] {
+  const sheetName = "Serv"
+  if (!wb.Sheets[sheetName]) return []
+  try {
+    const ws  = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DreContratosInsert[] = []
+    // headers at index 3, data from index 6
+    for (let i = 6; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const razao_social = toStr(row[0])
+      const valor_mensal = toNum(row[2])
+      if (!razao_social || valor_mensal === null) continue
+      result.push({
+        unit_id: unitId,
+        razao_social,
+        descricao:       toStr(row[1]),
+        valor_mensal,
+        codigo_contabil: toStr(row[3]),
+        tipo:            toStr(row[4]),
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
 // ── Batch insert helper ────────────────────────────────────────────────────────
 
 async function batchInsert<T>(
@@ -893,12 +1029,16 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         kpisResult.clientesPorMes, kpisResult.ticketPorMes, unitId
       )
       const indicadoresRows = parseIndicadores(wb, unitId)
+      const despesaRows     = parseDespesa(wb, unitId)
+      const faturamentoRows = parseFaturamento(wb, unitId)
+      const contratosRows   = parseContratos(wb, unitId)
 
       const total =
         realizadoResult.rows.length + orcadoResult.rows.length +
         gorjetaResult.rows.length   + receitaResult.rows.length +
         mensalRows.length           + kpisResult.rows.length +
-        indicadoresRows.length
+        indicadoresRows.length      + despesaRows.length +
+        faturamentoRows.length      + contratosRows.length
 
       if (total === 0) {
         setErrorMsg("Nenhuma linha válida encontrada no arquivo.")
@@ -922,6 +1062,9 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         mensalRows,
         kpisRows:       kpisResult.rows,
         indicadoresRows,
+        despesaRows,
+        faturamentoRows,
+        contratosRows,
         reconciliation,
         gorjetaRecon:   gorjetaResult.recon,
         receitaRecon,
@@ -945,7 +1088,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
   async function handleConfirm() {
     if (!reviewData || !unitId) return
     const { realizadoRows, orcadoRows, gorjetaRows, receitaRows,
-            mensalRows, kpisRows, indicadoresRows } = reviewData
+            mensalRows, kpisRows, indicadoresRows,
+            despesaRows, faturamentoRows, contratosRows } = reviewData
     setStatus("uploading")
 
     let imported = 0
@@ -1013,6 +1157,33 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         if (!delI.ok) { setErrorMsg(delI.error ?? "Erro ao limpar indicadores."); setStatus("error"); return }
         const errI = await batchInsert(indicadoresRows, insertDreIndicadores, bump)
         if (errI) { setErrorMsg(errI); setStatus("error"); return }
+      }
+
+      // ── Despesas ───────────────────────────────────────────────────────────
+      if (despesaRows.length > 0) {
+        setPhase("Importando Despesas…")
+        const delD = await deleteDreDespesa(unitId)
+        if (!delD.ok) { setErrorMsg(delD.error ?? "Erro ao limpar despesas."); setStatus("error"); return }
+        const errD = await batchInsert(despesaRows, insertDreDespesa, bump)
+        if (errD) { setErrorMsg(errD); setStatus("error"); return }
+      }
+
+      // ── Faturamento histórico ──────────────────────────────────────────────
+      if (faturamentoRows.length > 0) {
+        setPhase("Importando Faturamento…")
+        const delF = await deleteDreFaturamento(unitId)
+        if (!delF.ok) { setErrorMsg(delF.error ?? "Erro ao limpar faturamento."); setStatus("error"); return }
+        const errF = await batchInsert(faturamentoRows, insertDreFaturamento, bump)
+        if (errF) { setErrorMsg(errF); setStatus("error"); return }
+      }
+
+      // ── Contratos fixos ────────────────────────────────────────────────────
+      if (contratosRows.length > 0) {
+        setPhase("Importando Contratos…")
+        const delC = await deleteDreContratos(unitId)
+        if (!delC.ok) { setErrorMsg(delC.error ?? "Erro ao limpar contratos."); setStatus("error"); return }
+        const errC = await batchInsert(contratosRows, insertDreContratos, bump)
+        if (errC) { setErrorMsg(errC); setStatus("error"); return }
       }
 
       setStatus("done")
@@ -1274,6 +1445,48 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
                         </span>
                       )
                     })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Section: Lançamentos e Referência */}
+              {(reviewData.despesaRows.length > 0 || reviewData.faturamentoRows.length > 0 || reviewData.contratosRows.length > 0) && (
+                <div style={{ marginTop: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Lançamentos e Referência</div>
+                  <div style={{
+                    border: "1px solid var(--border)", borderRadius: 8,
+                    padding: "10px 14px", fontSize: 12, color: "var(--text-3)",
+                    display: "flex", flexDirection: "column", gap: 8,
+                  }}>
+                    {reviewData.despesaRows.length > 0 && (() => {
+                      const porMes = new Map<string, number>()
+                      reviewData.despesaRows.forEach(r => porMes.set(r.mes_ano, (porMes.get(r.mes_ano) ?? 0) + 1))
+                      const mesesStr = [...porMes.entries()]
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([m, n]) => `${mesAnoLabel(m)} ${n}`)
+                        .join(" | ")
+                      return (
+                        <span>
+                          Despesas:{" "}
+                          <strong style={{ color: "var(--text)" }}>{reviewData.despesaRows.length}</strong>
+                          {" "}linhas — {mesesStr}
+                        </span>
+                      )
+                    })()}
+                    {reviewData.faturamentoRows.length > 0 && (
+                      <span>
+                        Faturamento histórico:{" "}
+                        <strong style={{ color: "var(--text)" }}>{reviewData.faturamentoRows.length}</strong>
+                        {" "}meses (2022 → 2026 BD)
+                      </span>
+                    )}
+                    {reviewData.contratosRows.length > 0 && (
+                      <span>
+                        Contratos fixos:{" "}
+                        <strong style={{ color: "var(--text)" }}>{reviewData.contratosRows.length}</strong>
+                        {" "}contratos
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

@@ -313,3 +313,138 @@ export async function insertDreIndicadores(
     return { ok: false, count: 0, error: String(e) }
   }
 }
+
+// ── dre_despesa_detalhada ─────────────────────────────────────────────────────
+
+export type DreDespesaInsert = {
+  unit_id: string
+  mes_ano: string
+  data_competencia: string | null
+  descricao: string | null
+  categoria: string | null
+  valor: number
+  tipo_despesa: string | null
+  classificacao_dre: null
+}
+
+export async function deleteDreDespesa(
+  unitId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_despesa_detalhada").delete().eq("unit_id", unitId)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+export async function insertDreDespesa(
+  rows: DreDespesaInsert[]
+): Promise<{ ok: boolean; count: number; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_despesa_detalhada").insert(rows)
+    if (error) return { ok: false, count: 0, error: error.message }
+    return { ok: true, count: rows.length }
+  } catch (e) {
+    return { ok: false, count: 0, error: String(e) }
+  }
+}
+
+// ── dre_faturamento_historico ─────────────────────────────────────────────────
+
+export type DreFaturamentoInsert = {
+  unit_id: string
+  mes_num: number
+  categoria: string
+  rec_2022: number | null
+  rec_2023: number | null
+  rec_2024: number | null
+  rec_2025: number | null
+  rec_2026_bd: number | null
+  clientes_bd: number | null
+  ticket_bd: number | null
+}
+
+export async function deleteDreFaturamento(
+  unitId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_faturamento_historico").delete().eq("unit_id", unitId)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+export async function insertDreFaturamento(
+  rows: DreFaturamentoInsert[]
+): Promise<{ ok: boolean; count: number; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_faturamento_historico").insert(rows)
+    if (error) return { ok: false, count: 0, error: error.message }
+    return { ok: true, count: rows.length }
+  } catch (e) {
+    return { ok: false, count: 0, error: String(e) }
+  }
+}
+
+// ── dre_contratos_fixos ───────────────────────────────────────────────────────
+
+export type DreContratosInsert = {
+  unit_id: string
+  razao_social: string
+  descricao: string | null
+  valor_mensal: number
+  codigo_contabil: string | null
+  tipo: string | null
+}
+
+export async function deleteDreContratos(
+  unitId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_contratos_fixos").delete().eq("unit_id", unitId)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+export async function insertDreContratos(
+  rows: DreContratosInsert[]
+): Promise<{ ok: boolean; count: number; error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("dre_contratos_fixos").insert(rows)
+    if (error) return { ok: false, count: 0, error: error.message }
+    return { ok: true, count: rows.length }
+  } catch (e) {
+    return { ok: false, count: 0, error: String(e) }
+  }
+}
