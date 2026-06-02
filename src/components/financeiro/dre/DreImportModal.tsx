@@ -552,13 +552,6 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
       const row = (raw[rowIdx] ?? []) as unknown[]
       const mesCell = toStr(row[mesCol])
       if (!mesCell) continue
-      const valorCell = toStr(row[valorCol])
-      const classificacaoCell = classCol >= 0 ? toStr(row[classCol]) : null
-      if (rowIdx === headerRowIdx + 1) {
-        console.log('[MDNA receita] primeira linha completa:', row.slice(0, 10))
-        console.log('[MDNA receita] valorCell:', valorCell, 'classificacaoCell:', classificacaoCell)
-        console.log('[MDNA receita] primeiro mesCell:', mesCell)
-      }
       const mesAno = parseMesAno(mesCell)
       if (!mesAno) continue
 
@@ -566,7 +559,7 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
       if (valor === null) continue
 
       const bandeira      = bandeiraCol >= 0 ? toStr(row[bandeiraCol]) : null
-      const classificacao = classificacaoCell
+      const classificacao = classCol    >= 0 ? toStr(row[classCol])    : null
       const grupo         = grupoCol    >= 0 ? toStr(row[grupoCol])    : null
 
       const key = `${mesAno}||${bandeira ?? ""}||${classificacao ?? ""}||${grupo ?? ""}`
@@ -584,6 +577,17 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
     return { rows, somaByMes, missing: false }
   } catch (e) {
     return { rows: [], somaByMes: new Map(), missing: false, parseError: String(e) }
+  }
+}
+
+function parseReceitaMDNA(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
+  const result = parseReceita(wb, unitId)
+  return {
+    ...result,
+    rows: result.rows.map(r => ({
+      ...r,
+      grupo: r.grupo === "FATURAMENTO" ? "RECEITA" : r.grupo,
+    })),
   }
 }
 
@@ -1230,7 +1234,6 @@ function parseMdnaLinhas(
 
   console.log('[MDNA] aba:', sheetName, 'total rows:', raw.length)
   console.log('[MDNA] row4 (header):', raw[4])
-  console.log('[MDNA] row5:', raw[5])
   console.log('[MDNA] row40:', raw[40])
   console.log('[MDNA] row41:', raw[41])
 
@@ -1279,10 +1282,6 @@ function parseMdnaLinhas(
     }
   }
 
-  console.log('[MDNA] grupos detectados:', gruposCount)
-  console.log('[MDNA] linhas geradas:', rows.length)
-  console.log('[MDNA] totaisDeclarados:', [...totaisDeclarados.entries()].map(([m,g]) => [m, [...g.entries()]]))
-
   return { rows, totaisDeclarados }
 }
 
@@ -1330,13 +1329,9 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult
   try {
     const ws  = wb.Sheets["Base Gorjeta"]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
-    for (let i = 0; i < Math.min(raw.length, 15); i++) {
-      const col2 = (raw[i] as unknown[] | undefined)?.[2]
-      if (col2) console.log('[MDNA gorjeta scan] row' + i + ':', raw[i])
-    }
-    // col[3]=jan(2026-1), col[4]=fev(2026-2), col[5]=mar(2026-3), col[6]=abr(2026-4)
-    const mesMap: [number, string][] = [[3, "2026-1"], [4, "2026-2"], [5, "2026-3"], [6, "2026-4"]]
-    // row3=recebida, row4=paga, row6=retencao (0-indexed)
+    // col[2]=jan(2026-1), col[3]=fev(2026-2), col[4]=mar(2026-3), col[5]=abr(2026-4)
+    const mesMap: [number, string][] = [[2, "2026-1"], [3, "2026-2"], [4, "2026-3"], [5, "2026-4"]]
+    // row2=recebida, row3=paga, row5=retencao (0-indexed)
     const getRowVal = (rowIdx: number, colIdx: number): number | null =>
       toNum(((raw[rowIdx] ?? []) as unknown[])[colIdx])
 
@@ -1344,10 +1339,10 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult
     const recon: GorjetaReconItem[] = []
 
     for (const [colIdx, mesAno] of mesMap) {
-      const recebida = getRowVal(3, colIdx)
+      const recebida = getRowVal(2, colIdx)
       if (recebida === null || recebida === 0) continue
-      const paga         = getRowVal(4, colIdx)
-      const retencaoDecl = getRowVal(6, colIdx)
+      const paga         = getRowVal(3, colIdx)
+      const retencaoDecl = getRowVal(5, colIdx)
       rows.push({
         unit_id: unitId, mes_ano: mesAno,
         gorjeta_recebida: recebida,
@@ -1439,7 +1434,7 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         : parseSheet(wb, "04 -Base Orçado 2026", "orcado", unitId)
 
       const gorjetaResult   = isMdna ? parseGorjetaMDNA(wb, unitId)     : parseGorjeta(wb, unitId)
-      const receitaResult   = parseReceita(wb, unitId)
+      const receitaResult   = isMdna ? parseReceitaMDNA(wb, unitId)    : parseReceita(wb, unitId)
 
       const mesesR = [...new Set(realizadoResult.rows.map(r => r.mes_ano))].sort()
       const latestMonth = mesesR.at(-1) ?? ""
