@@ -1466,6 +1466,52 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): DreGorjetaInsert[]
   return result
 }
 
+function parseDespesaMDNA(wb: XLSX.WorkBook, unitId: string): DreDespesaInsert[] {
+  const ws = wb.Sheets["B. Despesa"]
+  if (!ws) return []
+  try {
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const hRow = findHeaderRow(raw, "VALOR NA CATEGORIA 1")
+    if (hRow < 0) return []
+    const cm = colMapByName(raw[hRow] ?? [])
+    const descCol    = cm["DESCRIÇÃO"]    ?? cm["DESCRICAO"]
+    const fornCol    = cm["NOME DO FORNECEDOR/CLIENTE"]
+    const catCol     = cm["CATEGORIA 1"]
+    const valorCol   = cm["VALOR NA CATEGORIA 1"]
+    const mesCol     = cm["MÊS PAGTO"]   ?? cm["MES PAGTO"]
+    const classifCol = cm["CLASSIFICACAO DRE"] ?? cm["CLASSIFICAÇÃO DRE"]
+    const tipoCol    = cm["TIPO DESPESA"]
+    if (valorCol === undefined || mesCol === undefined) return []
+    const result: DreDespesaInsert[] = []
+    for (let i = hRow + 1; i < raw.length; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const valor = toNum(row[valorCol])
+      if (valor === null || valor === 0) continue
+      const mesRaw = row[mesCol]
+      if (mesRaw === null || mesRaw === undefined) continue
+      const mes_ano = parseMesAno(String(mesRaw).trim())
+      if (!mes_ano) continue
+      result.push({
+        unit_id: unitId,
+        mes_ano,
+        data_competencia: null,
+        descricao:        descCol    !== undefined ? toStr(row[descCol])    : null,
+        categoria:        catCol     !== undefined ? toStr(row[catCol])     : null,
+        valor,
+        tipo_despesa:     tipoCol    !== undefined ? toStr(row[tipoCol])    : null,
+        classificacao_dre: classifCol !== undefined ? toStr(row[classifCol]) : null,
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+function parseFaturamentoMDNA(wb: XLSX.WorkBook, unitId: string): DreFaturamentoInsert[] {
+  return parseFaturamento(wb, unitId).map(r => ({ ...r, rec_2022: null, rec_2023: null, rec_2024: null }))
+}
+
 // ── Batch insert helper ────────────────────────────────────────────────────────
 
 async function batchInsert<T>(
@@ -1562,8 +1608,8 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
         kpisResult.clientesPorMes, kpisResult.ticketPorMes, unitId
       )
       const indicadoresRows = parseIndicadores(wb, unitId)
-      const despesaRows     = parseDespesa(wb, unitId)
-      const faturamentoRows = parseFaturamento(wb, unitId)
+      const despesaRows     = isMdna ? parseDespesaMDNA(wb, unitId)     : parseDespesa(wb, unitId)
+      const faturamentoRows = isMdna ? parseFaturamentoMDNA(wb, unitId) : parseFaturamento(wb, unitId)
       const contratosRows   = parseContratos(wb, unitId)
       const folhaRows       = parseFolha(wb, unitId)
       const pessoalRows     = isMdna ? [] : parsePessoal(wb, unitId)
