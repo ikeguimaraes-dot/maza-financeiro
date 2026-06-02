@@ -453,7 +453,7 @@ export async function insertDreContratos(
 
 export type DreFolhaInsert = {
   unit_id: string
-  tipo: string | null
+  tipo: string
   nome: string | null
   funcao: string | null
   divisao: string | null

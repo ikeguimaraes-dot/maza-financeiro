@@ -1035,8 +1035,9 @@ function parseFolha(wb: XLSX.WorkBook, unitId: string): DreFolhaInsert[] {
     // sheet starts at col B → SheetJS index 0 = col B
     for (let i = 4; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
-      const tipo = typeof row[0] === "string" ? row[0].trim() : null
-      if (!tipo) continue
+      const tipoRaw = toStr(row[0])
+      if (!tipoRaw) continue
+      const tipo: string = tipoRaw
       const nomeRaw = toStr(row[1])
       if (!nomeRaw) continue
       const salario = toNum(row[6]) ?? 0
