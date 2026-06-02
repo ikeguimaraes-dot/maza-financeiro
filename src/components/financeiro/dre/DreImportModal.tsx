@@ -907,7 +907,7 @@ function parseFaturamento(wb: XLSX.WorkBook, unitId: string): DreFaturamentoInse
         rec_2024:    toNum(row[4]),
         rec_2025:    toNum(row[6]),
         rec_2026_bd: toNum(row[8]),
-        clientes_bd: toNum(row[10]),
+        clientes_bd: (() => { const v = row[10]; return typeof v === "number" ? Math.round(v) : null })(),
         ticket_bd:   toNum(row[11]),
       })
     }
