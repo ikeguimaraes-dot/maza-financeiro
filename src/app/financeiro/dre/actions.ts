@@ -459,7 +459,7 @@ export type DreFolhaInsert = {
   divisao: string | null
   admissao: string | null
   salario: number
-  custo_total: null
+  custo_total: number | null
   is_vaga: boolean
 }
 

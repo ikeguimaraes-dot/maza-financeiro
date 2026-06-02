@@ -1032,22 +1032,24 @@ function parseFolha(wb: XLSX.WorkBook, unitId: string): DreFolhaInsert[] {
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
     const result: DreFolhaInsert[] = []
     // data from row index 4 (r5 in Excel)
+    // sheet starts at col B → SheetJS index 0 = col B
     for (let i = 4; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
-      const salario = toNum(row[7])
-      if (salario === null || salario <= 0) continue
-      const nomeRaw = toStr(row[2])
+      const nomeRaw = toStr(row[1])
       if (!nomeRaw) continue
+      const salario = toNum(row[6]) ?? 0
+      const custoRaw = toNum(row[25])
+      const custo_total = (custoRaw !== null && isFinite(custoRaw)) ? custoRaw : salario
       const is_vaga = nomeRaw.toLowerCase().includes("vaga")
       result.push({
         unit_id: unitId,
         tipo:     toStr(row[0]),
         nome:     nomeRaw,
-        funcao:   toStr(row[3]),
-        divisao:  toStr(row[4]),
-        admissao: excelDateToISO(row[5]),
+        funcao:   toStr(row[2]),
+        divisao:  toStr(row[3]),
+        admissao: excelDateToISO(row[4]),
         salario,
-        custo_total: null,
+        custo_total,
         is_vaga,
       })
     }
