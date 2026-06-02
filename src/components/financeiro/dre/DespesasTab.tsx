@@ -192,8 +192,21 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
   }
 
   // Receita líquida for % calc
-  const rlOrc = linhas.find(l => l.mes_ano === mesSel && l.tipo === "orcado" && l.descricao === "Receita Líquida")?.valor ?? null
-  const rlRe  = linhas.find(l => l.mes_ano === mesSel && l.tipo === "realizado" && l.descricao === "Receita Líquida")?.valor ?? null
+  const rlOrc = (() => {
+    const rows = linhas.filter(l =>
+      l.mes_ano === mesSel && l.tipo === "orcado" && l.grupo === "RECEITA"
+    )
+    if (rows.length === 0) return null
+    return rows.reduce((acc, l) => acc + (l.valor ?? 0), 0)
+  })()
+
+  const rlRe = (() => {
+    const rows = linhas.filter(l =>
+      l.mes_ano === mesSel && l.tipo === "realizado" && l.grupo === "RECEITA"
+    )
+    if (rows.length === 0) return null
+    return rows.reduce((acc, l) => acc + (l.valor ?? 0), 0)
+  })()
 
   function pctOf(v: number | null, base: number | null) {
     if (v === null || base === null || base === 0) return null
@@ -327,7 +340,7 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
                 {DRE_GRUPOS.map((grupo) => {
                   const bdVal = orcForMes(grupo)
                   const reVal = reForMes(grupo)
-                  // if (bdVal === null && reVal === null) return null
+                  if (bdVal === null && reVal === null) return null
                   const vR = varR(reVal, bdVal)
                   const vP = varPct(reVal, bdVal)
                   const bdPct = pctOf(bdVal, rlOrc)
