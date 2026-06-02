@@ -1035,15 +1035,18 @@ function parseFolha(wb: XLSX.WorkBook, unitId: string): DreFolhaInsert[] {
     // sheet starts at col B → SheetJS index 0 = col B
     for (let i = 4; i < raw.length; i++) {
       const row = (raw[i] ?? []) as unknown[]
+      const tipo = typeof row[0] === "string" ? row[0].trim() : null
+      if (!tipo) continue
       const nomeRaw = toStr(row[1])
       if (!nomeRaw) continue
       const salario = toNum(row[6]) ?? 0
+      if (salario <= 0) continue
       const custoRaw = toNum(row[25])
       const custo_total = (custoRaw !== null && isFinite(custoRaw)) ? custoRaw : salario
       const is_vaga = nomeRaw.toLowerCase().includes("vaga")
       result.push({
         unit_id: unitId,
-        tipo:     toStr(row[0]),
+        tipo,
         nome:     nomeRaw,
         funcao:   toStr(row[2]),
         divisao:  toStr(row[3]),
