@@ -1385,9 +1385,10 @@ function parseReceitaMDNA(wb: XLSX.WorkBook, unitId: string): DreReceitaInsert[]
   if (hRow < 0) return []
 
   const cm = colMapByName(raw[hRow] ?? [])
-  const valorCol   = cm["VALOR"]
-  const classifCol = cm["CLASSIFICAÇÃO"] ?? cm["CLASSIFICACAO"]
-  const mesCol     = cm["MÊS PAGTO"] ?? cm["MES PAGTO"]
+  const bandeiraCol = cm["BANDEIRA"]
+  const valorCol    = cm["VALOR"]
+  const classifCol  = cm["CLASSIFICAÇÃO"] ?? cm["CLASSIFICACAO"]
+  const mesCol      = cm["MÊS PAGTO"] ?? cm["MES PAGTO"]
   if (valorCol === undefined || mesCol === undefined) return []
 
   const MESN: Record<string, string> = {
@@ -1406,10 +1407,11 @@ function parseReceitaMDNA(wb: XLSX.WorkBook, unitId: string): DreReceitaInsert[]
     if (v === null || mesRaw === null || mesRaw === undefined) continue
     const mes = MESN[String(mesRaw).trim().toLowerCase()]
     if (!mes) continue
-    const classificacao = classifCol !== undefined ? String(row[classifCol] ?? "").trim() : ""
+    const bandeira      = bandeiraCol !== undefined ? String(row[bandeiraCol] ?? "").trim() || "Outros" : "Outros"
+    const classificacao = classifCol  !== undefined ? String(row[classifCol]  ?? "").trim() : ""
     result.push({
       unit_id: unitId, mes_ano: mes,
-      bandeira: null, classificacao: classificacao || "Receita",
+      bandeira, classificacao: classificacao || "Receita",
       grupo: "RECEITA", valor: v,
     })
   }
