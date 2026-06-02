@@ -552,7 +552,13 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
       const row = (raw[rowIdx] ?? []) as unknown[]
       const mesCell = toStr(row[mesCol])
       if (!mesCell) continue
-      if (rowIdx === headerRowIdx + 1) console.log('[MDNA receita] primeiro mesCell:', mesCell)
+      const valorCell = toStr(row[valorCol])
+      const classificacaoCell = classCol >= 0 ? toStr(row[classCol]) : null
+      if (rowIdx === headerRowIdx + 1) {
+        console.log('[MDNA receita] primeira linha completa:', row.slice(0, 10))
+        console.log('[MDNA receita] valorCell:', valorCell, 'classificacaoCell:', classificacaoCell)
+        console.log('[MDNA receita] primeiro mesCell:', mesCell)
+      }
       const mesAno = parseMesAno(mesCell)
       if (!mesAno) continue
 
@@ -560,7 +566,7 @@ function parseReceita(wb: XLSX.WorkBook, unitId: string): ReceitaParseResult {
       if (valor === null) continue
 
       const bandeira      = bandeiraCol >= 0 ? toStr(row[bandeiraCol]) : null
-      const classificacao = classCol    >= 0 ? toStr(row[classCol])    : null
+      const classificacao = classificacaoCell
       const grupo         = grupoCol    >= 0 ? toStr(row[grupoCol])    : null
 
       const key = `${mesAno}||${bandeira ?? ""}||${classificacao ?? ""}||${grupo ?? ""}`
@@ -1252,7 +1258,7 @@ function parseMdnaLinhas(
         if (val === null) continue
         if (!totaisDeclarados.has(mesAno)) totaisDeclarados.set(mesAno, new Map())
         const gm = totaisDeclarados.get(mesAno)!
-        gm.set(currentGrupo, (gm.get(currentGrupo) ?? 0) + val)
+        gm.set(grupoMapped, (gm.get(grupoMapped) ?? 0) + val)
       }
       continue
     }
@@ -1324,9 +1330,10 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult
   try {
     const ws  = wb.Sheets["Base Gorjeta"]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
-    console.log('[MDNA gorjeta] raw[3]:', raw[3])
-    console.log('[MDNA gorjeta] raw[4]:', raw[4])
-    console.log('[MDNA gorjeta] raw[6]:', raw[6])
+    for (let i = 0; i < Math.min(raw.length, 15); i++) {
+      const col2 = (raw[i] as unknown[] | undefined)?.[2]
+      if (col2) console.log('[MDNA gorjeta scan] row' + i + ':', raw[i])
+    }
     // col[3]=jan(2026-1), col[4]=fev(2026-2), col[5]=mar(2026-3), col[6]=abr(2026-4)
     const mesMap: [number, string][] = [[3, "2026-1"], [4, "2026-2"], [5, "2026-3"], [6, "2026-4"]]
     // row3=recebida, row4=paga, row6=retencao (0-indexed)
