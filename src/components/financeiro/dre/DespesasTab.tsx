@@ -326,7 +326,8 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
                 {DRE_GRUPOS.map((grupo) => {
                   const bdVal = orcForMes(grupo)
                   const reVal = reForMes(grupo)
-                  if (bdVal === null && reVal === null) return null
+                  console.log('[grupo row]', grupo, { bdVal, reVal })
+                  // if (bdVal === null && reVal === null) return null
                   const vR = varR(reVal, bdVal)
                   const vP = varPct(reVal, bdVal)
                   const bdPct = pctOf(bdVal, rlOrc)
@@ -346,11 +347,11 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
                         </td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 12, color: "var(--text-3)" }}>{fmtPct(bdPct)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 12, color: "var(--text)", fontWeight: 600 }}>
-                          {bdVal != null ? formatBRLCompact(Math.abs(bdVal)) : "—"}
+                          {String(bdVal)}
                         </td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 12, color: "var(--text-3)" }}>{fmtPct(rePct)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 12, color: hasRealMes ? "var(--text)" : "var(--text-3)", fontWeight: 600 }}>
-                          {reVal != null ? formatBRLCompact(Math.abs(reVal)) : "—"}
+                          {String(reVal)}
                         </td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 12, color: varColor(vR), whiteSpace: "nowrap" }}>{fmtVarR(vR)}</td>
                         <td style={{ padding: "8px 14px 8px 8px", textAlign: "right", fontSize: 12, color: varColor(vP), whiteSpace: "nowrap" }}>{fmtVarPct(vP)}</td>
