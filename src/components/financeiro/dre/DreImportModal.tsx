@@ -1434,9 +1434,13 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): DreGorjetaInsert[]
     return -1
   }
 
-  const rRec = findLabel("GORJETA RECEBIDA")
-  const rPg  = findLabel("GORJETA PAGA")
-  const rRet = findLabel("RETENÇÃO")
+  const rRec  = findLabel("GORJETA RECEBIDA")
+  const rPg   = findLabel("GORJETA PAGA")
+  const rRet  = findLabel("RETENÇÃO")
+  const rFer  = findLabel("FÉRIAS")
+  const rDec  = findLabel("13º")
+  const rFgts = findLabel("FGTS")
+  const rInss = findLabel("INSS")
   if (rRec < 0 || rPg < 0) return []
 
   const hRow = findHeaderRow(raw, "JAN")
@@ -1447,19 +1451,31 @@ function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): DreGorjetaInsert[]
     ["MAR", "2026-3"], ["ABR", "2026-4"],
   ])
 
+  const getCell = (rowIdx: number, colIdx: number): number | null =>
+    rowIdx >= 0 ? toNum((raw[rowIdx] as unknown[] ?? [])[colIdx]) : null
+
   const result: DreGorjetaInsert[] = []
   for (const [colIdx, mes] of mesCols) {
-    const recebida = toNum((raw[rRec] as unknown[] ?? [])[colIdx])
-    const paga     = toNum((raw[rPg]  as unknown[] ?? [])[colIdx])
-    const retDecl  = rRet >= 0 ? toNum((raw[rRet] as unknown[] ?? [])[colIdx]) : null
+    const recebida = getCell(rRec, colIdx)
+    const paga     = getCell(rPg,  colIdx)
+    const retDecl  = getCell(rRet, colIdx)
+    const ferias   = getCell(rFer, colIdx)
+    const dec      = getCell(rDec, colIdx)
+    const fgts     = getCell(rFgts, colIdx)
+    const inss     = getCell(rInss, colIdx)
     if (recebida === null && paga === null) continue
     const r = recebida ?? 0
     const p = paga     ?? 0
+    const encargos_total = (ferias ?? 0) + (dec ?? 0) + (fgts ?? 0) + (inss ?? 0) || null
     result.push({
       unit_id: unitId, mes_ano: mes,
       gorjeta_recebida: r, gorjeta_paga: p,
-      retencao: retDecl ?? (r - p),
-      ferias: null, decimo_terceiro: null, fgts: null, inss: null, encargos_total: null,
+      retencao:        retDecl ?? (r - p),
+      ferias,
+      decimo_terceiro: dec,
+      fgts,
+      inss,
+      encargos_total,
     })
   }
 
