@@ -901,7 +901,7 @@ function parseFaturamento(wb: XLSX.WorkBook, unitId: string): DreFaturamentoInse
       result.push({
         unit_id: unitId,
         mes_num,
-        categoria: "Restaurante",
+        categoria: "restaurante",
         rec_2022:    toNum(row[1]),
         rec_2023:    toNum(row[2]),
         rec_2024:    toNum(row[4]),
