@@ -78,8 +78,13 @@ export function FolhaTab({ data, linhas = [] }: Props) {
   const getVal = (tipo: "orcado" | "realizado", mes: string, desc: string) =>
     linhas.find(l => l.grupo === "PESSOAL" && l.tipo === tipo && l.mes_ano === mes && l.descricao === desc)?.valor ?? null
 
-  const getTotalPessoal = (tipo: "orcado" | "realizado", mes: string) =>
-    linhas.find(l => l.grupo === "PESSOAL" && l.tipo === tipo && l.mes_ano === mes && l.descricao === "Pessoal Total")?.valor ?? null
+  const getTotalPessoal = (tipo: "orcado" | "realizado", mes: string) => {
+    const rows = linhas.filter(l =>
+      l.grupo === "PESSOAL" && l.tipo === tipo && l.mes_ano === mes
+    )
+    if (rows.length === 0) return null
+    return rows.reduce((acc, l) => acc + (l.valor ?? 0), 0)
+  }
 
   const hasPessoalLinhas = linhas.some(l => l.grupo === "PESSOAL")
 
