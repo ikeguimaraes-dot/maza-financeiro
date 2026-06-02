@@ -48,6 +48,8 @@ import type {
   DrePrestadoresInsert,
 } from "@/app/financeiro/dre/actions"
 
+const MDNA_UNIT_ID = "f9c6c7fc-2ecc-4f79-98ce-c3118b670182"
+
 // ── Lookup maps ────────────────────────────────────────────────────────────────
 
 const GRUPO_MAP: Record<string, string> = {
@@ -1192,6 +1194,151 @@ function parsePrestadores(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInse
   return [...agg.values()].map(r => ({ unit_id: unitId, ...r }))
 }
 
+// ── MDNA parsers (Madonna SP Itaim) ──────────────────────────────────────────
+
+const MDNA_GRUPO_MAP: Record<string, string> = {
+  "CUSTOS DOS PRODUTOS VENDIDOS": "CMV",
+  "UTILIDADES/ CONSUMO":          "UTILIDADES",
+  "UTILIDADES/CONSUMO":           "UTILIDADES",
+  "PESSOAL":                      "PESSOAL",
+  "OCUPAÇÃO":                     "OCUPAÇÃO",
+  "MANUTENÇÃO":                   "MANUTENÇÃO",
+  "OPERAÇÃO":                     "OPERAÇÃO",
+  "ADMINISTRATIVA":               "ADMINISTRATIVA",
+  "MARKETING":                    "MARKETING",
+  "IMPOSTOS":                     "IMPOSTOS",
+}
+
+function parseMdnaLinhas(
+  wb: XLSX.WorkBook,
+  sheetName: string,
+  tipo: "realizado" | "orcado",
+  unitId: string,
+  mesMap: [number, string][]
+): ParseResult {
+  const ws = wb.Sheets[sheetName]
+  if (!ws) throw new Error(`Aba '${sheetName}' não encontrada.`)
+
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+
+  const DESC_COL  = 1
+  const CONTA_COL = 2
+
+  const rows: DreLinhaInsert[] = []
+  const totaisDeclarados: TotaisDeclarados = new Map()
+  let currentGrupo: string | null = null
+
+  for (let rowIdx = 5; rowIdx < raw.length; rowIdx++) {
+    const row    = (raw[rowIdx] ?? []) as unknown[]
+    const descRaw = toStr(row[DESC_COL])
+    if (!descRaw) continue
+    const desc   = descRaw.trim()
+    const descUp = normalizeSpaces(desc).toUpperCase()
+
+    const grupoMapped = MDNA_GRUPO_MAP[descUp]
+    if (grupoMapped) {
+      currentGrupo = grupoMapped
+      for (const [colIdx, mesAno] of mesMap) {
+        const val = toNum(row[colIdx])
+        if (val === null) continue
+        if (!totaisDeclarados.has(mesAno)) totaisDeclarados.set(mesAno, new Map())
+        const gm = totaisDeclarados.get(mesAno)!
+        gm.set(currentGrupo, (gm.get(currentGrupo) ?? 0) + val)
+      }
+      continue
+    }
+
+    if (!currentGrupo) continue
+
+    const conta     = toStr(row[CONTA_COL])
+    const descBanco = DESCRICAO_MAP[desc] ?? desc
+
+    for (const [colIdx, mesAno] of mesMap) {
+      const val = toNum(row[colIdx])
+      if (val === null || val === 0) continue
+      rows.push({
+        unit_id: unitId, mes_ano: mesAno, tipo,
+        grupo: currentGrupo, descricao: descBanco, conta,
+        valor: val, av_percentual: null, custo_tipo: null,
+      })
+    }
+  }
+
+  return { rows, totaisDeclarados }
+}
+
+function parseRealizadoMDNA(wb: XLSX.WorkBook, unitId: string): ParseResult {
+  return parseMdnaLinhas(wb, "01 Base Realizado", "realizado", unitId, [
+    [3, "2026-1"], [5, "2026-2"], [7, "2026-3"], [9, "2026-4"],
+  ])
+}
+
+function parseOrcadoMDNA(wb: XLSX.WorkBook, unitId: string): ParseResult {
+  return parseMdnaLinhas(wb, "04 -Base Orçado 2026", "orcado", unitId, [
+    [4, "2026-1"], [5, "2026-2"], [6, "2026-3"], [7, "2026-4"],
+  ])
+}
+
+function parsePrestadoresMDNA(wb: XLSX.WorkBook, unitId: string): DrePrestadoresInsert[] {
+  if (!wb.Sheets["Prestadores de Serviço PJ"]) return []
+  try {
+    const ws  = wb.Sheets["Prestadores de Serviço PJ"]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const mesMap: [number, string][] = [[1, "2026-1"], [2, "2026-2"], [3, "2026-3"]]
+    const result: DrePrestadoresInsert[] = []
+    for (let i = 4; i < raw.length; i++) {
+      const row  = (raw[i] ?? []) as unknown[]
+      const nome = toStr(row[0])
+      if (!nome || normalizeSpaces(nome).toUpperCase() === "TOTAL GERAL") continue
+      for (const [colIdx, mes_ano] of mesMap) {
+        const valor = toNum(row[colIdx])
+        if (valor === null || valor === 0) continue
+        result.push({ unit_id: unitId, mes_ano, nome, grupo: "OPERAÇÃO", valor })
+      }
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+function parseGorjetaMDNA(wb: XLSX.WorkBook, unitId: string): GorjetaParseResult {
+  if (!wb.Sheets["Base Gorjeta"]) return { rows: [], recon: [], missing: true }
+  try {
+    const ws  = wb.Sheets["Base Gorjeta"]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+    // col[3]=jan(2026-1), col[4]=fev(2026-2), col[5]=mar(2026-3), col[6]=abr(2026-4)
+    const mesMap: [number, string][] = [[3, "2026-1"], [4, "2026-2"], [5, "2026-3"], [6, "2026-4"]]
+    // row3=recebida, row4=paga, row6=retencao (0-indexed)
+    const getRowVal = (rowIdx: number, colIdx: number): number | null =>
+      toNum(((raw[rowIdx] ?? []) as unknown[])[colIdx])
+
+    const rows: DreGorjetaInsert[] = []
+    const recon: GorjetaReconItem[] = []
+
+    for (const [colIdx, mesAno] of mesMap) {
+      const recebida = getRowVal(3, colIdx)
+      if (recebida === null || recebida === 0) continue
+      const paga         = getRowVal(4, colIdx)
+      const retencaoDecl = getRowVal(6, colIdx)
+      rows.push({
+        unit_id: unitId, mes_ano: mesAno,
+        gorjeta_recebida: recebida,
+        gorjeta_paga:     paga,
+        retencao:         retencaoDecl,
+        ferias: null, decimo_terceiro: null, fgts: null, inss: null, encargos_total: null,
+      })
+      if (paga !== null && retencaoDecl !== null) {
+        const retencaoCalc = recebida - paga
+        recon.push({ mesAno, recebida, paga, retencaoCalc, retencaoDecl, ok: Math.abs(retencaoCalc - retencaoDecl) <= 1 })
+      }
+    }
+    return { rows, recon, missing: false }
+  } catch (e) {
+    return { rows: [], recon: [], missing: false, parseError: String(e) }
+  }
+}
+
 // ── Batch insert helper ────────────────────────────────────────────────────────
 
 async function batchInsert<T>(
@@ -1254,16 +1401,18 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const buf = await f.arrayBuffer()
       const wb  = XLSX.read(buf, { type: "array" })
 
-      const realizadoResult = parseSheet(wb, "Base Realizado",       "realizado", unitId)
-      const orcadoResult    = parseSheet(wb, "04 -Base Orçado 2026", "orcado",    unitId)
+      const isMdna = unitId === MDNA_UNIT_ID
 
-      let gorjetaResult: GorjetaParseResult
-      try { gorjetaResult = parseGorjeta(wb, unitId) }
-      catch (e) { gorjetaResult = { rows: [], recon: [], missing: false, parseError: String(e) } }
+      const realizadoResult = isMdna
+        ? parseRealizadoMDNA(wb, unitId)
+        : parseSheet(wb, "Base Realizado", "realizado", unitId)
 
-      let receitaResult: ReceitaParseResult
-      try { receitaResult = parseReceita(wb, unitId) }
-      catch (e) { receitaResult = { rows: [], somaByMes: new Map(), missing: false, parseError: String(e) } }
+      const orcadoResult = isMdna
+        ? parseOrcadoMDNA(wb, unitId)
+        : parseSheet(wb, "04 -Base Orçado 2026", "orcado", unitId)
+
+      const gorjetaResult   = isMdna ? parseGorjetaMDNA(wb, unitId)     : parseGorjeta(wb, unitId)
+      const receitaResult   = parseReceita(wb, unitId)
 
       const mesesR = [...new Set(realizadoResult.rows.map(r => r.mes_ano))].sort()
       const latestMonth = mesesR.at(-1) ?? ""
@@ -1278,9 +1427,11 @@ export function DreImportModal({ onClose, onSuccess }: Props) {
       const faturamentoRows = parseFaturamento(wb, unitId)
       const contratosRows   = parseContratos(wb, unitId)
       const folhaRows       = parseFolha(wb, unitId)
-      const pessoalRows     = parsePessoal(wb, unitId)
-      const manutencaoRows  = parseManutencao(wb, unitId)
-      const prestadoresRows = parsePrestadores(wb, unitId)
+      const pessoalRows     = isMdna ? [] : parsePessoal(wb, unitId)
+      const manutencaoRows  = isMdna ? [] : parseManutencao(wb, unitId)
+      const prestadoresRows = isMdna
+        ? parsePrestadoresMDNA(wb, unitId)
+        : parsePrestadores(wb, unitId)
 
       const total =
         realizadoResult.rows.length + orcadoResult.rows.length +
