@@ -791,17 +791,13 @@ function parseIndicadores(wb: XLSX.WorkBook, unitId: string): DreIndicadoresInse
       const slug = resolveIndicSlug(labelCell)
       if (!slug) continue
       for (const ic of indicCols) {
-        result.push({ unit_id: unitId, mes_ano: ic.mesAno, tipo: ic.tipo, indicador: slug, valor: toNum(row[ic.colIdx]) })
+        const cellValue = row[ic.colIdx]
+        const valor = typeof cellValue === "number"
+          ? cellValue * 100
+          : parseFloat(String(cellValue)) * 100
+        result.push({ unit_id: unitId, mes_ano: ic.mesAno, tipo: ic.tipo, indicador: slug, valor: isFinite(valor) ? valor : null })
       }
     }
-
-    const counts: Record<string, number> = {}
-    result.forEach(r => {
-      const k = `${r.mes_ano}|${r.tipo}|${r.indicador}`
-      counts[k] = (counts[k] || 0) + 1
-    })
-    const dupes = Object.entries(counts).filter(([, v]) => v > 1)
-    if (dupes.length) console.log('[indicadores dupes]', dupes)
 
     const seen = new Set<string>()
     return result.filter(r => {
