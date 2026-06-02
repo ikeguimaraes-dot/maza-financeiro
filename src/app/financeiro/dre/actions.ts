@@ -324,7 +324,7 @@ export type DreDespesaInsert = {
   categoria: string | null
   valor: number
   tipo_despesa: string | null
-  classificacao_dre: null
+  classificacao_dre: string | null
 }
 
 export async function deleteDreDespesa(
