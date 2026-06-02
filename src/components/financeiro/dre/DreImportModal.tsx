@@ -1509,7 +1509,31 @@ function parseDespesaMDNA(wb: XLSX.WorkBook, unitId: string): DreDespesaInsert[]
 }
 
 function parseFaturamentoMDNA(wb: XLSX.WorkBook, unitId: string): DreFaturamentoInsert[] {
-  return parseFaturamento(wb, unitId).map(r => ({ ...r, rec_2022: null, rec_2023: null, rec_2024: null }))
+  const ws = wb.Sheets["Base Faturamento"]
+  if (!ws) return []
+  try {
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    const result: DreFaturamentoInsert[] = []
+    for (let i = 5; i <= 16; i++) {
+      const row = (raw[i] ?? []) as unknown[]
+      const mes_num = i - 4
+      result.push({
+        unit_id: unitId,
+        mes_num,
+        categoria: "restaurante",
+        rec_2022:    null,
+        rec_2023:    null,
+        rec_2024:    null,
+        rec_2025:    toNum(row[6]),
+        rec_2026_bd: toNum(row[8]),
+        clientes_bd: null,
+        ticket_bd:   null,
+      })
+    }
+    return result
+  } catch {
+    return []
+  }
 }
 
 // ── Batch insert helper ────────────────────────────────────────────────────────
