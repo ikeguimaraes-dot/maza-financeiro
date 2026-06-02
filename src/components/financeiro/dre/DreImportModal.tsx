@@ -1075,6 +1075,9 @@ function parsePessoal(wb: XLSX.WorkBook, unitId: string): DrePessoalInsert[] {
   try {
     const ws  = wb.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: true })
+    console.log("[parsePessoal] row 0 (headers):", JSON.stringify((raw[0] ?? []) as unknown[]))
+    console.log("[parsePessoal] row 1:", JSON.stringify((raw[1] ?? []) as unknown[]))
+    console.log("[parsePessoal] row 2 (1a linha dados):", JSON.stringify((raw[2] ?? []) as unknown[]))
     const result: DrePessoalInsert[] = []
     // col 2 = JAN 2026 (mes_ano "2026-1"), col 3 = FEV 2026 ("2026-2")
     const mesMap: [number, string][] = [[2, "2026-1"], [3, "2026-2"]]
