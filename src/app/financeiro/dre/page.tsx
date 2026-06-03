@@ -374,7 +374,7 @@ export default async function DreGerencialPage({
 
   const isEmpty =
     (aba === "dre" && dreRows.length === 0) ||
-    (aba === "indicadores" && indicRows.length === 0) ||
+    (aba === "indicadores" && indicRows.length === 0 && linhasRows.length === 0) ||
     (aba === "receita" && receitaRows.length === 0) ||
     (aba === "despesas" && despesaAgg.length === 0 && linhasRows.length === 0) ||
     (aba === "folha" && folhaRows.length === 0) ||

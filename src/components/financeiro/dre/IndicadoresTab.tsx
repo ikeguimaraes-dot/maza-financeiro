@@ -26,6 +26,47 @@ const LOWER_IS_BETTER = new Set([
 // Grupos that have F/V in dre_linhas_detalhadas
 const FV_GRUPOS = new Set(["CMV","PESSOAL","OCUPAÇÃO","UTILIDADES","OPERAÇÃO","MANUTENÇÃO","ADMINISTRATIVA","MARKETING","TAXAS CARTÃO"])
 
+// Grupos that map to a display slug
+const GRUPO_SLUG: Record<string, string> = {
+  "CMV":            "cmv",
+  "PESSOAL":        "pessoal",
+  "OCUPAÇÃO":       "ocupacao",
+  "UTILIDADES":     "utilidades",
+  "OPERAÇÃO":       "operacao",
+  "MANUTENÇÃO":     "manutencao",
+  "ADMINISTRATIVA": "administrativa",
+  "MARKETING":      "marketing",
+  "TAXAS CARTÃO":   "taxa_cartao",
+}
+
+// All cost groups included in EBITDA (superset of GRUPO_SLUG)
+const CUSTO_GRUPOS = [...Object.keys(GRUPO_SLUG), "DESP. FINANCEIRAS"]
+
+function deriveIndicadoresFromLinhas(linhas: LinhaDetalhadaRow[]): IndicadorRow[] {
+  const result: IndicadorRow[] = []
+  const combos = [...new Set(linhas.map((l) => `${l.mes_ano}|${l.tipo}`))]
+
+  for (const combo of combos) {
+    const [mes, tipo] = combo.split("|") as [string, "orcado" | "realizado"]
+    const ml = linhas.filter((l) => l.mes_ano === mes && l.tipo === tipo)
+    const sum = (grupo: string) =>
+      ml.filter((l) => l.grupo === grupo).reduce((s, l) => s + (l.valor ?? 0), 0)
+
+    const rl = sum("RECEITA") + sum("IMPOSTOS")
+    if (rl === 0) continue
+
+    for (const [grupo, slug] of Object.entries(GRUPO_SLUG)) {
+      result.push({ mes_ano: mes, tipo, indicador: slug, valor: (sum(grupo) / rl) * 100 })
+    }
+
+    const ebitdaPct = (rl + CUSTO_GRUPOS.reduce((s, g) => s + sum(g), 0)) / rl * 100
+    result.push({ mes_ano: mes, tipo, indicador: "ebitda",            valor: ebitdaPct })
+    result.push({ mes_ano: mes, tipo, indicador: "resultado_liquido", valor: ebitdaPct })
+  }
+
+  return result
+}
+
 export type IndicadorRow = {
   mes_ano: string
   tipo: "orcado" | "realizado"
@@ -39,7 +80,9 @@ type Props = {
 }
 
 export function IndicadoresTab({ data, linhas = [] }: Props) {
-  const meses = [...new Set(data.map((d) => d.mes_ano))].sort((a, b) => {
+  const effectiveData = data.length > 0 ? data : deriveIndicadoresFromLinhas(linhas)
+
+  const meses = [...new Set(effectiveData.map((d) => d.mes_ano))].sort((a, b) => {
     const toN = (s: string) => {
       const [y, m] = s.split("-").map(Number)
       return (y ?? 0) * 12 + (m ?? 0)
@@ -50,7 +93,7 @@ export function IndicadoresTab({ data, linhas = [] }: Props) {
   const slugs = Object.keys(SLUG_LABEL)
 
   const get = (mes: string, tipo: "orcado" | "realizado", slug: string) =>
-    data.find((d) => d.mes_ano === mes && d.tipo === tipo && d.indicador === slug)?.valor ?? null
+    effectiveData.find((d) => d.mes_ano === mes && d.tipo === tipo && d.indicador === slug)?.valor ?? null
 
   const getPessoalOp = (mes: string, tipo: "orcado" | "realizado") => {
     const opRow = linhas.find((l) => l.mes_ano === mes && l.tipo === tipo && l.descricao === "Pessoal Operacional")
@@ -87,7 +130,7 @@ export function IndicadoresTab({ data, linhas = [] }: Props) {
 
   // A month is "projected" when all realizado values for that month are null
   const isProjected = (mes: string) =>
-    data.filter((d) => d.mes_ano === mes && d.tipo === "realizado").every((d) => d.valor === null)
+    effectiveData.filter((d) => d.mes_ano === mes && d.tipo === "realizado").every((d) => d.valor === null)
 
   // F/V breakdown from dre_linhas_detalhadas
   const fvByMes = new Map<string, { f: number; v: number; rl: number | null }>()
