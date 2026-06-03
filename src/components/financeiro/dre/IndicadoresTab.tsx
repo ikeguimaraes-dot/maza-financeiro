@@ -52,8 +52,10 @@ function deriveIndicadoresFromLinhas(linhas: LinhaDetalhadaRow[]): IndicadorRow[
     const sum = (grupo: string) =>
       ml.filter((l) => l.grupo === grupo).reduce((s, l) => s + (l.valor ?? 0), 0)
 
-    const rl = sum("RECEITA") + sum("IMPOSTOS")
-    if (rl === 0) continue
+    const receita = sum("RECEITA")
+    const impostos = sum("IMPOSTOS")
+    const rl = receita + impostos
+    if (receita === 0 || rl === 0) continue
 
     for (const [grupo, slug] of Object.entries(GRUPO_SLUG)) {
       result.push({ mes_ano: mes, tipo, indicador: slug, valor: (sum(grupo) / rl) * 100 })
