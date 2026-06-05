@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+// NextResponse not needed — using native Response.json() throughout
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 
@@ -125,11 +125,9 @@ function getServiceClient() {
 }
 
 async function fileToBase64(file: File): Promise<string> {
+  // Buffer.from() is O(n) — safe for multi-MB PDFs
   const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  bytes.forEach((b) => { binary += String.fromCharCode(b); });
-  return btoa(binary);
+  return Buffer.from(buf).toString("base64");
 }
 
 async function parsePdf(pdfBase64: string, prompt: string, label: string) {
@@ -298,42 +296,62 @@ async function insertVenda(supabase: ReturnType<typeof getServiceClient>, parsed
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
-  // Diagnostic log — visible in Vercel Function logs and local console
   console.log("[lorean/import] POST called");
-  console.log("[lorean/import] ANTHROPIC_API_KEY present:", !!process.env.ANTHROPIC_API_KEY);
-  console.log("[lorean/import] SUPABASE_URL present:", !!process.env.NEXT_PUBLIC_SUPABASE_URL);
-  console.log("[lorean/import] SERVICE_ROLE_KEY present:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+  console.log("[lorean/import] env — anthropic:", !!process.env.ANTHROPIC_API_KEY, "supabase:", !!process.env.NEXT_PUBLIC_SUPABASE_URL, "service_key:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const errors: string[] = [];
   let workday_id: string | null = null;
 
+  // Outer catch guarantees JSON response even if formData() or getServiceClient() throw
   try {
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (e) {
+      console.error("[lorean/import] formData() failed:", e);
+      return Response.json({ success: false, errors: [`formData parse error: ${String(e)}`] }, { status: 400 });
+    }
+
     const unitId = formData.get("unit_id") as string | null;
     console.log("[lorean/import] unit_id:", unitId);
-    if (!unitId) return NextResponse.json({ success: false, errors: ["unit_id obrigatório"] }, { status: 400 });
+    if (!unitId) {
+      return Response.json({ success: false, errors: ["unit_id obrigatório"] }, { status: 400 });
+    }
 
     const movFile = formData.get("movimento") as File | null;
     const vendaFile = formData.get("venda") as File | null;
     const caixaFiles = formData.getAll("caixas") as File[];
 
-    const supabase = getServiceClient();
+    console.log("[lorean/import] files — mov:", movFile?.name ?? "none", "venda:", vendaFile?.name ?? "none", "caixas:", caixaFiles.length);
+
+    let supabase: ReturnType<typeof getServiceClient>;
+    try {
+      supabase = getServiceClient();
+    } catch (e) {
+      console.error("[lorean/import] supabase init failed:", e);
+      return Response.json({ success: false, errors: [`supabase init: ${String(e)}`] }, { status: 500 });
+    }
 
     // 1. Movimento (workday) — deve ser processado primeiro
     if (movFile && movFile.size > 0) {
+      console.log("[lorean/import] processing Movimento, size:", movFile.size);
       try {
         const b64 = await fileToBase64(movFile);
+        console.log("[lorean/import] Movimento b64 length:", b64.length);
         const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento");
         const dateOverride = extractDateFromFilename(movFile.name);
         if (dateOverride) parsed.data = dateOverride;
         workday_id = await insertWorkday(supabase, parsed, unitId, movFile.name);
+        console.log("[lorean/import] Movimento inserted, workday_id:", workday_id);
       } catch (e) {
+        console.error("[lorean/import] Movimento error:", e);
         errors.push(`Movimento: ${String(e)}`);
       }
     }
 
     // 2. Venda — depende do workday do Movimento
     if (vendaFile && vendaFile.size > 0) {
+      console.log("[lorean/import] processing Venda, size:", vendaFile.size);
       try {
         const b64 = await fileToBase64(vendaFile);
         const [part1, part2] = await Promise.all([
@@ -341,30 +359,33 @@ export async function POST(request: Request) {
           parsePdf(b64, VENDA_PROMPT_2, "venda-part2"),
         ]);
         await insertVenda(supabase, { ...part1, ...part2 }, unitId, vendaFile.name);
+        console.log("[lorean/import] Venda inserted");
       } catch (e) {
+        console.error("[lorean/import] Venda error:", e);
         errors.push(`Venda: ${String(e)}`);
       }
     }
 
-    // 3. Caixas (paralelo entre si, mas após Movimento)
-    await Promise.all(
-      caixaFiles
-        .filter((f) => f.size > 0)
-        .map(async (f) => {
-          try {
-            const b64 = await fileToBase64(f);
-            const parsed = await parsePdf(b64, CAIXA_PROMPT, `caixa:${f.name}`);
-            const dateOverride = extractDateFromFilename(f.name);
-            if (dateOverride) parsed.data = dateOverride;
-            await insertCaixa(supabase, parsed, unitId);
-          } catch (e) {
-            errors.push(`Caixa (${f.name}): ${String(e)}`);
-          }
-        }),
-    );
+    // 3. Caixas (em série para evitar conflito de workday_id_fk)
+    for (const f of caixaFiles.filter((f) => f.size > 0)) {
+      console.log("[lorean/import] processing Caixa:", f.name, "size:", f.size);
+      try {
+        const b64 = await fileToBase64(f);
+        const parsed = await parsePdf(b64, CAIXA_PROMPT, `caixa:${f.name}`);
+        const dateOverride = extractDateFromFilename(f.name);
+        if (dateOverride) parsed.data = dateOverride;
+        await insertCaixa(supabase, parsed, unitId);
+        console.log("[lorean/import] Caixa inserted:", f.name);
+      } catch (e) {
+        console.error("[lorean/import] Caixa error:", f.name, e);
+        errors.push(`Caixa (${f.name}): ${String(e)}`);
+      }
+    }
 
-    return NextResponse.json({ success: errors.length === 0, workday_id, errors });
+    console.log("[lorean/import] done. errors:", errors.length, workday_id);
+    return Response.json({ success: errors.length === 0, workday_id, errors });
   } catch (e) {
-    return NextResponse.json({ success: false, workday_id, errors: [String(e)] }, { status: 500 });
+    console.error("[lorean/import] unhandled error:", e);
+    return Response.json({ success: false, workday_id, errors: [String(e)] }, { status: 500 });
   }
 }
