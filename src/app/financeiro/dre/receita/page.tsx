@@ -14,6 +14,8 @@ import {
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
 
+const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 type Workday = {
@@ -110,7 +112,7 @@ export default function ReceitaPage() {
 
     try {
       const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: mesAno });
-      const res  = await fetch(`/api/lorean/workdays?${params}`);
+      const res  = await fetch(`${API_BASE}/api/lorean/workdays?${params}`);
       const json = await res.json();
 
       if (!res.ok) {
@@ -166,7 +168,7 @@ export default function ReceitaPage() {
 
         let json: { success: boolean; workday_id?: string | null; errors?: string[] };
         try {
-          const res = await fetch("/api/lorean/import", { method: "POST", body: fd });
+          const res = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd });
           json = await res.json();
         } catch (e) {
           allErrors.push(`${label}: falha na requisição — ${String(e)}`);
