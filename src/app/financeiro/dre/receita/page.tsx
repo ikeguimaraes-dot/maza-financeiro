@@ -105,7 +105,7 @@ export default function ReceitaPage() {
 
     const mm = String(mes).padStart(2, "0");
     const start = `${ano}-${mm}-01`;
-    const end = `${ano}-${mm}-31`;
+    const end = new Date(ano, mes, 0).toISOString().split("T")[0];
 
     console.log("[receita] loadData — unit_id:", unit.id, "unit_name:", unit.name, "range:", start, "→", end);
 
