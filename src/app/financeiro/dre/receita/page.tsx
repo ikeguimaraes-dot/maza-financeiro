@@ -19,6 +19,7 @@ import { useUnit } from "@kph/auth/context";
 type Workday = {
   id: string;
   data: string;
+  turno: string | null;
   receita_bruta: number | null;
   desconto: number | null;
   gorjeta: number | null;
@@ -27,6 +28,12 @@ type Workday = {
   cmv_pct: number | null;
   clientes: number | null;
   ticket_medio: number | null;
+};
+
+const TURNO_LABEL: Record<string, string> = {
+  almoco: "Almoço",
+  jantar: "Jantar",
+  dia_inteiro: "Dia inteiro",
 };
 
 type Pagamento = { forma: string; valor_recebido: number | null };
@@ -418,7 +425,7 @@ export default function ReceitaPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
-                    {["Data", "Dia", "Bruto", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
+                    {["Data", "Turno", "Dia", "Bruto", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
                       <th key={h} style={{
                         padding: "8px 12px", textAlign: h === "Data" || h === "Dia" ? "left" : "right",
                         fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase",
@@ -436,6 +443,9 @@ export default function ReceitaPage() {
                       <tr key={w.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "10px 12px", color: "var(--text-2)", fontWeight: 500 }}>
                           {w.data.split("-").reverse().join("/")}
+                        </td>
+                        <td style={{ padding: "10px 12px", color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                          {w.turno ? (TURNO_LABEL[w.turno] ?? w.turno) : "—"}
                         </td>
                         <td style={{ padding: "10px 12px", color: "var(--text-3)" }}>{diaSemana}</td>
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
@@ -474,7 +484,7 @@ export default function ReceitaPage() {
                 </tbody>
                 <tfoot>
                   <tr style={{ background: "var(--surface-2)", fontWeight: 700 }}>
-                    <td colSpan={2} style={{ padding: "10px 12px", color: "var(--text)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                    <td colSpan={3} style={{ padding: "10px 12px", color: "var(--text)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
                     <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>{BRL.format(totalBruto)}</td>
                     <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>
                       {metaReceita ? BRL.format(metaReceita) : "—"}

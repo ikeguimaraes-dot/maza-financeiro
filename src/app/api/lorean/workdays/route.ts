@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 
   const { data: workdays, error: wErr } = await db
     .from("lorean_workdays")
-    .select("id, data, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio")
+    .select("id, data, turno, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio")
     .eq("unit_id", unit_id)
     .gte("data", start)
     .lte("data", end)
