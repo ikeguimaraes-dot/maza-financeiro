@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// ── Prompts (copiados da Edge Function process-lorean-emails) ───────────────
+// ── Prompts ───────────────────────────────────────────────────────────────────
 
 const WORKDAY_PROMPT = `Extraia os dados deste relatório Lorean Workday e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
@@ -115,7 +115,7 @@ Regras:
 - horarios.hora: número inteiro da hora (12, 13, 14 ... 23)
 - Arrays vazios se a seção não existir no PDF: []`;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -142,10 +142,7 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string) {
       {
         role: "user",
         content: [
-          {
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
-          },
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
           { type: "text", text: prompt },
         ],
       },
@@ -153,13 +150,9 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string) {
   });
 
   const textBlock = (response.content as any[]).find((b: any) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error(`No text block from Claude for ${label}`);
-  }
+  if (!textBlock) throw new Error(`No text block from Claude for ${label}`);
   const clean = textBlock.text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  if (!clean.startsWith("{")) {
-    throw new Error(`Claude response not JSON for ${label}: ${clean.slice(0, 80)}`);
-  }
+  if (!clean.startsWith("{")) throw new Error(`Claude response not JSON for ${label}: ${clean.slice(0, 80)}`);
   return JSON.parse(clean);
 }
 
@@ -175,9 +168,13 @@ function classifyTurno(aberturaAt: string): "almoco" | "jantar" {
   return hora >= 10 && hora < 17 ? "almoco" : "jantar";
 }
 
-// ── Insert helpers ────────────────────────────────────────────────────────────
+// ── DB inserts ────────────────────────────────────────────────────────────────
 
-async function insertWorkday(supabase: ReturnType<typeof getServiceClient>, parsed: any, unitId: string, filename: string) {
+async function insertWorkday(
+  supabase: ReturnType<typeof getServiceClient>,
+  parsed: any,
+  unitId: string,
+): Promise<string> {
   const { data: existing } = await supabase
     .from("lorean_workdays")
     .select("id, abertura_at")
@@ -242,16 +239,63 @@ async function insertWorkday(supabase: ReturnType<typeof getServiceClient>, pars
   return wd.id;
 }
 
-async function insertCaixa(supabase: ReturnType<typeof getServiceClient>, parsed: any, unitId: string) {
-  const { data: wd } = await supabase
+async function insertVenda(
+  supabase: ReturnType<typeof getServiceClient>,
+  parsed: any,
+  unitId: string,
+  workdayUuid: string | null,
+  filename: string,
+): Promise<void> {
+  let wdId = workdayUuid;
+
+  // Fall back to filename-based lookup if UUID not provided
+  if (!wdId) {
+    const wdMatch = filename.match(/\((\d+)/);
+    const loreanWorkdayId = wdMatch ? parseInt(wdMatch[1]!, 10) : null;
+    if (!loreanWorkdayId) throw new Error(`Cannot extract workday_id from filename: "${filename}"`);
+    const { data: wd } = await supabase
+      .from("lorean_workdays")
+      .select("id")
+      .eq("unit_id", unitId)
+      .eq("workday_id", loreanWorkdayId)
+      .maybeSingle();
+    if (!wd) throw new Error(`Workday não encontrado para workday_id=${loreanWorkdayId} — importe Movimento primeiro`);
+    wdId = wd.id;
+  }
+
+  await Promise.all([
+    supabase.from("lorean_grupos").delete().eq("workday_id_fk", wdId),
+    supabase.from("lorean_descontos").delete().eq("workday_id_fk", wdId),
+    supabase.from("lorean_cancelamentos").delete().eq("workday_id_fk", wdId),
+    supabase.from("lorean_horarios").delete().eq("workday_id_fk", wdId),
+    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wdId),
+  ]);
+
+  const inserts: PromiseLike<any>[] = [];
+  if (parsed.grupos?.length)        inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
+  if (parsed.descontos?.length)     inserts.push(supabase.from("lorean_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
+  if (parsed.cancelamentos?.length) inserts.push(supabase.from("lorean_cancelamentos").insert(parsed.cancelamentos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
+  if (parsed.horarios?.length)      inserts.push(supabase.from("lorean_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
+  if (parsed.usuarios?.length)      inserts.push(supabase.from("lorean_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
+  await Promise.all(inserts as Promise<any>[]);
+}
+
+async function insertCaixa(
+  supabase: ReturnType<typeof getServiceClient>,
+  parsed: any,
+  unitId: string,
+  workdayUuid: string | null,
+): Promise<void> {
+  const wdId = workdayUuid ?? (await supabase
     .from("lorean_workdays")
     .select("id")
     .eq("unit_id", unitId)
     .eq("data", parsed.data)
-    .maybeSingle();
+    .maybeSingle()
+    .then(({ data }) => data?.id ?? null));
 
   await supabase.from("lorean_caixas").insert({
-    workday_id_fk: wd?.id ?? null,
+    workday_id_fk: wdId,
     caixa_id: parsed.caixa_id,
     operador: parsed.operador,
     abertura_at: parsed.abertura_at,
@@ -262,130 +306,74 @@ async function insertCaixa(supabase: ReturnType<typeof getServiceClient>, parsed
   });
 }
 
-async function insertVenda(supabase: ReturnType<typeof getServiceClient>, parsed: any, unitId: string, filename: string) {
-  const wdMatch = filename.match(/\((\d+)/);
-  const loreanWorkdayId = wdMatch ? parseInt(wdMatch[1]!, 10) : null;
-  if (!loreanWorkdayId) throw new Error(`Cannot extract workday_id from Venda filename: "${filename}"`);
-
-  const { data: wd } = await supabase
-    .from("lorean_workdays")
-    .select("id")
-    .eq("unit_id", unitId)
-    .eq("workday_id", loreanWorkdayId)
-    .maybeSingle();
-
-  if (!wd) throw new Error(`Workday não encontrado para workday_id=${loreanWorkdayId} — importe Movimento primeiro`);
-
-  await Promise.all([
-    supabase.from("lorean_grupos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_descontos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_cancelamentos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_horarios").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wd.id),
-  ]);
-
-  const inserts: PromiseLike<any>[] = [];
-  if (parsed.grupos?.length)        inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.descontos?.length)     inserts.push(supabase.from("lorean_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.cancelamentos?.length) inserts.push(supabase.from("lorean_cancelamentos").insert(parsed.cancelamentos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.horarios?.length)      inserts.push(supabase.from("lorean_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.usuarios?.length)      inserts.push(supabase.from("lorean_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  await Promise.all(inserts as Promise<any>[]);
-}
-
-// ── Route handler ─────────────────────────────────────────────────────────────
+// ── Route handler — processes ONE PDF per call ────────────────────────────────
 
 export async function POST(request: Request) {
   console.log("[lorean/import] POST called");
-  console.log("[lorean/import] env — anthropic:", !!process.env.ANTHROPIC_API_KEY, "supabase:", !!process.env.NEXT_PUBLIC_SUPABASE_URL, "service_key:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-  const errors: string[] = [];
-  let workday_id: string | null = null;
-
-  // Outer catch guarantees JSON response even if formData() or getServiceClient() throw
   try {
     let formData: FormData;
     try {
       formData = await request.formData();
     } catch (e) {
-      console.error("[lorean/import] formData() failed:", e);
-      return Response.json({ success: false, errors: [`formData parse error: ${String(e)}`] }, { status: 400 });
+      return Response.json({ success: false, errors: [`formData: ${String(e)}`] }, { status: 400 });
     }
 
+    const tipo = formData.get("tipo") as string | null;          // "movimento" | "venda" | "caixa"
+    const arquivo = formData.get("arquivo") as File | null;
     const unitId = formData.get("unit_id") as string | null;
-    console.log("[lorean/import] unit_id:", unitId);
-    if (!unitId) {
-      return Response.json({ success: false, errors: ["unit_id obrigatório"] }, { status: 400 });
+    const workdayUuid = formData.get("workday_id") as string | null; // Supabase UUID from Movimento step
+
+    console.log("[lorean/import] tipo:", tipo, "unit_id:", unitId, "workday_id:", workdayUuid, "file:", arquivo?.name, arquivo?.size);
+
+    if (!tipo || !arquivo || !unitId) {
+      return Response.json({ success: false, errors: ["tipo, arquivo e unit_id são obrigatórios"] }, { status: 400 });
     }
-
-    const movFile = formData.get("movimento") as File | null;
-    const vendaFile = formData.get("venda") as File | null;
-    const caixaFiles = formData.getAll("caixas") as File[];
-
-    console.log("[lorean/import] files — mov:", movFile?.name ?? "none", "venda:", vendaFile?.name ?? "none", "caixas:", caixaFiles.length);
+    if (!["movimento", "venda", "caixa"].includes(tipo)) {
+      return Response.json({ success: false, errors: [`tipo inválido: ${tipo}`] }, { status: 400 });
+    }
 
     let supabase: ReturnType<typeof getServiceClient>;
     try {
       supabase = getServiceClient();
     } catch (e) {
-      console.error("[lorean/import] supabase init failed:", e);
-      return Response.json({ success: false, errors: [`supabase init: ${String(e)}`] }, { status: 500 });
+      return Response.json({ success: false, errors: [`supabase: ${String(e)}`] }, { status: 500 });
     }
 
-    // 1. Movimento (workday) — deve ser processado primeiro
-    if (movFile && movFile.size > 0) {
-      console.log("[lorean/import] processing Movimento, size:", movFile.size);
-      try {
-        const b64 = await fileToBase64(movFile);
-        console.log("[lorean/import] Movimento b64 length:", b64.length);
-        const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento");
-        const dateOverride = extractDateFromFilename(movFile.name);
-        if (dateOverride) parsed.data = dateOverride;
-        workday_id = await insertWorkday(supabase, parsed, unitId, movFile.name);
-        console.log("[lorean/import] Movimento inserted, workday_id:", workday_id);
-      } catch (e) {
-        console.error("[lorean/import] Movimento error:", e);
-        errors.push(`Movimento: ${String(e)}`);
-      }
+    const b64 = await fileToBase64(arquivo);
+    console.log("[lorean/import] b64 length:", b64.length);
+
+    let workday_id: string | null = workdayUuid;
+
+    if (tipo === "movimento") {
+      const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento");
+      const dateOverride = extractDateFromFilename(arquivo.name);
+      if (dateOverride) parsed.data = dateOverride;
+      workday_id = await insertWorkday(supabase, parsed, unitId);
+      console.log("[lorean/import] Movimento done, workday_id:", workday_id);
     }
 
-    // 2. Venda — depende do workday do Movimento
-    if (vendaFile && vendaFile.size > 0) {
-      console.log("[lorean/import] processing Venda, size:", vendaFile.size);
-      try {
-        const b64 = await fileToBase64(vendaFile);
-        const [part1, part2] = await Promise.all([
-          parsePdf(b64, VENDA_PROMPT_1, "venda-part1"),
-          parsePdf(b64, VENDA_PROMPT_2, "venda-part2"),
-        ]);
-        await insertVenda(supabase, { ...part1, ...part2 }, unitId, vendaFile.name);
-        console.log("[lorean/import] Venda inserted");
-      } catch (e) {
-        console.error("[lorean/import] Venda error:", e);
-        errors.push(`Venda: ${String(e)}`);
-      }
+    else if (tipo === "venda") {
+      // Two Claude calls in parallel — both read the same PDF, each takes ~10s
+      const [part1, part2] = await Promise.all([
+        parsePdf(b64, VENDA_PROMPT_1, "venda-part1"),
+        parsePdf(b64, VENDA_PROMPT_2, "venda-part2"),
+      ]);
+      await insertVenda(supabase, { ...part1, ...part2 }, unitId, workdayUuid, arquivo.name);
+      console.log("[lorean/import] Venda done");
     }
 
-    // 3. Caixas (em série para evitar conflito de workday_id_fk)
-    for (const f of caixaFiles.filter((f) => f.size > 0)) {
-      console.log("[lorean/import] processing Caixa:", f.name, "size:", f.size);
-      try {
-        const b64 = await fileToBase64(f);
-        const parsed = await parsePdf(b64, CAIXA_PROMPT, `caixa:${f.name}`);
-        const dateOverride = extractDateFromFilename(f.name);
-        if (dateOverride) parsed.data = dateOverride;
-        await insertCaixa(supabase, parsed, unitId);
-        console.log("[lorean/import] Caixa inserted:", f.name);
-      } catch (e) {
-        console.error("[lorean/import] Caixa error:", f.name, e);
-        errors.push(`Caixa (${f.name}): ${String(e)}`);
-      }
+    else if (tipo === "caixa") {
+      const parsed = await parsePdf(b64, CAIXA_PROMPT, "caixa");
+      const dateOverride = extractDateFromFilename(arquivo.name);
+      if (dateOverride) parsed.data = dateOverride;
+      await insertCaixa(supabase, parsed, unitId, workdayUuid);
+      console.log("[lorean/import] Caixa done");
     }
 
-    console.log("[lorean/import] done. errors:", errors.length, workday_id);
-    return Response.json({ success: errors.length === 0, workday_id, errors });
+    return Response.json({ success: true, workday_id, errors: [] });
   } catch (e) {
     console.error("[lorean/import] unhandled error:", e);
-    return Response.json({ success: false, workday_id, errors: [String(e)] }, { status: 500 });
+    return Response.json({ success: false, workday_id: null, errors: [String(e)] }, { status: 500 });
   }
 }

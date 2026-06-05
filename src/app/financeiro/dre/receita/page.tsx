@@ -146,33 +146,54 @@ export default function ReceitaPage() {
 
   useEffect(() => { loadData(); }, [unit?.id, mes, ano]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Import handler ─────────────────────────────────────────────────────────
+  // ── Import handler — one PDF per call ─────────────────────────────────────
 
   async function handleImport() {
     if (!unit) return;
     setImporting(true);
     setImportMsg(null);
-    setImportProgress("Enviando PDFs para processamento…");
 
-    const fd = new FormData();
-    fd.append("unit_id", unit.id);
-    if (movFile) fd.append("movimento", movFile);
-    if (vendaFile) fd.append("venda", vendaFile);
-    caixaFiles.forEach((f) => fd.append("caixas", f));
+    const steps: { tipo: string; arquivo: File; label: string }[] = [];
+    if (movFile)   steps.push({ tipo: "movimento", arquivo: movFile,   label: "Movimento" });
+    if (vendaFile) steps.push({ tipo: "venda",     arquivo: vendaFile, label: "Venda" });
+    caixaFiles.forEach((f, i) =>
+      steps.push({ tipo: "caixa", arquivo: f, label: `Caixa${caixaFiles.length > 1 ? ` ${i + 1}` : ""}` }),
+    );
+
+    const allErrors: string[] = [];
+    let workdayId: string | null = null;
 
     try {
-      setImportProgress("Claude está lendo os PDFs… (pode levar 30–60s)");
-      const res = await fetch("/api/lorean/import", { method: "POST", body: fd });
-      const json = await res.json();
+      for (let i = 0; i < steps.length; i++) {
+        const { tipo, arquivo, label } = steps[i]!;
+        setImportProgress(`${i + 1}/${steps.length} — Processando ${label}…`);
 
-      if (json.success) {
+        const fd = new FormData();
+        fd.append("tipo", tipo);
+        fd.append("arquivo", arquivo);
+        fd.append("unit_id", unit.id);
+        if (workdayId) fd.append("workday_id", workdayId);
+
+        let json: { success: boolean; workday_id?: string | null; errors?: string[] };
+        try {
+          const res = await fetch("/api/lorean/import", { method: "POST", body: fd });
+          json = await res.json();
+        } catch (e) {
+          allErrors.push(`${label}: falha na requisição — ${String(e)}`);
+          continue;
+        }
+
+        if (json.errors?.length) allErrors.push(...json.errors);
+        if (json.workday_id) workdayId = json.workday_id;
+      }
+
+      if (allErrors.length === 0) {
         setImportMsg({ ok: true, text: "Importado com sucesso!" });
         setMovFile(null); setVendaFile(null); setCaixaFiles([]);
         setShowImport(false);
         await loadData();
       } else {
-        const errs = (json.errors as string[]).join(" | ");
-        setImportMsg({ ok: false, text: errs || "Erro desconhecido" });
+        setImportMsg({ ok: false, text: allErrors.join(" | ") });
       }
     } catch (e) {
       setImportMsg({ ok: false, text: String(e) });
