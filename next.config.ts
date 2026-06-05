@@ -1,10 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // assetPrefix only needed when running behind the kph-os shell proxy.
-  assetPrefix: process.env.VERCEL ? "/financeiro" : undefined,
-  // Prevent Next.js from bundling these Node-native packages — they must run
-  // in the Node.js runtime, not be statically analyzed / edge-bundled.
+  // basePath mounts all routes under /financeiro so the kph-os shell rewrite
+  // to kph-os-financeiro.vercel.app/financeiro/:path* resolves correctly.
+  basePath: "/financeiro",
   serverExternalPackages: ["@anthropic-ai/sdk"],
 };
 
