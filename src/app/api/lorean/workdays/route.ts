@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   }
 
   const [pagRes, descRes, ambRes, turRes, grpRes, metaRes] = await Promise.all([
-    db.from("lorean_pagamentos").select("forma, valor_recebido").in("workday_id_fk", ids),
+    db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
     db.from("lorean_turnos").select("turno, produto, clientes").in("workday_id_fk", ids),
@@ -55,9 +55,24 @@ export async function GET(request: Request) {
       : Promise.resolve({ data: null }),
   ]);
 
+  // Soma valor_recebido por workday para calcular receita_bruta_real
+  const receitaByWorkday = new Map<string, number>();
+  for (const p of (pagRes.data ?? [])) {
+    const wdId = (p as any).workday_id_fk as string;
+    receitaByWorkday.set(wdId, (receitaByWorkday.get(wdId) ?? 0) + ((p as any).valor_recebido ?? 0));
+  }
+
+  const workdaysEnriched = (workdays ?? []).map((w: any) => ({
+    ...w,
+    receita_bruta_real: receitaByWorkday.get(w.id) ?? 0,
+  }));
+
+  // Remove workday_id_fk dos pagamentos antes de retornar (não necessário no cliente)
+  const pagamentosClean = (pagRes.data ?? []).map(({ workday_id_fk: _fk, ...rest }: any) => rest);
+
   return Response.json({
-    workdays:   workdays ?? [],
-    pagamentos: pagRes.data  ?? [],
+    workdays:   workdaysEnriched,
+    pagamentos: pagamentosClean,
     descontos:  descRes.data ?? [],
     ambientes:  ambRes.data  ?? [],
     turnos:     turRes.data  ?? [],

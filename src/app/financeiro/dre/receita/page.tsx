@@ -20,10 +20,9 @@ type Workday = {
   id: string;
   data: string;
   turno: string | null;
-  receita_bruta: number | null;
+  receita_bruta_real: number;  // SUM(lorean_pagamentos.valor_recebido)
   desconto: number | null;
   gorjeta: number | null;
-  receita_liquida: number | null;
   custo: number | null;
   cmv_pct: number | null;
   clientes: number | null;
@@ -196,12 +195,12 @@ export default function ReceitaPage() {
 
   // ── Aggregations ───────────────────────────────────────────────────────────
 
-  const totalBruto    = workdays.reduce((s, w) => s + (w.receita_bruta  ?? 0), 0);
-  const totalDesconto = workdays.reduce((s, w) => s + (w.desconto       ?? 0), 0);
-  const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta        ?? 0), 0);
-  const totalLiquida  = workdays.reduce((s, w) => s + (w.receita_liquida ?? 0), 0);
-  const totalClientes = workdays.reduce((s, w) => s + (w.clientes       ?? 0), 0);
-  const ticketMedio   = totalClientes > 0 ? totalLiquida / totalClientes : null;
+  const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real,      0);
+  const totalDesconto = workdays.reduce((s, w) => s + (w.desconto    ?? 0),      0);
+  const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta     ?? 0),      0);
+  const totalLiquida  = totalBruto - totalDesconto;
+  const totalClientes = workdays.reduce((s, w) => s + (w.clientes    ?? 0),      0);
+  const ticketMedio   = totalClientes > 0 ? totalBruto / totalClientes : null;
   const metaDiaria    = metaReceita && workdays.length > 0 ? metaReceita / workdays.length : null;
   const atingMeta     = metaReceita && metaReceita > 0 ? (totalBruto / metaReceita) * 100 : null;
 
@@ -226,7 +225,7 @@ export default function ReceitaPage() {
     .sort((a, b) => a.data.localeCompare(b.data))
     .map((w) => ({
       dia: w.data.slice(8),
-      bruto: w.receita_bruta ?? 0,
+      bruto: w.receita_bruta_real,
       meta: metaDiaria ?? 0,
     }));
 
@@ -438,7 +437,7 @@ export default function ReceitaPage() {
                   {workdays.map((w) => {
                     const dt = new Date(w.data + "T12:00:00");
                     const diaSemana = DIAS_PT[dt.getDay()];
-                    const ating = metaDiaria && metaDiaria > 0 ? ((w.receita_bruta ?? 0) / metaDiaria) * 100 : null;
+                    const ating = metaDiaria && metaDiaria > 0 ? (w.receita_bruta_real / metaDiaria) * 100 : null;
                     return (
                       <tr key={w.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "10px 12px", color: "var(--text-2)", fontWeight: 500 }}>
@@ -449,7 +448,7 @@ export default function ReceitaPage() {
                         </td>
                         <td style={{ padding: "10px 12px", color: "var(--text-3)" }}>{diaSemana}</td>
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {BRL.format(w.receita_bruta ?? 0)}
+                          {BRL.format(w.receita_bruta_real)}
                         </td>
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>
                           {metaDiaria ? BRL.format(metaDiaria) : "—"}
