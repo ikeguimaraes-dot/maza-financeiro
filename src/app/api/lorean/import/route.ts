@@ -48,6 +48,7 @@ Formato esperado:
 
 Regras:
 - IMPORTANTE: As datas estão no formato DD.MM.YY (dia.mês.ano brasileiro). Ex: 02.06.26 = 2 de junho de 2026 = 2026-06-02. Converter para ISO 8601: YYYY-MM-DD.
+- IMPORTANTE: O horário de abertura e fechamento aparecem no formato "DIA, DD MES AAAA HH:MM" (ex: "SÁB, 09 MAI 2026 18:15"). Converta para ISO 8601: "YYYY-MM-DD HH:MM:00". Ex: "SÁB, 09 MAI 2026 18:15" → "2026-05-09 18:15:00". Meses em português: JAN=01, FEV=02, MAR=03, ABR=04, MAI=05, JUN=06, JUL=07, AGO=08, SET=09, OUT=10, NOV=11, DEZ=12.
 - cmv_pct: valor decimal (ex: 0.27 para 27%)
 - pct_bruto: valor decimal (ex: 0.17 para 17%)
 - permanencia_media: formato "HH:MM:SS"
