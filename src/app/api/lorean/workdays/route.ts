@@ -3,6 +3,16 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const CORS = {
+  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
+  "Access-Control-Allow-Methods": "GET",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export function OPTIONS() {
+  return new Response(null, { headers: CORS });
+}
+
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -18,14 +28,14 @@ export async function GET(request: Request) {
   const mes_ano = searchParams.get("mes_ano");
 
   if (!unit_id || !start || !end) {
-    return Response.json({ error: "unit_id, start e end são obrigatórios" }, { status: 400 });
+    return Response.json({ error: "unit_id, start e end são obrigatórios" }, { status: 400, headers: CORS });
   }
 
   let db: ReturnType<typeof getServiceClient>;
   try {
     db = getServiceClient();
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 });
+    return Response.json({ error: String(e) }, { status: 500, headers: CORS });
   }
 
   const { data: workdays, error: wErr } = await db
@@ -36,12 +46,12 @@ export async function GET(request: Request) {
     .lte("data", end)
     .order("data", { ascending: false });
 
-  if (wErr) return Response.json({ error: wErr.message }, { status: 500 });
+  if (wErr) return Response.json({ error: wErr.message }, { status: 500, headers: CORS });
 
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null });
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null }, { headers: CORS });
   }
 
   const [pagRes, descRes, ambRes, turRes, grpRes, metaRes] = await Promise.all([
@@ -78,5 +88,5 @@ export async function GET(request: Request) {
     turnos:     turRes.data  ?? [],
     grupos:     grpRes.data  ?? [],
     meta:       (metaRes as any).data?.meta_faturamento ?? null,
-  });
+  }, { headers: CORS });
 }

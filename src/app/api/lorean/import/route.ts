@@ -6,6 +6,16 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const CORS = {
+  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
+  "Access-Control-Allow-Methods": "GET, POST",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export function OPTIONS() {
+  return new Response(null, { headers: CORS });
+}
+
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
 const WORKDAY_PROMPT = `Extraia os dados deste relatório Lorean Workday e retorne APENAS JSON válido, sem texto adicional, sem markdown.
@@ -337,7 +347,7 @@ export async function POST(request: Request) {
     try {
       formData = await request.formData();
     } catch (e) {
-      return Response.json({ success: false, errors: [`formData: ${String(e)}`] }, { status: 400 });
+      return Response.json({ success: false, errors: [`formData: ${String(e)}`] }, { status: 400, headers: CORS });
     }
 
     const tipo = formData.get("tipo") as string | null;          // "movimento" | "venda" | "caixa"
@@ -348,17 +358,17 @@ export async function POST(request: Request) {
     console.log("[lorean/import] tipo:", tipo, "unit_id:", unitId, "workday_id:", workdayUuid, "file:", arquivo?.name, arquivo?.size);
 
     if (!tipo || !arquivo || !unitId) {
-      return Response.json({ success: false, errors: ["tipo, arquivo e unit_id são obrigatórios"] }, { status: 400 });
+      return Response.json({ success: false, errors: ["tipo, arquivo e unit_id são obrigatórios"] }, { status: 400, headers: CORS });
     }
     if (!["movimento", "venda", "caixa"].includes(tipo)) {
-      return Response.json({ success: false, errors: [`tipo inválido: ${tipo}`] }, { status: 400 });
+      return Response.json({ success: false, errors: [`tipo inválido: ${tipo}`] }, { status: 400, headers: CORS });
     }
 
     let supabase: ReturnType<typeof getServiceClient>;
     try {
       supabase = getServiceClient();
     } catch (e) {
-      return Response.json({ success: false, errors: [`supabase: ${String(e)}`] }, { status: 500 });
+      return Response.json({ success: false, errors: [`supabase: ${String(e)}`] }, { status: 500, headers: CORS });
     }
 
     const b64 = await fileToBase64(arquivo);
@@ -398,9 +408,9 @@ export async function POST(request: Request) {
       console.log("[lorean/import] Caixa done");
     }
 
-    return Response.json({ success: true, workday_id, errors: [] });
+    return Response.json({ success: true, workday_id, errors: [] }, { headers: CORS });
   } catch (e) {
     console.error("[lorean/import] unhandled error:", e);
-    return Response.json({ success: false, workday_id: null, errors: [String(e)] }, { status: 500 });
+    return Response.json({ success: false, workday_id: null, errors: [String(e)] }, { status: 500, headers: CORS });
   }
 }
