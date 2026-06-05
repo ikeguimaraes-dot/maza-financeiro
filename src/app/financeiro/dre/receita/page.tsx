@@ -13,7 +13,6 @@ import {
   BarChart as HBarChart,
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
-import { getBrowserClient } from "@kph/db/supabase/client";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,64 +94,38 @@ export default function ReceitaPage() {
   // ── Load data ──────────────────────────────────────────────────────────────
 
   async function loadData() {
-    if (!unit) {
-      console.log("[receita] loadData: unit ainda não carregado");
-      return;
-    }
+    if (!unit) return;
     setLoading(true);
-    const db = getBrowserClient();
-    if (!db) { setLoading(false); return; }
 
     const mm = String(mes).padStart(2, "0");
-    const start = `${ano}-${mm}-01`;
-    const end = new Date(ano, mes, 0).toISOString().split("T")[0];
-
-    console.log("[receita] loadData — unit_id:", unit.id, "unit_name:", unit.name, "range:", start, "→", end);
-
-    const { data: wds, error: wdsErr } = await (db as any)
-      .from("lorean_workdays")
-      .select("id, data, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio")
-      .eq("unit_id", unit.id)
-      .gte("data", start)
-      .lte("data", end)
-      .order("data", { ascending: false });
-
-    if (wdsErr) console.error("[receita] lorean_workdays error:", wdsErr);
-    console.log("[receita] workdays returned:", wds?.length ?? 0, wds?.map((w: any) => w.data));
-
-    const wdList: Workday[] = wds ?? [];
-    setWorkdays(wdList);
-
-    if (wdList.length > 0) {
-      const ids = wdList.map((w) => w.id);
-      const [pagRes, descRes, ambRes, turRes, grpRes] = await Promise.all([
-        (db as any).from("lorean_pagamentos").select("forma, valor_recebido").in("workday_id_fk", ids),
-        (db as any).from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
-        (db as any).from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
-        (db as any).from("lorean_turnos").select("turno, produto, clientes").in("workday_id_fk", ids),
-        (db as any).from("lorean_grupos").select("grupo, bruto, pct_bruto").in("workday_id_fk", ids),
-      ]);
-      setPagamentos(pagRes.data ?? []);
-      setDescontos(descRes.data ?? []);
-      setAmbientes(ambRes.data ?? []);
-      setTurnos(turRes.data ?? []);
-      setGrupos(grpRes.data ?? []);
-    } else {
-      setPagamentos([]); setDescontos([]); setAmbientes([]);
-      setTurnos([]); setGrupos([]);
-    }
-
+    const start  = `${ano}-${mm}-01`;
+    const end    = new Date(ano, mes, 0).toISOString().split("T")[0]!;
     const mesAno = `${ano}-${mm}`;
-    const { data: meta } = await (db as any)
-      .from("metas_projecoes")
-      .select("meta_faturamento")
-      .eq("mes_ano", mesAno)
-      .maybeSingle();
-    setMetaReceita(meta?.meta_faturamento ?? null);
 
-    if (wdsErr) setDbError(wdsErr.message ?? String(wdsErr));
-    else setDbError(null);
-    setLoading(false);
+    try {
+      const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: mesAno });
+      const res  = await fetch(`/api/lorean/workdays?${params}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        setDbError(json.error ?? `HTTP ${res.status}`);
+        setLoading(false);
+        return;
+      }
+
+      setWorkdays(json.workdays   ?? []);
+      setPagamentos(json.pagamentos ?? []);
+      setDescontos(json.descontos  ?? []);
+      setAmbientes(json.ambientes  ?? []);
+      setTurnos(json.turnos        ?? []);
+      setGrupos(json.grupos        ?? []);
+      setMetaReceita(json.meta     ?? null);
+      setDbError(null);
+    } catch (e) {
+      setDbError(String(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { loadData(); }, [unit?.id, mes, ano]); // eslint-disable-line react-hooks/exhaustive-deps
