@@ -3,7 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 // ── Prompts (copiados da Edge Function process-lorean-emails) ───────────────
 
@@ -297,12 +298,19 @@ async function insertVenda(supabase: ReturnType<typeof getServiceClient>, parsed
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
+  // Diagnostic log — visible in Vercel Function logs and local console
+  console.log("[lorean/import] POST called");
+  console.log("[lorean/import] ANTHROPIC_API_KEY present:", !!process.env.ANTHROPIC_API_KEY);
+  console.log("[lorean/import] SUPABASE_URL present:", !!process.env.NEXT_PUBLIC_SUPABASE_URL);
+  console.log("[lorean/import] SERVICE_ROLE_KEY present:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
   const errors: string[] = [];
   let workday_id: string | null = null;
 
   try {
     const formData = await request.formData();
     const unitId = formData.get("unit_id") as string | null;
+    console.log("[lorean/import] unit_id:", unitId);
     if (!unitId) return NextResponse.json({ success: false, errors: ["unit_id obrigatório"] }, { status: 400 });
 
     const movFile = formData.get("movimento") as File | null;
