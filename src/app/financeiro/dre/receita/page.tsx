@@ -90,11 +90,15 @@ export default function ReceitaPage() {
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [importProgress, setImportProgress] = useState<string>("");
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // ── Load data ──────────────────────────────────────────────────────────────
 
   async function loadData() {
-    if (!unit) return;
+    if (!unit) {
+      console.log("[receita] loadData: unit ainda não carregado");
+      return;
+    }
     setLoading(true);
     const db = getBrowserClient();
     if (!db) { setLoading(false); return; }
@@ -103,13 +107,18 @@ export default function ReceitaPage() {
     const start = `${ano}-${mm}-01`;
     const end = `${ano}-${mm}-31`;
 
-    const { data: wds } = await (db as any)
+    console.log("[receita] loadData — unit_id:", unit.id, "unit_name:", unit.name, "range:", start, "→", end);
+
+    const { data: wds, error: wdsErr } = await (db as any)
       .from("lorean_workdays")
       .select("id, data, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio")
       .eq("unit_id", unit.id)
       .gte("data", start)
       .lte("data", end)
       .order("data", { ascending: false });
+
+    if (wdsErr) console.error("[receita] lorean_workdays error:", wdsErr);
+    console.log("[receita] workdays returned:", wds?.length ?? 0, wds?.map((w: any) => w.data));
 
     const wdList: Workday[] = wds ?? [];
     setWorkdays(wdList);
@@ -141,6 +150,8 @@ export default function ReceitaPage() {
       .maybeSingle();
     setMetaReceita(meta?.meta_faturamento ?? null);
 
+    if (wdsErr) setDbError(wdsErr.message ?? String(wdsErr));
+    else setDbError(null);
     setLoading(false);
   }
 
@@ -370,7 +381,21 @@ export default function ReceitaPage() {
       {/* ── Empty state ─────────────────────────────────────────────────────── */}
       {!loading && !hasData && (
         <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-3)", fontSize: 14 }}>
-          Sem dados de receita para {mesLabel}. Importe os PDFs do Lorean para começar.
+          {dbError ? (
+            <>
+              <span style={{ color: "#EF4444" }}>Erro ao buscar dados: {dbError}</span>
+              <br />
+              <span style={{ fontSize: 12 }}>unit_id: {unit?.id}</span>
+            </>
+          ) : (
+            <>
+              Sem dados de receita para {mesLabel}. Importe os PDFs do Lorean para começar.
+              <br />
+              <span style={{ fontSize: 11, marginTop: 4, display: "block" }}>
+                unit_id: {unit?.id} · {unit?.name}
+              </span>
+            </>
+          )}
         </div>
       )}
 
