@@ -6,7 +6,7 @@ import {
   Tooltip, ResponsiveContainer,
 } from "recharts"
 import { useRouter } from "next/navigation"
-import type { ProdutoRow } from "@/app/financeiro/produtos/page"
+import type { ProdutoRow } from "@/app/financeiro/dre/cmv/page"
 import { ImportModal } from "./ImportModal"
 import { RankingTab } from "./RankingTab"
 
@@ -66,7 +66,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
       if (localQ) params.set("q", localQ)
       params.set("mes", String(mes))
       params.set("ano", String(ano))
-      router.push(`/financeiro/produtos?${params.toString()}`)
+      router.push(`/financeiro/dre/cmv?${params.toString()}`)
     }, 500)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,7 +177,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                 if (localQ) params.set("q", localQ)
                 params.set("mes", m!)
                 params.set("ano", a!)
-                router.push(`/financeiro/produtos?${params.toString()}`)
+                router.push(`/financeiro/dre/cmv?${params.toString()}`)
               }}
               style={{
                 padding:"7px 12px", borderRadius:8, fontSize:12, fontWeight:500,

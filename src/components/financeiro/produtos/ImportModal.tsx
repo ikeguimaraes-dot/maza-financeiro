@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react"
 import * as XLSX from "xlsx"
-import { deleteProdutosMes, insertProdutos } from "@/app/financeiro/produtos/actions"
-import type { ProdutoInsert } from "@/app/financeiro/produtos/actions"
+import { deleteProdutosMes, insertProdutos } from "@/app/financeiro/dre/cmv/actions"
+import type { ProdutoInsert } from "@/app/financeiro/dre/cmv/actions"
 
 interface ImportModalProps {
   unitId: string | null

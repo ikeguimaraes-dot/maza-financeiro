@@ -6,8 +6,8 @@ import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts"
-import { getRankingProdutos, getHistoricoProduto } from "@/app/financeiro/produtos/actions"
-import type { HistoricoRow, RankingItem, RankingResult } from "@/app/financeiro/produtos/actions"
+import { getRankingProdutos, getHistoricoProduto } from "@/app/financeiro/dre/cmv/actions"
+import type { HistoricoRow, RankingItem, RankingResult } from "@/app/financeiro/dre/cmv/actions"
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
