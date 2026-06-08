@@ -234,22 +234,41 @@ async function insertWorkday(
 
   if (error) throw new Error(`lorean_workdays: ${error.message}`);
 
-  // Reclassifica todos os workdays do dia por ordem de workday_id
-  const { data: siblings } = await supabase
-    .from("lorean_workdays")
-    .select("id, workday_id")
-    .eq("unit_id", unitId)
-    .eq("data", parsed.data)
-    .order("workday_id", { ascending: true });
+  // Classifica turno pela seção "Turno" extraída do PDF
+  const turnosNomes: string[] = (parsed.turnos ?? []).map((t: any) => (t.turno ?? "").toLowerCase());
+  const temTarde = turnosNomes.some((t: string) => t.includes("tarde"));
+  const temNoite = turnosNomes.some((t: string) => t.includes("noite"));
 
-  if (siblings?.length === 1) {
-    await supabase.from("lorean_workdays").update({ turno: "dia_inteiro" }).eq("id", siblings[0]!.id);
-    console.log("[lorean/import] turno: dia_inteiro (único workday do dia)");
-  } else if (siblings && siblings.length >= 2) {
-    await supabase.from("lorean_workdays").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
-    await supabase.from("lorean_workdays").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
-    console.log(`[lorean/import] turno: workday_id=${siblings[0]!.workday_id}→almoco, workday_id=${siblings[1]!.workday_id}→jantar`);
+  let turnoClassificado: "almoco" | "jantar" | "dia_inteiro";
+  if (temTarde && temNoite) {
+    turnoClassificado = "dia_inteiro";
+  } else if (temTarde) {
+    turnoClassificado = "almoco";
+  } else if (temNoite) {
+    turnoClassificado = "jantar";
+  } else {
+    // Fallback: sem seção Turno no PDF — usa lógica de siblings
+    const { data: siblings } = await supabase
+      .from("lorean_workdays")
+      .select("id, workday_id")
+      .eq("unit_id", unitId)
+      .eq("data", parsed.data)
+      .order("workday_id", { ascending: true });
+    if (siblings?.length === 1) {
+      turnoClassificado = "dia_inteiro";
+      console.log("[lorean/import] turno fallback: dia_inteiro (único workday do dia)");
+    } else if (siblings && siblings.length >= 2) {
+      await supabase.from("lorean_workdays").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
+      await supabase.from("lorean_workdays").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
+      console.log(`[lorean/import] turno fallback siblings: ${siblings[0]!.workday_id}→almoco, ${siblings[1]!.workday_id}→jantar`);
+      turnoClassificado = wd.workday_id === siblings[0]!.workday_id ? "almoco" : "jantar";
+    } else {
+      turnoClassificado = "dia_inteiro";
+    }
   }
+
+  await supabase.from("lorean_workdays").update({ turno: turnoClassificado }).eq("id", wd.id);
+  console.log(`[lorean/import] turno: ${turnoClassificado} (PDF turnos: [${turnosNomes.join(", ")}])`);
 
   await Promise.all([
     supabase.from("lorean_pagamentos").delete().eq("workday_id_fk", wd.id),
