@@ -84,7 +84,11 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   const mesDisponivel = meses.some(m => m.mes === mes && m.ano === ano)
   if (!mesDisponivel && meses.length > 0) {
     const ultimo = meses[meses.length - 1]!
-    redirect(`/financeiro/dre/cmv?mes=${ultimo.mes}&ano=${ultimo.ano}`)
+    const params = new URLSearchParams()
+    params.set("mes", String(ultimo.mes))
+    params.set("ano", String(ultimo.ano))
+    if (q) params.set("q", q)
+    redirect(`/financeiro/dre/cmv?${params.toString()}`)
   }
 
   return (
