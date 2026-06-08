@@ -58,19 +58,6 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
   // Sync when URL changes externally (month nav)
   useEffect(() => { setLocalQ(q) }, [q])
 
-  // Debounced server-side search via URL
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (localQ === q) return
-      const params = new URLSearchParams()
-      if (localQ) params.set("q", localQ)
-      params.set("mes", String(mes))
-      params.set("ano", String(ano))
-      router.push(`/financeiro/dre/cmv?${params.toString()}`)
-    }, 500)
-    return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localQ])
   const [filterCat, setFilterCat] = useState("")
   const [filterCmv, setFilterCmv] = useState<"all" | "cmv" | "no_cmv">("all")
   const [page, setPage] = useState(0)
