@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
-    db.from("lorean_turnos").select("turno, produto, clientes").in("workday_id_fk", ids),
+    db.from("lorean_turnos").select("workday_id_fk, turno, produto, clientes, gorjeta, consumo").in("workday_id_fk", ids),
     db.from("lorean_grupos").select("grupo, bruto, pct_bruto").in("workday_id_fk", ids),
     mes_ano
       ? db.from("metas_projecoes").select("meta_faturamento").eq("mes_ano", mes_ano).maybeSingle()
@@ -77,11 +77,55 @@ export async function GET(request: Request) {
     receita_bruta_real: receitaByWorkday.get(w.id) ?? 0,
   }));
 
+  // Agrupa lorean_turnos por workday
+  const turnosByWorkday = new Map<string, any[]>();
+  for (const t of (turRes.data ?? [])) {
+    const fk = (t as any).workday_id_fk as string;
+    if (!turnosByWorkday.has(fk)) turnosByWorkday.set(fk, []);
+    turnosByWorkday.get(fk)!.push(t);
+  }
+
+  // Quebra workdays dia_inteiro em linhas por turno
+  const workdaysFinal: any[] = [];
+  for (const w of workdaysEnriched) {
+    if (w.turno !== "dia_inteiro") {
+      workdaysFinal.push(w);
+      continue;
+    }
+    const turnosDoDia = (turnosByWorkday.get(w.id) ?? [])
+      .filter((t: any) => (t.consumo ?? 0) > 0);
+
+    const temTarde = turnosDoDia.some((t: any) => (t.turno ?? "").toLowerCase().includes("tarde"));
+    const temNoite = turnosDoDia.some((t: any) => (t.turno ?? "").toLowerCase().includes("noite"));
+
+    if (!temTarde && !temNoite) {
+      workdaysFinal.push(w);
+      continue;
+    }
+
+    for (const t of turnosDoDia) {
+      const nome = (t.turno ?? "").toLowerCase();
+      const turnoLabel = nome.includes("tarde") ? "almoco" : nome.includes("noite") ? "jantar" : null;
+      if (!turnoLabel) continue;
+      workdaysFinal.push({
+        ...w,
+        id: `${w.id}::${turnoLabel}`,
+        turno: turnoLabel,
+        receita_bruta: t.consumo,
+        receita_bruta_real: t.consumo,
+        gorjeta: t.gorjeta,
+        clientes: t.clientes,
+        ticket_medio: t.clientes > 0 ? t.consumo / t.clientes : null,
+        _derivado_de_dia_inteiro: true,
+      });
+    }
+  }
+
   // Remove workday_id_fk dos pagamentos antes de retornar (não necessário no cliente)
   const pagamentosClean = (pagRes.data ?? []).map(({ workday_id_fk: _fk, ...rest }: any) => rest);
 
   return Response.json({
-    workdays:   workdaysEnriched,
+    workdays:   workdaysFinal,
     pagamentos: pagamentosClean,
     descontos:  descRes.data ?? [],
     ambientes:  ambRes.data  ?? [],
