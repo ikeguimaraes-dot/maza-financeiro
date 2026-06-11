@@ -1318,92 +1318,254 @@ function DescontosDetalhadosCard({ descontos }: { descontos: DescontoDetalhe[] }
   );
 }
 
+function ChipBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0,
+      background: active ? "rgba(52,211,153,0.15)" : C.surface3,
+      border: `1px solid ${active ? C.receita : C.border}`,
+      color: active ? C.receita : C.text3,
+      cursor: "pointer", whiteSpace: "nowrap",
+      transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
+    }}>
+      {children}
+    </button>
+  );
+}
+
+const RANK_COLORS = ["#fbbf24", "#94a3b8", "#b45309"] as const;
+
 function ProdutosVendidosCard({ produtos }: { produtos: ProdutoDia[] }) {
-  const [query, setQuery] = useState("");
+  const [query,        setQuery]        = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [activeGrupos, setActiveGrupos] = useState<Set<string>>(new Set());
+  const [sortCol,      setSortCol]      = useState<"qtd" | "cmv" | "bruto" | "total">("total");
+  const [sortDir,      setSortDir]      = useState<"asc" | "desc">("desc");
+  const [minVal,       setMinVal]       = useState(0);
+  const [barsVisible,  setBarsVisible]  = useState(false);
+  const injectedRef = useRef(false);
+  const prevFKey    = useRef("");
+
+  useEffect(() => {
+    if (injectedRef.current || typeof document === "undefined") return;
+    injectedRef.current = true;
+    const s = document.createElement("style");
+    s.textContent = "@keyframes _pfIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}";
+    document.head.appendChild(s);
+  }, []);
 
   // Aggregate by produto+grupo across turnos
   const agg = new Map<string, { grupo: string; produto: string; qtd: number; bruto: number; desconto: number; total: number; cmv_pct: number | null }>();
   for (const p of produtos) {
-    const key = `${p.grupo}||${p.produto}`;
-    const cur = agg.get(key) ?? { grupo: p.grupo, produto: p.produto, qtd: 0, bruto: 0, desconto: 0, total: 0, cmv_pct: p.cmv_pct ?? null };
-    agg.set(key, {
-      ...cur,
-      qtd:     cur.qtd     + (p.qtd      ?? 0),
-      bruto:   cur.bruto   + (p.bruto    ?? 0),
-      desconto:cur.desconto + (p.desconto ?? 0),
-      total:   cur.total   + (p.total    ?? 0),
-    });
+    const k   = `${p.grupo}||${p.produto}`;
+    const cur = agg.get(k) ?? { grupo: p.grupo, produto: p.produto, qtd: 0, bruto: 0, desconto: 0, total: 0, cmv_pct: p.cmv_pct ?? null };
+    agg.set(k, { ...cur, qtd: cur.qtd + (p.qtd ?? 0), bruto: cur.bruto + (p.bruto ?? 0), desconto: cur.desconto + (p.desconto ?? 0), total: cur.total + (p.total ?? 0) });
+  }
+  const all = Array.from(agg.values());
+
+  // Groups with product counts
+  const grupoMap = new Map<string, number>();
+  for (const r of all) grupoMap.set(r.grupo, (grupoMap.get(r.grupo) ?? 0) + 1);
+  const grupos = Array.from(grupoMap.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+  // Top 3 by total across all data (before filtering)
+  const top3Keys = [...all].sort((a, b) => b.total - a.total).slice(0, 3).map((r) => `${r.grupo}||${r.produto}`);
+
+  // Filter
+  const q = query.trim().toLowerCase();
+  const filtered = all.filter((r) => {
+    if (q && !r.produto.toLowerCase().includes(q) && !r.grupo.toLowerCase().includes(q)) return false;
+    if (activeGrupos.size > 0 && !activeGrupos.has(r.grupo)) return false;
+    if (r.total < minVal) return false;
+    return true;
+  });
+
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    const va = sortCol === "qtd" ? a.qtd : sortCol === "cmv" ? (a.cmv_pct ?? 0) : sortCol === "bruto" ? a.bruto : a.total;
+    const vb = sortCol === "qtd" ? b.qtd : sortCol === "cmv" ? (b.cmv_pct ?? 0) : sortCol === "bruto" ? b.bruto : b.total;
+    return sortDir === "desc" ? vb - va : va - vb;
+  });
+
+  const maxTotal = sorted[0]?.total ?? 0;
+  const totQtd   = filtered.reduce((s, r) => s + r.qtd,   0);
+  const totBruto = filtered.reduce((s, r) => s + r.bruto,  0);
+  const totTotal = filtered.reduce((s, r) => s + r.total,  0);
+
+  const animUnidades = useCountUp(totQtd,   300);
+  const animTotal    = useCountUp(totTotal, 300);
+
+  // Animate bars on filter/sort change
+  const filterKey = `${q}|${[...activeGrupos].sort().join(",")}|${minVal}|${sortCol}|${sortDir}`;
+  useEffect(() => {
+    if (prevFKey.current === filterKey) return;
+    prevFKey.current = filterKey;
+    setBarsVisible(false);
+    const t = setTimeout(() => setBarsVisible(true), 50);
+    return () => clearTimeout(t);
+  }, [filterKey]);
+
+  function clearFilters() { setQuery(""); setActiveGrupos(new Set()); setMinVal(0); }
+
+  function toggleSort(col: typeof sortCol) {
+    if (sortCol === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortCol(col); setSortDir("desc"); }
   }
 
-  const all = Array.from(agg.values()).sort((a, b) => b.total - a.total);
-  const filtered = query.trim()
-    ? all.filter((r) =>
-        r.produto.toLowerCase().includes(query.toLowerCase()) ||
-        r.grupo.toLowerCase().includes(query.toLowerCase()),
-      )
-    : all;
+  const sortArrow = (col: typeof sortCol) =>
+    sortCol !== col
+      ? <span style={{ color: C.text3, opacity: 0.4, marginLeft: 2 }}>↕</span>
+      : <span style={{ color: C.receita, marginLeft: 2 }}>{sortDir === "desc" ? "↓" : "↑"}</span>;
 
-  const totBruto    = filtered.reduce((s, r) => s + r.bruto,    0);
-  const totDesconto = filtered.reduce((s, r) => s + r.desconto, 0);
-  const totTotal    = filtered.reduce((s, r) => s + r.total,    0);
-  const totQtd      = filtered.reduce((s, r) => s + r.qtd,      0);
+  const thSort = (col: typeof sortCol): React.CSSProperties => ({
+    padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 700,
+    letterSpacing: 0.7, textTransform: "uppercase",
+    color: sortCol === col ? C.receita : C.text3,
+    borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap",
+    cursor: "pointer", userSelect: "none",
+  });
+
+  if (!all.length) return <DetailCard title="Produtos Vendidos"><EmptyDetail /></DetailCard>;
 
   return (
     <DetailCard title="Produtos Vendidos">
-      {!all.length ? <EmptyDetail /> : (
-        <>
-          <div style={{ marginBottom: 12 }}>
-            <input
-              type="text"
-              placeholder="Buscar produto ou grupo…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{
-                width: "100%", padding: "7px 10px", borderRadius: 7, fontSize: 12,
-                background: C.surface2, border: `1px solid ${C.border}`, color: C.text,
-                outline: "none", boxSizing: "border-box",
-              }}
-            />
+      {/* ── Filtros ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+        {/* Search com ícone de lupa */}
+        <div style={{ position: "relative" }}>
+          <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 13, height: 13, color: searchFocused ? C.receita : C.text3, pointerEvents: "none", transition: "color 200ms ease" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="7" strokeWidth="2" /><path d="m16 16 4 4" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <input
+            type="text" placeholder="Buscar produto ou grupo…"
+            value={query} onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+            style={{
+              width: "100%", padding: "7px 10px 7px 32px", borderRadius: 7, fontSize: 12,
+              background: C.surface2, border: `1px solid ${searchFocused ? C.receita : C.border}`,
+              color: C.text, outline: "none", boxSizing: "border-box",
+              transition: "border-color 200ms ease",
+            }}
+          />
+        </div>
+        {/* Chips de grupo + filtro de valor */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", flex: 1, paddingBottom: 2 }}>
+            <ChipBtn active={activeGrupos.size === 0} onClick={() => setActiveGrupos(new Set())}>Todos</ChipBtn>
+            {grupos.map(([g, cnt]) => (
+              <ChipBtn key={g} active={activeGrupos.has(g)} onClick={() => setActiveGrupos((prev) => {
+                const n = new Set(prev); n.has(g) ? n.delete(g) : n.add(g); return n;
+              })}>
+                {g} <span style={{ opacity: 0.65 }}>({cnt})</span>
+              </ChipBtn>
+            ))}
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: C.surface2 }}>
-                  {["Produto", "Grupo", "Qtd", "CMV%", "Bruto", "Desconto", "Total"].map((h) => (
-                    <th key={h} style={{ padding: "7px 10px", textAlign: h === "Produto" || h === "Grupo" ? "left" : "right",
-                      fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
-                      color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "7px 10px", color: C.text2, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.produto}</td>
-                    <td style={{ padding: "7px 10px", color: C.text3, whiteSpace: "nowrap" }}>{r.grupo}</td>
-                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{r.qtd}</td>
-                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{r.cmv_pct != null ? pct(r.cmv_pct * 100) : "—"}</td>
-                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text2 }}>{fmt(r.bruto)}</td>
-                    <td style={{ padding: "7px 10px", textAlign: "right", color: r.desconto > 0 ? C.alerta : C.text3 }}>{fmt(r.desconto)}</td>
-                    <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt(r.total)}</td>
+          <select value={minVal} onChange={(e) => setMinVal(Number(e.target.value))} style={{
+            padding: "4px 8px", borderRadius: 6, fontSize: 11, flexShrink: 0,
+            background: C.surface2, border: `1px solid ${minVal > 0 ? C.receita : C.border}`,
+            color: minVal > 0 ? C.receita : C.text3, cursor: "pointer",
+          }}>
+            <option value={0}>Todos</option>
+            <option value={100}>&gt; R$ 100</option>
+            <option value={500}>&gt; R$ 500</option>
+            <option value={1000}>&gt; R$ 1.000</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ── Mini-resumo ── */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {[
+          `${filtered.length} produto${filtered.length !== 1 ? "s" : ""}`,
+          `${Math.round(animUnidades)} unid.`,
+          fmt(animTotal),
+        ].map((t, i) => (
+          <span key={i} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.surface3, color: C.text2, border: `1px solid ${C.border}` }}>{t}</span>
+        ))}
+      </div>
+
+      {/* ── Empty state ── */}
+      {sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "24px 0" }}>
+          <p style={{ fontSize: 13, color: C.text3, margin: "0 0 10px" }}>Nenhum produto encontrado</p>
+          <button onClick={clearFilters} style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: C.surface3, color: C.text2, border: `1px solid ${C.border}`, cursor: "pointer" }}>
+            Limpar filtros
+          </button>
+        </div>
+      ) : (
+        <div style={{ overflowY: "auto", maxHeight: 520 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+              <tr style={{ background: C.surface2 }}>
+                <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>Produto</th>
+                <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>Grupo</th>
+                <th onClick={() => toggleSort("qtd")}   style={thSort("qtd")}>Qtd {sortArrow("qtd")}</th>
+                <th onClick={() => toggleSort("cmv")}   style={thSort("cmv")}>CMV% {sortArrow("cmv")}</th>
+                <th onClick={() => toggleSort("bruto")} style={thSort("bruto")}>Bruto {sortArrow("bruto")}</th>
+                <th onClick={() => toggleSort("total")} style={thSort("total")}>Total {sortArrow("total")}</th>
+              </tr>
+            </thead>
+            <tbody key={filterKey}>
+              {sorted.slice(0, 15).map((r, i) => {
+                const rkey    = `${r.grupo}||${r.produto}`;
+                const rankIdx = top3Keys.indexOf(rkey);
+                const isEven  = i % 2 === 1;
+                const bw      = barsVisible && maxTotal > 0 ? `${(r.total / maxTotal * 100).toFixed(1)}%` : "0%";
+                const cmvVal  = r.cmv_pct != null ? r.cmv_pct * 100 : null;
+                const cmvClr  = cmvVal == null ? C.text3 : cmvVal < 25 ? C.receita : cmvVal <= 35 ? C.meta : C.alerta;
+                const cmvBg   = cmvVal == null ? "rgba(138,130,120,0.14)" : cmvVal < 25 ? "rgba(52,211,153,0.14)" : cmvVal <= 35 ? "rgba(251,191,36,0.14)" : "rgba(248,113,113,0.14)";
+                return (
+                  <tr key={rkey}
+                    style={{ borderBottom: `1px solid ${C.border}`, background: isEven ? "rgba(255,255,255,0.02)" : "transparent", animation: "_pfIn 200ms ease both" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(52,211,153,0.04)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = isEven ? "rgba(255,255,255,0.02)" : "transparent"; }}
+                  >
+                    <td style={{ padding: "8px 10px", maxWidth: 220 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {rankIdx >= 0 && (
+                          <span style={{ width: 7, height: 7, borderRadius: "50%", background: RANK_COLORS[rankIdx], flexShrink: 0, display: "inline-block" }} />
+                        )}
+                        <span style={{ color: C.text2, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.produto}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: "8px 10px" }}>
+                      <span title={r.grupo} style={{ display: "inline-block", padding: "2px 7px", borderRadius: 4, fontSize: 10, background: C.surface3, color: C.text3, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.grupo}</span>
+                    </td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", color: C.text3 }}>{r.qtd}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                      <span style={{ display: "inline-block", padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: cmvBg, color: cmvClr }}>
+                        {cmvVal != null ? pct(cmvVal) : "—"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", color: C.text2 }}>{fmt(r.bruto)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", minWidth: 110 }}>
+                      <span style={{ fontWeight: 600, color: C.text, display: "block" }}>{fmt(r.total)}</span>
+                      <div style={{ height: 3, background: C.surface3, borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: bw, background: `linear-gradient(90deg, ${C.receita}, rgba(52,211,153,0.4))`, borderRadius: 2, transition: `width 500ms ${i * 30}ms ease-out` }} />
+                      </div>
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{ background: C.surface2, fontWeight: 700 }}>
-                  <td colSpan={2} style={{ padding: "7px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                    TOTAL {filtered.length < all.length ? `(${filtered.length}/${all.length})` : `(${all.length})`}
-                  </td>
-                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{totQtd}</td>
-                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>—</td>
-                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{fmt(totBruto)}</td>
-                  <td style={{ padding: "7px 10px", textAlign: "right", color: totDesconto > 0 ? C.alerta : C.text3 }}>{fmt(totDesconto)}</td>
-                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{fmt(totTotal)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: C.surface2, fontWeight: 700, borderTop: `1px solid ${C.border}` }}>
+                <td colSpan={2} style={{ padding: "8px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                  TOTAL {filtered.length < all.length ? `(${filtered.length}/${all.length})` : `(${all.length})`}
+                </td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{totQtd}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.text3 }}>—</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{fmt(totBruto)}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{fmt(totTotal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          {sorted.length > 15 && (
+            <p style={{ textAlign: "center", padding: "8px 0", fontSize: 11, color: C.text3, margin: 0 }}>
+              +{sorted.length - 15} produtos · refine os filtros para ver mais
+            </p>
+          )}
+        </div>
       )}
     </DetailCard>
   );
