@@ -169,7 +169,7 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string) {
   const client = new Anthropic({ apiKey });
   const response = await (client.messages.create as any)({
     model: "claude-sonnet-4-6",
-    max_tokens: 4096,
+    max_tokens: 16384,
     messages: [
       {
         role: "user",
@@ -181,6 +181,9 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string) {
     ],
   });
 
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
+  }
   const textBlock = (response.content as any[]).find((b: any) => b.type === "text");
   if (!textBlock) throw new Error(`No text block from Claude for ${label}`);
   const clean = textBlock.text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
