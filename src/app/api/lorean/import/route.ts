@@ -346,7 +346,6 @@ async function insertVenda(
     supabase.from("lorean_cancelamentos").delete().eq("workday_id_fk", wdId),
     supabase.from("lorean_horarios").delete().eq("workday_id_fk", wdId),
     supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wdId),
-    supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wdId),
   ]);
 
   const inserts: PromiseLike<any>[] = [];
@@ -354,7 +353,6 @@ async function insertVenda(
   if (parsed.cancelamentos?.length) inserts.push(supabase.from("lorean_cancelamentos").insert(parsed.cancelamentos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
   if (parsed.horarios?.length)      inserts.push(supabase.from("lorean_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
   if (parsed.usuarios?.length)      inserts.push(supabase.from("lorean_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
-  if (parsed.produtos?.length)      inserts.push(supabase.from("lorean_produtos_dia").insert(parsed.produtos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
   await Promise.all(inserts as Promise<any>[]);
 }
 
@@ -397,7 +395,7 @@ export async function POST(request: Request) {
       return Response.json({ success: false, errors: [`formData: ${String(e)}`] }, { status: 400, headers: CORS });
     }
 
-    const tipo = formData.get("tipo") as string | null;          // "movimento" | "venda" | "caixa"
+    const tipo = formData.get("tipo") as string | null;          // "movimento" | "venda" | "venda_produtos" | "caixa"
     const arquivo = formData.get("arquivo") as File | null;
     const unitId = formData.get("unit_id") as string | null;
     const workdayUuid = formData.get("workday_id") as string | null; // Supabase UUID from Movimento step
@@ -407,7 +405,7 @@ export async function POST(request: Request) {
     if (!tipo || !arquivo || !unitId) {
       return Response.json({ success: false, errors: ["tipo, arquivo e unit_id são obrigatórios"] }, { status: 400, headers: CORS });
     }
-    if (!["movimento", "venda", "caixa"].includes(tipo)) {
+    if (!["movimento", "venda", "venda_produtos", "caixa"].includes(tipo)) {
       return Response.json({ success: false, errors: [`tipo inválido: ${tipo}`] }, { status: 400, headers: CORS });
     }
 
@@ -438,13 +436,38 @@ export async function POST(request: Request) {
     }
 
     else if (tipo === "venda") {
-      const [part1, part2, part3] = await Promise.all([
+      const [part1, part2] = await Promise.all([
         parsePdf(b64, VENDA_PROMPT_1, "venda-part1"),
         parsePdf(b64, VENDA_PROMPT_2, "venda-part2"),
-        parsePdf(b64, VENDA_PROMPT_3, "venda-part3"),
       ]);
-      await insertVenda(supabase, { ...part1, ...part2, ...part3 }, unitId, workdayUuid, arquivo.name);
-      console.log("[lorean/import] Venda done");
+      await insertVenda(supabase, { ...part1, ...part2 }, unitId, workdayUuid, arquivo.name);
+      console.log("[lorean/import] Venda (grupos/equipe) done");
+    }
+
+    else if (tipo === "venda_produtos") {
+      const parsed = await parsePdf(b64, VENDA_PROMPT_3, "venda-produtos");
+
+      let wdId: string | null = workdayUuid;
+      if (!wdId) {
+        const wdMatch = arquivo.name.match(/\((\d+)/);
+        const loreanWorkdayId = wdMatch ? parseInt(wdMatch[1]!, 10) : null;
+        if (!loreanWorkdayId) throw new Error(`Cannot extract workday_id from filename: "${arquivo.name}"`);
+        const { data: wd } = await supabase
+          .from("lorean_workdays").select("id")
+          .eq("unit_id", unitId).eq("workday_id", loreanWorkdayId).maybeSingle();
+        if (!wd) throw new Error(`Workday não encontrado para workday_id=${loreanWorkdayId}`);
+        wdId = wd.id;
+      }
+      if (!wdId) throw new Error("workday_id não resolvido para venda_produtos");
+
+      await supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wdId);
+      if (parsed.produtos?.length) {
+        const { error } = await supabase.from("lorean_produtos_dia").insert(
+          (parsed.produtos as any[]).map((r) => ({ ...r, workday_id_fk: wdId })),
+        );
+        if (error) throw new Error(`lorean_produtos_dia insert: ${error.message}`);
+      }
+      console.log(`[lorean/import] Venda produtos done: ${(parsed.produtos as any[])?.length ?? 0} produtos`);
     }
 
     else if (tipo === "caixa") {
