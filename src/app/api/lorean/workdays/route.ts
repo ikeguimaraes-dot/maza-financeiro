@@ -51,10 +51,10 @@ export async function GET(request: Request) {
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null }, { headers: CORS });
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null, metasDiaSemana: [] }, { headers: CORS });
   }
 
-  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes] = await Promise.all([
+  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes] = await Promise.all([
     db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
@@ -63,6 +63,7 @@ export async function GET(request: Request) {
     mes_ano
       ? db.from("metas_projecoes").select("meta_faturamento").eq("mes_ano", mes_ano).maybeSingle()
       : Promise.resolve({ data: null }),
+    db.from("metas_dia_semana").select("dia_semana, meta").eq("unit_id", unit_id),
   ]);
 
   // Soma valor_recebido por workday para calcular receita_bruta_real
@@ -125,12 +126,13 @@ export async function GET(request: Request) {
   const pagamentosClean = (pagRes.data ?? []).map(({ workday_id_fk: _fk, ...rest }: any) => rest);
 
   return Response.json({
-    workdays:   workdaysFinal,
-    pagamentos: pagamentosClean,
-    descontos:  descRes.data ?? [],
-    ambientes:  ambRes.data  ?? [],
-    turnos:     turRes.data  ?? [],
-    grupos:     grpRes.data  ?? [],
-    meta:       (metaRes as any).data?.meta_faturamento ?? null,
+    workdays:        workdaysFinal,
+    pagamentos:      pagamentosClean,
+    descontos:       descRes.data     ?? [],
+    ambientes:       ambRes.data      ?? [],
+    turnos:          turRes.data      ?? [],
+    grupos:          grpRes.data      ?? [],
+    meta:            (metaRes as any).data?.meta_faturamento ?? null,
+    metasDiaSemana:  metasDsRes.data  ?? [],
   }, { headers: CORS });
 }

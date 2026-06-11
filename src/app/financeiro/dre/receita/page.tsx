@@ -2,15 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  BarChart,
+  ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
-  ReferenceLine,
   ResponsiveContainer,
   Cell,
-  BarChart as HBarChart,
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
 
@@ -42,6 +41,7 @@ type Desconto = { motivo: string; consumo: number | null };
 type Ambiente = { ambiente: string; produto: number | null; clientes: number | null };
 type Turno = { turno: string; produto: number | null; clientes: number | null };
 type Grupo = { grupo: string; bruto: number | null; pct_bruto: number | null };
+type MetaDiaSemana = { dia_semana: number; meta: number };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -86,6 +86,7 @@ export default function ReceitaPage() {
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
   const [metaReceita, setMetaReceita] = useState<number | null>(null);
+  const [metasDiaSemana, setMetasDiaSemana] = useState<MetaDiaSemana[]>([]);
 
   // Import
   const movRef = useRef<HTMLInputElement>(null);
@@ -121,13 +122,14 @@ export default function ReceitaPage() {
         return;
       }
 
-      setWorkdays(json.workdays   ?? []);
-      setPagamentos(json.pagamentos ?? []);
-      setDescontos(json.descontos  ?? []);
-      setAmbientes(json.ambientes  ?? []);
-      setTurnos(json.turnos        ?? []);
-      setGrupos(json.grupos        ?? []);
-      setMetaReceita(json.meta     ?? null);
+      setWorkdays(json.workdays         ?? []);
+      setPagamentos(json.pagamentos     ?? []);
+      setDescontos(json.descontos       ?? []);
+      setAmbientes(json.ambientes       ?? []);
+      setTurnos(json.turnos             ?? []);
+      setGrupos(json.grupos             ?? []);
+      setMetaReceita(json.meta          ?? null);
+      setMetasDiaSemana(json.metasDiaSemana ?? []);
       setDbError(null);
     } catch (e) {
       setDbError(String(e));
@@ -203,8 +205,18 @@ export default function ReceitaPage() {
   const totalLiquida  = totalBruto - totalDesconto;
   const totalClientes = workdays.reduce((s, w) => s + (w.clientes    ?? 0),      0);
   const ticketMedio   = totalClientes > 0 ? totalBruto / totalClientes : null;
-  const metaDiaria    = metaReceita && workdays.length > 0 ? metaReceita / workdays.length : null;
   const atingMeta     = metaReceita && metaReceita > 0 ? (totalBruto / metaReceita) * 100 : null;
+
+  // Lookup: dia_semana (0–6) → meta
+  const metaByDiaSemana = new Map<number, number>(
+    metasDiaSemana.map((m) => [m.dia_semana, m.meta]),
+  );
+
+  // Receita consolidada por data (soma todos os turnos do dia)
+  const receitaByData = new Map<string, number>();
+  for (const w of workdays) {
+    receitaByData.set(w.data, (receitaByData.get(w.data) ?? 0) + w.receita_bruta_real);
+  }
 
   const pagAgg = aggByKey(pagamentos, (p) => p.forma, (p) => p.valor_recebido ?? 0);
   const descAgg = aggByKey(descontos, (d) => d.motivo, (d) => d.consumo ?? 0);
@@ -222,14 +234,14 @@ export default function ReceitaPage() {
       .slice(0, 10);
   })();
 
-  // Chart data — ordered ascending for chart display
-  const chartData = [...workdays]
-    .sort((a, b) => a.data.localeCompare(b.data))
-    .map((w) => ({
-      dia: w.data.slice(8),
-      bruto: w.receita_bruta_real,
-      meta: metaDiaria ?? 0,
-    }));
+  // Chart data — one bar per date (dedup turnos), meta variável por dia da semana
+  const chartData = Array.from(receitaByData.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([data, bruto]) => {
+      const diaSemana = new Date(data + "T12:00:00").getDay();
+      const meta = metaByDiaSemana.size > 0 ? (metaByDiaSemana.get(diaSemana) ?? null) : null;
+      return { dia: data.slice(8), bruto, meta };
+    });
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -438,8 +450,11 @@ export default function ReceitaPage() {
                 <tbody>
                   {workdays.map((w) => {
                     const dt = new Date(w.data + "T12:00:00");
-                    const diaSemana = DIAS_PT[dt.getDay()];
-                    const ating = metaDiaria && metaDiaria > 0 ? (w.receita_bruta_real / metaDiaria) * 100 : null;
+                    const diaSemanaIdx = dt.getDay();
+                    const diaSemanaLabel = DIAS_PT[diaSemanaIdx];
+                    const metaDoDia = metaByDiaSemana.size > 0 ? (metaByDiaSemana.get(diaSemanaIdx) ?? null) : null;
+                    const receitaDoDia = receitaByData.get(w.data) ?? w.receita_bruta_real;
+                    const ating = metaDoDia && metaDoDia > 0 ? (receitaDoDia / metaDoDia) * 100 : null;
                     return (
                       <tr key={w.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "10px 12px", color: "var(--text-2)", fontWeight: 500 }}>
@@ -448,12 +463,12 @@ export default function ReceitaPage() {
                         <td style={{ padding: "10px 12px", color: "var(--text-3)", whiteSpace: "nowrap" }}>
                           {w.turno ? (TURNO_LABEL[w.turno] ?? w.turno) : "—"}
                         </td>
-                        <td style={{ padding: "10px 12px", color: "var(--text-3)" }}>{diaSemana}</td>
+                        <td style={{ padding: "10px 12px", color: "var(--text-3)" }}>{diaSemanaLabel}</td>
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
                           {BRL.format(w.receita_bruta_real)}
                         </td>
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>
-                          {metaDiaria ? BRL.format(metaDiaria) : "—"}
+                          {metaDoDia != null ? BRL.format(metaDoDia) : "—"}
                         </td>
                         <td style={{
                           padding: "10px 12px", textAlign: "right", fontWeight: 600,
@@ -515,22 +530,20 @@ export default function ReceitaPage() {
               Receita diária vs meta
             </p>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} barSize={22} margin={{ top: 4, right: 8, bottom: 0, left: 40 }}>
+              <ComposedChart data={chartData} barSize={22} margin={{ top: 4, right: 8, bottom: 0, left: 40 }}>
                 <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "var(--text-3)" }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: "var(--text-3)" }} axisLine={false} tickLine={false} />
                 <Tooltip
                   formatter={(val) => [BRL.format(Number(val ?? 0)), ""]}
                   contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                 />
-                {metaDiaria != null && (
-                  <ReferenceLine y={metaDiaria} stroke="#F59E0B" strokeDasharray="4 3" strokeWidth={1.5} />
-                )}
                 <Bar dataKey="bruto" radius={[4, 4, 0, 0]}>
                   {chartData.map((d, i) => (
-                    <Cell key={i} fill={metaDiaria && d.bruto >= metaDiaria ? "#22C55E" : "#EF4444"} fillOpacity={0.85} />
+                    <Cell key={i} fill={d.meta != null && d.bruto >= d.meta ? "#22C55E" : "#EF4444"} fillOpacity={0.85} />
                   ))}
                 </Bar>
-              </BarChart>
+                <Line dataKey="meta" type="monotone" stroke="#F59E0B" strokeDasharray="4 3" strokeWidth={1.5} dot={false} connectNulls={false} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
 
