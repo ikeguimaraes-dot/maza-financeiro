@@ -66,8 +66,10 @@ type MetaOverride  = { data: string; meta: number };
 type Horario         = { workday_id_fk: string; hora: number; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
 type Usuario         = { workday_id_fk: string; usuario: string; qtd: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
 type Caixa           = { workday_id_fk: string; operador: string; total_fechado: number | null; total_recebido: number | null; diferenca: number | null };
-type ProdutoDia      = { workday_id_fk: string; grupo: string; produto: string; qtd: number | null; cmv_pct: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; total: number | null };
-type DescontoDetalhe = { workday_id_fk: string; item: string; usuario: string; motivo: string; qtd: number | null; valor: number | null };
+type ProdutoDia           = { workday_id_fk: string; grupo: string; produto: string; qtd: number | null; cmv_pct: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; total: number | null };
+type DescontoDetalhe      = { workday_id_fk: string; item: string; usuario: string; motivo: string; qtd: number | null; valor: number | null };
+type Cancelamento         = { workday_id_fk: string; motivo: string; qtd: number | null; consumo: number | null };
+type CancelamentoDetalhe  = { workday_id_fk: string; item: string; usuario: string; motivo: string; qtd: number | null; valor: number | null };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -142,7 +144,9 @@ export default function ReceitaPage() {
   const [caixas,         setCaixas]         = useState<Caixa[]>([]);
   const [selectedDate,     setSelectedDate]     = useState<string | null>(null);
   const [produtosDia,      setProdutosDia]      = useState<ProdutoDia[]>([]);
-  const [descontosDetalhe, setDescontosDetalhe] = useState<DescontoDetalhe[]>([]);
+  const [descontosDetalhe,    setDescontosDetalhe]    = useState<DescontoDetalhe[]>([]);
+  const [cancelamentos,       setCancelamentos]        = useState<Cancelamento[]>([]);
+  const [cancelamentosDetalhe, setCancelamentosDetalhe] = useState<CancelamentoDetalhe[]>([]);
 
   const movRef   = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
@@ -180,7 +184,9 @@ export default function ReceitaPage() {
       setUsuarios(json.usuarios             ?? []);
       setCaixas(json.caixas                 ?? []);
       setProdutosDia(json.produtosDia       ?? []);
-      setDescontosDetalhe(json.descontosDetalhe ?? []);
+      setDescontosDetalhe(json.descontosDetalhe       ?? []);
+      setCancelamentos(json.cancelamentos             ?? []);
+      setCancelamentosDetalhe(json.cancelamentosDetalhe ?? []);
       const initDates = [...new Set<string>((json.workdays as Workday[]).map((w) => w.data))].sort((a, b) => b.localeCompare(a));
       setSelectedDate(initDates[0] ?? null);
       setMetaEdits(new Map()); setMetaSaveMsg(null); setExpandedDates(new Set()); setDbError(null);
@@ -310,7 +316,9 @@ export default function ReceitaPage() {
   const dayUsuarios        = usuarios.filter((u) => selOrigIds.has(u.workday_id_fk));
   const dayDescontos       = descontos.filter((d) => selOrigIds.has(d.workday_id_fk));
   const dayProdutos        = produtosDia.filter((p) => selOrigIds.has(p.workday_id_fk));
-  const dayDescontosDetlh  = descontosDetalhe.filter((d) => selOrigIds.has(d.workday_id_fk));
+  const dayDescontosDetlh      = descontosDetalhe.filter((d) => selOrigIds.has(d.workday_id_fk));
+  const dayCancelamentos       = cancelamentos.filter((c) => selOrigIds.has(c.workday_id_fk));
+  const dayCancelamentosDetlh  = cancelamentosDetalhe.filter((c) => selOrigIds.has(c.workday_id_fk));
   const hasMultipleTurnos  = (dayGroups.find((g) => g.date === selectedDate)?.rows.length ?? 0) > 1;
 
   // Chart + sparkline
@@ -632,6 +640,7 @@ export default function ReceitaPage() {
                 <EquipeCard          usuarios={dayUsuarios} />
                 <DescontosDetailCard descontos={dayDescontos} />
                 <DescontosDetalhadosCard descontos={dayDescontosDetlh} />
+                <CancelamentosCard cancelamentos={dayCancelamentos} detalhe={dayCancelamentosDetlh} />
                 <div style={{ gridColumn: "1 / -1" }}>
                   <ProdutosVendidosCard produtos={dayProdutos} />
                 </div>
@@ -1170,6 +1179,96 @@ function DescontosDetailCard({ descontos }: { descontos: Desconto[] }) {
             </tfoot>
           </table>
         </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function CancelamentosCard({ cancelamentos, detalhe }: { cancelamentos: Cancelamento[]; detalhe: CancelamentoDetalhe[] }) {
+  const resumo = [...cancelamentos].sort((a, b) => (b.consumo ?? 0) - (a.consumo ?? 0));
+  const detSorted = [...detalhe].sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0));
+  const totResumo = { qtd: resumo.reduce((s, c) => s + (c.qtd ?? 0), 0), val: resumo.reduce((s, c) => s + (c.consumo ?? 0), 0) };
+  const totDet    = { qtd: detSorted.reduce((s, c) => s + (c.qtd ?? 0), 0), val: detSorted.reduce((s, c) => s + (c.valor ?? 0), 0) };
+
+  const thStyle = (align: "left" | "right" = "left"): React.CSSProperties => ({
+    padding: "7px 10px", textAlign: align, fontSize: 10, fontWeight: 700,
+    letterSpacing: 0.7, textTransform: "uppercase", color: C.text3,
+    borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap",
+  });
+
+  if (!resumo.length && !detSorted.length) {
+    return <DetailCard title="Cancelamentos"><EmptyDetail /></DetailCard>;
+  }
+
+  return (
+    <DetailCard title="Cancelamentos">
+      {resumo.length > 0 && (
+        <>
+          <p style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.7, margin: "0 0 8px" }}>Por motivo</p>
+          <div style={{ overflowX: "auto", marginBottom: 16 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.surface2 }}>
+                  <th style={thStyle()}>Motivo</th>
+                  <th style={thStyle("right")}>Qtd</th>
+                  <th style={thStyle("right")}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resumo.map((c, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 10px", color: C.text2 }}>{c.motivo}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{c.qtd ?? "—"}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: C.alerta }}>{fmt(c.consumo ?? 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                  <td style={{ padding: "7px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{totResumo.qtd}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.alerta }}>{fmt(totResumo.val)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </>
+      )}
+      {detSorted.length > 0 && (
+        <>
+          <p style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.7, margin: "0 0 8px" }}>Itens cancelados</p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.surface2 }}>
+                  <th style={thStyle()}>Item</th>
+                  <th style={thStyle()}>Usuário</th>
+                  <th style={thStyle()}>Motivo</th>
+                  <th style={thStyle("right")}>Qtd</th>
+                  <th style={thStyle("right")}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detSorted.map((d, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 10px", color: C.text2, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.item}</td>
+                    <td style={{ padding: "7px 10px", color: C.text3 }}>{d.usuario}</td>
+                    <td style={{ padding: "7px 10px", color: C.text3 }}>{d.motivo}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{d.qtd ?? "—"}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: C.alerta }}>{fmt(d.valor ?? 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                  <td colSpan={3} style={{ padding: "7px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{totDet.qtd}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.alerta }}>{fmt(totDet.val)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </>
       )}
     </DetailCard>
   );

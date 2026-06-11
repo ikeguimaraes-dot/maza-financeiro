@@ -51,10 +51,10 @@ export async function GET(request: Request) {
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], horarios: [], usuarios: [], caixas: [], produtosDia: [], descontosDetalhe: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], horarios: [], usuarios: [], caixas: [], produtosDia: [], descontosDetalhe: [], cancelamentos: [], cancelamentosDetalhe: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
   }
 
-  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes, prodRes, descDetRes] = await Promise.all([
+  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes, prodRes, descDetRes, cancelRes, cancelDetRes] = await Promise.all([
     db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("workday_id_fk, ambiente, produto, clientes").in("workday_id_fk", ids),
@@ -70,6 +70,8 @@ export async function GET(request: Request) {
     db.from("lorean_caixas").select("workday_id_fk, operador, total_fechado, total_recebido, diferenca").in("workday_id_fk", ids),
     db.from("lorean_produtos_dia").select("workday_id_fk, grupo, produto, qtd, cmv_pct, bruto, desconto, gorjeta, total").in("workday_id_fk", ids),
     db.from("lorean_descontos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
+    db.from("lorean_cancelamentos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
+    db.from("lorean_cancelamentos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
   ]);
 
   // Soma valor_recebido por workday para calcular receita_bruta_real
@@ -139,7 +141,9 @@ export async function GET(request: Request) {
     usuarios:       usuRes.data      ?? [],
     caixas:           caixasRes.data  ?? [],
     produtosDia:      prodRes.data    ?? [],
-    descontosDetalhe: descDetRes.data ?? [],
+    descontosDetalhe:     descDetRes.data   ?? [],
+    cancelamentos:        cancelRes.data    ?? [],
+    cancelamentosDetalhe: cancelDetRes.data ?? [],
     meta:           (metaRes as any).data?.meta_faturamento ?? null,
     metasDiaSemana: metasDsRes.data  ?? [],
     metasOverride:  overrideRes.data ?? [],

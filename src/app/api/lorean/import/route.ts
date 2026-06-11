@@ -56,6 +56,9 @@ Formato esperado:
   ],
   "descontos_detalhe": [
     { "item": string, "usuario": string, "motivo": string, "qtd": number, "valor": number }
+  ],
+  "cancelamentos_detalhe": [
+    { "item": string, "usuario": string, "motivo": string, "qtd": number, "valor": number }
   ]
 }
 
@@ -67,7 +70,8 @@ Regras:
 - permanencia_media: formato "HH:MM:SS"
 - Campos não encontrados no PDF: usar null
 - Arrays vazios se a seção não existir: []
-- descontos_detalhe: extrair da seção detalhada de Desconto que lista cada produto descontado com Usuário, Motivo, Qtde e Consumo (ignorar as linhas de cabeçalho de comanda como '115 - LOREAN DESK'). valor = coluna Consumo.`;
+- descontos_detalhe: extrair da seção detalhada de Desconto que lista cada produto descontado com Usuário, Motivo, Qtde e Consumo (ignorar as linhas de cabeçalho de comanda como '115 - LOREAN DESK'). valor = coluna Consumo.
+- cancelamentos_detalhe: extrair da seção detalhada de Cancelado que lista cada produto cancelado com Usuário, Motivo, Qtde e Consumo (ignorar linhas de cabeçalho de comanda como '103 - LOREAN DESK'). valor = coluna Consumo.`;
 
 const CAIXA_PROMPT = `Extraia os dados deste relatório de fechamento de caixa Lorean e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
@@ -294,6 +298,7 @@ async function insertWorkday(
     supabase.from("lorean_grupos").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_descontos").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
   ]);
 
   const inserts: PromiseLike<any>[] = [];
@@ -302,7 +307,8 @@ async function insertWorkday(
   if (parsed.turnos?.length)             inserts.push(supabase.from("lorean_turnos").insert(parsed.turnos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   if (parsed.grupos?.length)             inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   if (parsed.descontos?.length)          inserts.push(supabase.from("lorean_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.descontos_detalhe?.length)  inserts.push(supabase.from("lorean_descontos_detalhe").insert(parsed.descontos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.descontos_detalhe?.length)      inserts.push(supabase.from("lorean_descontos_detalhe").insert(parsed.descontos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.cancelamentos_detalhe?.length)  inserts.push(supabase.from("lorean_cancelamentos_detalhe").insert(parsed.cancelamentos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   await Promise.all(inserts as Promise<any>[]);
 
   return wd.id;
