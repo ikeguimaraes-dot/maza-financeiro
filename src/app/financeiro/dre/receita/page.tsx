@@ -433,7 +433,7 @@ export default function ReceitaPage() {
                       : g.totalReceita >= meta * 0.7 ? C.meta : C.alerta;
 
                     const rowBg = atingPct != null
-                      ? `linear-gradient(90deg, rgba(52,211,153,0.07) 0%, rgba(52,211,153,0.07) ${atingPct.toFixed(1)}%, transparent ${atingPct.toFixed(1)}%)`
+                      ? "linear-gradient(90deg, rgba(52,211,153,0.10) 0%, rgba(52,211,153,0.04) 100%)"
                       : undefined;
 
                     const pendingMeta = metaEdits.get(g.date);
