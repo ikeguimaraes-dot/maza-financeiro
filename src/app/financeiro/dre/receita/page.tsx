@@ -63,9 +63,11 @@ type Turno         = { turno: string; produto: number | null; clientes: number |
 type Grupo         = { grupo: string; bruto: number | null; pct_bruto: number | null };
 type MetaDiaSemana = { dia_semana: number; meta: number };
 type MetaOverride  = { data: string; meta: number };
-type Horario       = { workday_id_fk: string; hora: number; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
-type Usuario       = { workday_id_fk: string; usuario: string; qtd: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
-type Caixa         = { workday_id_fk: string; operador: string; total_fechado: number | null; total_recebido: number | null; diferenca: number | null };
+type Horario         = { workday_id_fk: string; hora: number; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
+type Usuario         = { workday_id_fk: string; usuario: string; qtd: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
+type Caixa           = { workday_id_fk: string; operador: string; total_fechado: number | null; total_recebido: number | null; diferenca: number | null };
+type ProdutoDia      = { workday_id_fk: string; grupo: string; produto: string; qtd: number | null; cmv_pct: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; total: number | null };
+type DescontoDetalhe = { workday_id_fk: string; item: string; usuario: string; motivo: string; qtd: number | null; valor: number | null };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -138,7 +140,9 @@ export default function ReceitaPage() {
   const [horarios,       setHorarios]       = useState<Horario[]>([]);
   const [usuarios,       setUsuarios]       = useState<Usuario[]>([]);
   const [caixas,         setCaixas]         = useState<Caixa[]>([]);
-  const [selectedDate,   setSelectedDate]   = useState<string | null>(null);
+  const [selectedDate,     setSelectedDate]     = useState<string | null>(null);
+  const [produtosDia,      setProdutosDia]      = useState<ProdutoDia[]>([]);
+  const [descontosDetalhe, setDescontosDetalhe] = useState<DescontoDetalhe[]>([]);
 
   const movRef   = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
@@ -172,9 +176,11 @@ export default function ReceitaPage() {
       setMetaReceita(json.meta          ?? null);
       setMetasDiaSemana(json.metasDiaSemana ?? []);
       setMetasOverride(json.metasOverride   ?? []);
-      setHorarios(json.horarios ?? []);
-      setUsuarios(json.usuarios ?? []);
-      setCaixas(json.caixas    ?? []);
+      setHorarios(json.horarios             ?? []);
+      setUsuarios(json.usuarios             ?? []);
+      setCaixas(json.caixas                 ?? []);
+      setProdutosDia(json.produtosDia       ?? []);
+      setDescontosDetalhe(json.descontosDetalhe ?? []);
       const initDates = [...new Set<string>((json.workdays as Workday[]).map((w) => w.data))].sort((a, b) => b.localeCompare(a));
       setSelectedDate(initDates[0] ?? null);
       setMetaEdits(new Map()); setMetaSaveMsg(null); setExpandedDates(new Set()); setDbError(null);
@@ -298,12 +304,14 @@ export default function ReceitaPage() {
       .map((w) => (w.id.includes("::") ? w.id.split("::")[0]! : w.id)),
   );
 
-  const dayCaixas    = caixas.filter((c) => selOrigIds.has(c.workday_id_fk));
-  const dayHorarios  = horarios.filter((h) => selOrigIds.has(h.workday_id_fk));
-  const dayAmbientes = ambientes.filter((a) => selOrigIds.has(a.workday_id_fk));
-  const dayUsuarios  = usuarios.filter((u) => selOrigIds.has(u.workday_id_fk));
-  const dayDescontos = descontos.filter((d) => selOrigIds.has(d.workday_id_fk));
-  const hasMultipleTurnos = (dayGroups.find((g) => g.date === selectedDate)?.rows.length ?? 0) > 1;
+  const dayCaixas          = caixas.filter((c) => selOrigIds.has(c.workday_id_fk));
+  const dayHorarios        = horarios.filter((h) => selOrigIds.has(h.workday_id_fk));
+  const dayAmbientes       = ambientes.filter((a) => selOrigIds.has(a.workday_id_fk));
+  const dayUsuarios        = usuarios.filter((u) => selOrigIds.has(u.workday_id_fk));
+  const dayDescontos       = descontos.filter((d) => selOrigIds.has(d.workday_id_fk));
+  const dayProdutos        = produtosDia.filter((p) => selOrigIds.has(p.workday_id_fk));
+  const dayDescontosDetlh  = descontosDetalhe.filter((d) => selOrigIds.has(d.workday_id_fk));
+  const hasMultipleTurnos  = (dayGroups.find((g) => g.date === selectedDate)?.rows.length ?? 0) > 1;
 
   // Chart + sparkline
   const chartData = Array.from(receitaByData.entries()).sort(([a], [b]) => a.localeCompare(b))
@@ -618,11 +626,15 @@ export default function ReceitaPage() {
 
               {/* Cards grid */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(460px, 1fr))", gap: 16 }}>
-                <CaixaCard    caixas={dayCaixas}       turnoByOrigId={turnoByOrigId} hasMultiple={hasMultipleTurnos} />
-                <TopHorariosCard horarios={dayHorarios} />
+                <CaixaCard           caixas={dayCaixas}         turnoByOrigId={turnoByOrigId} hasMultiple={hasMultipleTurnos} />
+                <TopHorariosCard     horarios={dayHorarios} />
                 <AmbientesDetailCard ambientes={dayAmbientes} />
-                <EquipeCard   usuarios={dayUsuarios} />
+                <EquipeCard          usuarios={dayUsuarios} />
                 <DescontosDetailCard descontos={dayDescontos} />
+                <DescontosDetalhadosCard descontos={dayDescontosDetlh} />
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <ProdutosVendidosCard produtos={dayProdutos} />
+                </div>
               </div>
             </div>
           )}
@@ -1158,6 +1170,140 @@ function DescontosDetailCard({ descontos }: { descontos: Desconto[] }) {
             </tfoot>
           </table>
         </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function DescontosDetalhadosCard({ descontos }: { descontos: DescontoDetalhe[] }) {
+  const sorted = [...descontos].sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0));
+  const totQtd  = sorted.reduce((s, d) => s + (d.qtd  ?? 0), 0);
+  const totVal  = sorted.reduce((s, d) => s + (d.valor ?? 0), 0);
+  return (
+    <DetailCard title="Descontos Detalhados">
+      {!sorted.length ? <EmptyDetail /> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {["Item", "Usuário", "Motivo", "Qtd", "Valor"].map((h) => (
+                  <th key={h} style={{ padding: "7px 10px", textAlign: h === "Qtd" || h === "Valor" ? "right" : "left",
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
+                    color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((d, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "7px 10px", color: C.text2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.item}</td>
+                  <td style={{ padding: "7px 10px", color: C.text3 }}>{d.usuario}</td>
+                  <td style={{ padding: "7px 10px", color: C.text3 }}>{d.motivo}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{d.qtd ?? "—"}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: C.alerta }}>{fmt(d.valor ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                <td colSpan={3} style={{ padding: "7px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{totQtd}</td>
+                <td style={{ padding: "7px 10px", textAlign: "right", color: C.alerta }}>{fmt(totVal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function ProdutosVendidosCard({ produtos }: { produtos: ProdutoDia[] }) {
+  const [query, setQuery] = useState("");
+
+  // Aggregate by produto+grupo across turnos
+  const agg = new Map<string, { grupo: string; produto: string; qtd: number; bruto: number; desconto: number; total: number; cmv_pct: number | null }>();
+  for (const p of produtos) {
+    const key = `${p.grupo}||${p.produto}`;
+    const cur = agg.get(key) ?? { grupo: p.grupo, produto: p.produto, qtd: 0, bruto: 0, desconto: 0, total: 0, cmv_pct: p.cmv_pct ?? null };
+    agg.set(key, {
+      ...cur,
+      qtd:     cur.qtd     + (p.qtd      ?? 0),
+      bruto:   cur.bruto   + (p.bruto    ?? 0),
+      desconto:cur.desconto + (p.desconto ?? 0),
+      total:   cur.total   + (p.total    ?? 0),
+    });
+  }
+
+  const all = Array.from(agg.values()).sort((a, b) => b.total - a.total);
+  const filtered = query.trim()
+    ? all.filter((r) =>
+        r.produto.toLowerCase().includes(query.toLowerCase()) ||
+        r.grupo.toLowerCase().includes(query.toLowerCase()),
+      )
+    : all;
+
+  const totBruto    = filtered.reduce((s, r) => s + r.bruto,    0);
+  const totDesconto = filtered.reduce((s, r) => s + r.desconto, 0);
+  const totTotal    = filtered.reduce((s, r) => s + r.total,    0);
+  const totQtd      = filtered.reduce((s, r) => s + r.qtd,      0);
+
+  return (
+    <DetailCard title="Produtos Vendidos">
+      {!all.length ? <EmptyDetail /> : (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <input
+              type="text"
+              placeholder="Buscar produto ou grupo…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{
+                width: "100%", padding: "7px 10px", borderRadius: 7, fontSize: 12,
+                background: C.surface2, border: `1px solid ${C.border}`, color: C.text,
+                outline: "none", boxSizing: "border-box",
+              }}
+            />
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.surface2 }}>
+                  {["Produto", "Grupo", "Qtd", "CMV%", "Bruto", "Desconto", "Total"].map((h) => (
+                    <th key={h} style={{ padding: "7px 10px", textAlign: h === "Produto" || h === "Grupo" ? "left" : "right",
+                      fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
+                      color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 10px", color: C.text2, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.produto}</td>
+                    <td style={{ padding: "7px 10px", color: C.text3, whiteSpace: "nowrap" }}>{r.grupo}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{r.qtd}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>{r.cmv_pct != null ? pct(r.cmv_pct * 100) : "—"}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: C.text2 }}>{fmt(r.bruto)}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", color: r.desconto > 0 ? C.alerta : C.text3 }}>{fmt(r.desconto)}</td>
+                    <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                  <td colSpan={2} style={{ padding: "7px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                    TOTAL {filtered.length < all.length ? `(${filtered.length}/${all.length})` : `(${all.length})`}
+                  </td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{totQtd}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text3 }}>—</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{fmt(totBruto)}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: totDesconto > 0 ? C.alerta : C.text3 }}>{fmt(totDesconto)}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: C.text }}>{fmt(totTotal)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </>
       )}
     </DetailCard>
   );
