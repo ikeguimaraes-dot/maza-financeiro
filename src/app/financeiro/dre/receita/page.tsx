@@ -56,13 +56,16 @@ type DayGroup = {
   ticketMedio: number | null;
 };
 
-type Pagamento     = { forma: string; valor_recebido: number | null };
-type Desconto      = { motivo: string; consumo: number | null };
-type Ambiente      = { ambiente: string; produto: number | null; clientes: number | null };
+type Pagamento     = { workday_id_fk: string; forma: string; valor_recebido: number | null };
+type Desconto      = { workday_id_fk: string; motivo: string; qtd: number | null; consumo: number | null };
+type Ambiente      = { workday_id_fk: string; ambiente: string; produto: number | null; clientes: number | null };
 type Turno         = { turno: string; produto: number | null; clientes: number | null };
 type Grupo         = { grupo: string; bruto: number | null; pct_bruto: number | null };
 type MetaDiaSemana = { dia_semana: number; meta: number };
 type MetaOverride  = { data: string; meta: number };
+type Horario       = { workday_id_fk: string; hora: number; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
+type Usuario       = { workday_id_fk: string; usuario: string; qtd: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
+type Caixa         = { workday_id_fk: string; operador: string; total_fechado: number | null; total_recebido: number | null; diferenca: number | null };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -132,6 +135,10 @@ export default function ReceitaPage() {
   const [savingMetas,    setSavingMetas]    = useState(false);
   const [metaSaveMsg,    setMetaSaveMsg]    = useState<{ ok: boolean; text: string } | null>(null);
   const [expandedDates,  setExpandedDates]  = useState<Set<string>>(new Set());
+  const [horarios,       setHorarios]       = useState<Horario[]>([]);
+  const [usuarios,       setUsuarios]       = useState<Usuario[]>([]);
+  const [caixas,         setCaixas]         = useState<Caixa[]>([]);
+  const [selectedDate,   setSelectedDate]   = useState<string | null>(null);
 
   const movRef   = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
@@ -165,6 +172,11 @@ export default function ReceitaPage() {
       setMetaReceita(json.meta          ?? null);
       setMetasDiaSemana(json.metasDiaSemana ?? []);
       setMetasOverride(json.metasOverride   ?? []);
+      setHorarios(json.horarios ?? []);
+      setUsuarios(json.usuarios ?? []);
+      setCaixas(json.caixas    ?? []);
+      const initDates = [...new Set<string>((json.workdays as Workday[]).map((w) => w.data))].sort((a, b) => b.localeCompare(a));
+      setSelectedDate(initDates[0] ?? null);
       setMetaEdits(new Map()); setMetaSaveMsg(null); setExpandedDates(new Set()); setDbError(null);
     } catch (e) { setDbError(String(e)); }
     finally { setLoading(false); }
@@ -269,6 +281,29 @@ export default function ReceitaPage() {
         ticketMedio: totalClientes > 0 ? totalReceita / totalClientes : null };
     });
   })();
+
+  // ── Day detail ─────────────────────────────────────────────────────────────
+  const availableDates = [...new Set(workdays.map((w) => w.data))].sort((a, b) => b.localeCompare(a));
+
+  // original workday id (without "::turno" suffix) → turno
+  const turnoByOrigId = new Map<string, string | null>();
+  for (const w of workdays) {
+    const origId = w.id.includes("::") ? w.id.split("::")[0]! : w.id;
+    if (!turnoByOrigId.has(origId)) turnoByOrigId.set(origId, w.turno);
+  }
+
+  const selOrigIds = new Set<string>(
+    workdays
+      .filter((w) => w.data === selectedDate)
+      .map((w) => (w.id.includes("::") ? w.id.split("::")[0]! : w.id)),
+  );
+
+  const dayCaixas    = caixas.filter((c) => selOrigIds.has(c.workday_id_fk));
+  const dayHorarios  = horarios.filter((h) => selOrigIds.has(h.workday_id_fk));
+  const dayAmbientes = ambientes.filter((a) => selOrigIds.has(a.workday_id_fk));
+  const dayUsuarios  = usuarios.filter((u) => selOrigIds.has(u.workday_id_fk));
+  const dayDescontos = descontos.filter((d) => selOrigIds.has(d.workday_id_fk));
+  const hasMultipleTurnos = (dayGroups.find((g) => g.date === selectedDate)?.rows.length ?? 0) > 1;
 
   // Chart + sparkline
   const chartData = Array.from(receitaByData.entries()).sort(([a], [b]) => a.localeCompare(b))
@@ -557,6 +592,41 @@ export default function ReceitaPage() {
             </div>
           </div>
 
+          {/* ── Detalhes do dia ──────────────────────────────────────────── */}
+          {selectedDate && (
+            <div style={{ marginBottom: 28 }}>
+              {/* Seletor de dia */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Detalhes do dia</span>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {availableDates.map((date) => {
+                    const dt = new Date(date + "T12:00:00");
+                    return (
+                      <button key={date} onClick={() => setSelectedDate(date)} style={{
+                        padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                        background: selectedDate === date ? C.brand : C.surface3,
+                        color: selectedDate === date ? "#fff" : C.text2,
+                        border: `1px solid ${selectedDate === date ? C.brand : C.border}`,
+                        cursor: "pointer",
+                      }}>
+                        {date.slice(8)}/{date.slice(5, 7)} {DIAS_PT[dt.getDay()]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Cards grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(460px, 1fr))", gap: 16 }}>
+                <CaixaCard    caixas={dayCaixas}       turnoByOrigId={turnoByOrigId} hasMultiple={hasMultipleTurnos} />
+                <TopHorariosCard horarios={dayHorarios} />
+                <AmbientesDetailCard ambientes={dayAmbientes} />
+                <EquipeCard   usuarios={dayUsuarios} />
+                <DescontosDetailCard descontos={dayDescontos} />
+              </div>
+            </div>
+          )}
+
           {/* Gráfico */}
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
             <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Receita diária vs meta</p>
@@ -823,6 +893,273 @@ function MultiFileSlot({ label, accept, inputRef, files, onChange }: {
       <input ref={inputRef} type="file" accept={accept} multiple style={{ display: "none" }}
         onChange={(e) => onChange(Array.from(e.target.files ?? []))} />
     </div>
+  );
+}
+
+// ── Detail sub-components ────────────────────────────────────────────────────
+
+function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+        padding: "16px 20px", transition: "transform 200ms ease, box-shadow 200ms ease",
+      }}
+      onMouseEnter={(e) => { const el = e.currentTarget; el.style.transform = "translateY(-2px)"; el.style.boxShadow = "0 8px 24px rgba(0,0,0,0.3)"; }}
+      onMouseLeave={(e) => { const el = e.currentTarget; el.style.transform = ""; el.style.boxShadow = ""; }}
+    >
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 14px" }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function EmptyDetail() {
+  return <p style={{ fontSize: 12, color: C.text3, margin: 0 }}>Sem dados para este dia</p>;
+}
+
+function TurnoBadge({ turno }: { turno: string | null | undefined }) {
+  if (!turno || turno === "dia_inteiro") return null;
+  const color = turno === "almoco" ? C.almoco : C.jantar;
+  const bg    = turno === "almoco" ? "rgba(245,158,11,0.14)" : "rgba(129,140,248,0.14)";
+  const label = turno === "almoco" ? "Almoço" : "Jantar";
+  return (
+    <span style={{ display: "inline-flex", padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: bg, color }}>
+      {label}
+    </span>
+  );
+}
+
+function CaixaCard({ caixas, turnoByOrigId, hasMultiple }: {
+  caixas: Caixa[];
+  turnoByOrigId: Map<string, string | null>;
+  hasMultiple: boolean;
+}) {
+  const totFechado   = caixas.reduce((s, c) => s + (c.total_fechado   ?? 0), 0);
+  const totRecebido  = caixas.reduce((s, c) => s + (c.total_recebido  ?? 0), 0);
+  const totDiferenca = caixas.reduce((s, c) => s + (c.diferenca       ?? 0), 0);
+  const difColor = (v: number | null) => {
+    if (v == null) return C.text3;
+    const a = Math.abs(v);
+    return a < 1 ? C.receita : a <= 50 ? C.meta : C.alerta;
+  };
+  return (
+    <DetailCard title="Fechamento de Caixa">
+      {!caixas.length ? <EmptyDetail /> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {["Operador", ...(hasMultiple ? ["Turno"] : []), "Fechado", "Recebido", "Diferença"].map((h) => (
+                  <th key={h} style={{ padding: "7px 10px", textAlign: h === "Operador" || h === "Turno" ? "left" : "right",
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
+                    color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {caixas.map((c, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "8px 10px", color: C.text2 }}>{c.operador}</td>
+                  {hasMultiple && (
+                    <td style={{ padding: "8px 10px" }}>
+                      <TurnoBadge turno={turnoByOrigId.get(c.workday_id_fk)} />
+                    </td>
+                  )}
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text2 }}>{fmt(c.total_fechado ?? 0)}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text2 }}>{fmt(c.total_recebido ?? 0)}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: difColor(c.diferenca) }}>{fmt(c.diferenca ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {caixas.length > 1 && (
+              <tfoot>
+                <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                  <td colSpan={hasMultiple ? 2 : 1} style={{ padding: "8px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{fmt(totFechado)}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{fmt(totRecebido)}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: difColor(totDiferenca) }}>{fmt(totDiferenca)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function TopHorariosCard({ horarios }: { horarios: Horario[] }) {
+  const agg = new Map<number, { clientes: number; consumo: number }>();
+  for (const h of horarios) {
+    const cur = agg.get(h.hora) ?? { clientes: 0, consumo: 0 };
+    agg.set(h.hora, { clientes: cur.clientes + (h.clientes ?? 0), consumo: cur.consumo + (h.consumo ?? 0) });
+  }
+  const sorted = Array.from(agg.entries())
+    .sort(([, a], [, b]) => b.consumo - a.consumo)
+    .slice(0, 5);
+  const maxConsumo = sorted[0]?.[1].consumo ?? 0;
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setVisible(true), 60); return () => clearTimeout(t); }, [horarios]);
+  return (
+    <DetailCard title="Top 5 Horários">
+      {!sorted.length ? <EmptyDetail /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {sorted.map(([hora, v], i) => (
+            <div key={hora}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text2, width: 36 }}>{hora}h</span>
+                <span style={{ fontSize: 11, color: C.text3 }}>{v.clientes} pax</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{fmt(v.consumo)}</span>
+              </div>
+              <div style={{ height: 5, background: C.surface3, borderRadius: 3, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%",
+                  width: visible ? `${maxConsumo > 0 ? (v.consumo / maxConsumo * 100).toFixed(1) : 0}%` : "0%",
+                  background: `linear-gradient(90deg, ${C.receita}, rgba(52,211,153,0.4))`,
+                  borderRadius: 3,
+                  transition: `width 600ms ${i * 80}ms ease-out`,
+                }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function AmbientesDetailCard({ ambientes }: { ambientes: Ambiente[] }) {
+  const agg = new Map<string, { consumo: number; clientes: number }>();
+  for (const a of ambientes) {
+    const cur = agg.get(a.ambiente) ?? { consumo: 0, clientes: 0 };
+    agg.set(a.ambiente, { consumo: cur.consumo + (a.produto ?? 0), clientes: cur.clientes + (a.clientes ?? 0) });
+  }
+  const data = Array.from(agg.entries())
+    .map(([nome, v]) => ({ key: nome, total: v.consumo, clientes: v.clientes }))
+    .sort((a, b) => b.total - a.total);
+  return (
+    <DetailCard title="Ambientes">
+      {!data.length ? <EmptyDetail /> : (
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ position: "relative", flexShrink: 0, width: 120, height: 120 }}>
+            <PieChart width={120} height={120}>
+              <Pie data={data} dataKey="total" cx="50%" cy="50%" innerRadius={38} outerRadius={54} paddingAngle={2} strokeWidth={0}>
+                {data.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+              </Pie>
+            </PieChart>
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <span style={{ fontSize: 10, color: C.text3, textAlign: "center" }}>{data.length} amb.</span>
+            </div>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+            {data.map((d, i) => (
+              <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: 12, color: C.text2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.key}</span>
+                <span style={{ fontSize: 11, color: C.text3, marginRight: 6 }}>{d.clientes} pax</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text, flexShrink: 0 }}>{fmt(d.total)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function EquipeCard({ usuarios }: { usuarios: Usuario[] }) {
+  const agg = new Map<string, { qtd: number; gorjeta: number; consumo: number }>();
+  for (const u of usuarios) {
+    const cur = agg.get(u.usuario) ?? { qtd: 0, gorjeta: 0, consumo: 0 };
+    agg.set(u.usuario, { qtd: cur.qtd + (u.qtd ?? 0), gorjeta: cur.gorjeta + (u.gorjeta ?? 0), consumo: cur.consumo + (u.consumo ?? 0) });
+  }
+  const data = Array.from(agg.entries())
+    .map(([nome, v]) => ({ nome, ...v }))
+    .sort((a, b) => b.consumo - a.consumo);
+  const maxConsumo = data[0]?.consumo ?? 0;
+  return (
+    <DetailCard title="Equipe">
+      {!data.length ? <EmptyDetail /> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {["Usuário", "Qtd", "Gorjeta", "Consumo"].map((h) => (
+                  <th key={h} style={{ padding: "7px 10px", textAlign: h === "Usuário" ? "left" : "right",
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
+                    color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((u, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "8px 10px", color: C.text2 }}>{u.nome}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text3 }}>{u.qtd}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text3 }}>{fmt(u.gorjeta)}</td>
+                  <td style={{ padding: "8px 10px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                      <span style={{ fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{fmt(u.consumo)}</span>
+                      <div style={{ width: 60, height: 4, background: C.surface3, borderRadius: 2, flexShrink: 0 }}>
+                        <div style={{ width: `${maxConsumo > 0 ? (u.consumo / maxConsumo * 100).toFixed(1) : 0}%`, height: "100%", background: C.brand, borderRadius: 2 }} />
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </DetailCard>
+  );
+}
+
+function DescontosDetailCard({ descontos }: { descontos: Desconto[] }) {
+  const agg = new Map<string, { qtd: number; consumo: number }>();
+  for (const d of descontos) {
+    const cur = agg.get(d.motivo) ?? { qtd: 0, consumo: 0 };
+    agg.set(d.motivo, { qtd: cur.qtd + (d.qtd ?? 1), consumo: cur.consumo + (d.consumo ?? 0) });
+  }
+  const data = Array.from(agg.entries())
+    .map(([motivo, v]) => ({ motivo, ...v }))
+    .sort((a, b) => b.consumo - a.consumo);
+  const totals = data.reduce((acc, d) => ({ qtd: acc.qtd + d.qtd, consumo: acc.consumo + d.consumo }), { qtd: 0, consumo: 0 });
+  return (
+    <DetailCard title="Descontos">
+      {!data.length ? <EmptyDetail /> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {["Motivo", "Qtd", "Valor"].map((h) => (
+                  <th key={h} style={{ padding: "7px 10px", textAlign: h === "Motivo" ? "left" : "right",
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase",
+                    color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((d, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "8px 10px", color: C.text2 }}>{d.motivo}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: C.text3 }}>{d.qtd}</td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: C.alerta }}>{fmt(d.consumo)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: C.surface2, fontWeight: 700 }}>
+                <td style={{ padding: "8px 10px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.text }}>{totals.qtd}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: C.alerta }}>{fmt(totals.consumo)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </DetailCard>
   );
 }
 

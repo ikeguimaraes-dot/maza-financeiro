@@ -51,13 +51,13 @@ export async function GET(request: Request) {
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], horarios: [], usuarios: [], caixas: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
   }
 
-  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes] = await Promise.all([
+  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes] = await Promise.all([
     db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
-    db.from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
-    db.from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
+    db.from("lorean_descontos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
+    db.from("lorean_ambientes").select("workday_id_fk, ambiente, produto, clientes").in("workday_id_fk", ids),
     db.from("lorean_turnos").select("workday_id_fk, turno, produto, clientes, gorjeta, consumo").in("workday_id_fk", ids),
     db.from("lorean_grupos").select("grupo, bruto, pct_bruto").in("workday_id_fk", ids),
     mes_ano
@@ -65,6 +65,9 @@ export async function GET(request: Request) {
       : Promise.resolve({ data: null }),
     db.from("metas_dia_semana").select("dia_semana, meta").eq("unit_id", unit_id),
     db.from("metas_dia_override").select("data, meta").eq("unit_id", unit_id).gte("data", start).lte("data", end),
+    db.from("lorean_horarios").select("workday_id_fk, hora, clientes, gorjeta, produto, consumo").in("workday_id_fk", ids),
+    db.from("lorean_usuarios").select("workday_id_fk, usuario, qtd, gorjeta, produto, consumo").in("workday_id_fk", ids),
+    db.from("lorean_caixas").select("workday_id_fk, operador, total_fechado, total_recebido, diferenca").in("workday_id_fk", ids),
   ]);
 
   // Soma valor_recebido por workday para calcular receita_bruta_real
@@ -123,18 +126,18 @@ export async function GET(request: Request) {
     }
   }
 
-  // Remove workday_id_fk dos pagamentos antes de retornar (não necessário no cliente)
-  const pagamentosClean = (pagRes.data ?? []).map(({ workday_id_fk: _fk, ...rest }: any) => rest);
-
   return Response.json({
-    workdays:        workdaysFinal,
-    pagamentos:      pagamentosClean,
-    descontos:       descRes.data      ?? [],
-    ambientes:       ambRes.data       ?? [],
-    turnos:          turRes.data       ?? [],
-    grupos:          grpRes.data       ?? [],
-    meta:            (metaRes as any).data?.meta_faturamento ?? null,
-    metasDiaSemana:  metasDsRes.data   ?? [],
-    metasOverride:   overrideRes.data  ?? [],
+    workdays:       workdaysFinal,
+    pagamentos:     pagRes.data      ?? [],
+    descontos:      descRes.data     ?? [],
+    ambientes:      ambRes.data      ?? [],
+    turnos:         turRes.data      ?? [],
+    grupos:         grpRes.data      ?? [],
+    horarios:       horRes.data      ?? [],
+    usuarios:       usuRes.data      ?? [],
+    caixas:         caixasRes.data   ?? [],
+    meta:           (metaRes as any).data?.meta_faturamento ?? null,
+    metasDiaSemana: metasDsRes.data  ?? [],
+    metasOverride:  overrideRes.data ?? [],
   }, { headers: CORS });
 }
