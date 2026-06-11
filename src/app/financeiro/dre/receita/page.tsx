@@ -1,76 +1,116 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
+  AreaChart, Area,
+  ComposedChart, Bar, Line,
+  PieChart, Pie, Cell,
+  XAxis, YAxis, Tooltip,
   ResponsiveContainer,
-  Cell,
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
 
 const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Color tokens ─────────────────────────────────────────────────────────────
+const C = {
+  receita:  "#34d399",
+  meta:     "#fbbf24",
+  almoco:   "#f59e0b",
+  jantar:   "#818cf8",
+  alerta:   "#f87171",
+  neutro:   "#8A8278",
+  text:     "var(--text, #F5F0E8)",
+  text2:    "var(--text-2, #C8C2B8)",
+  text3:    "var(--text-3, #8A8278)",
+  surface:  "var(--surface, #1A1A18)",
+  surface2: "var(--surface-2, #222220)",
+  surface3: "var(--surface-3, #2C2C2A)",
+  border:   "var(--border, rgba(245,240,232,0.08))",
+  brand:    "var(--brand, #C4622D)",
+} as const;
 
+// ── Types ────────────────────────────────────────────────────────────────────
 type Workday = {
   id: string;
   data: string;
   turno: string | null;
-  receita_bruta_real: number;  // SUM(lorean_pagamentos.valor_recebido)
+  receita_bruta_real: number;
   desconto: number | null;
   gorjeta: number | null;
   custo: number | null;
   cmv_pct: number | null;
   clientes: number | null;
   ticket_medio: number | null;
+  _derivado_de_dia_inteiro?: boolean;
 };
 
-const TURNO_LABEL: Record<string, string> = {
-  almoco: "Almoço",
-  jantar: "Jantar",
-  dia_inteiro: "Dia inteiro",
+type DayGroup = {
+  date: string;
+  rows: Workday[];
+  totalReceita: number;
+  totalGorjeta: number;
+  totalClientes: number;
+  desconto: number;
+  cmv_pct: number | null;
+  ticketMedio: number | null;
 };
 
-type Pagamento = { forma: string; valor_recebido: number | null };
-type Desconto = { motivo: string; consumo: number | null };
-type Ambiente = { ambiente: string; produto: number | null; clientes: number | null };
-type Turno = { turno: string; produto: number | null; clientes: number | null };
-type Grupo = { grupo: string; bruto: number | null; pct_bruto: number | null };
+type Pagamento     = { forma: string; valor_recebido: number | null };
+type Desconto      = { motivo: string; consumo: number | null };
+type Ambiente      = { ambiente: string; produto: number | null; clientes: number | null };
+type Turno         = { turno: string; produto: number | null; clientes: number | null };
+type Grupo         = { grupo: string; bruto: number | null; pct_bruto: number | null };
 type MetaDiaSemana = { dia_semana: number; meta: number };
 type MetaOverride  = { data: string; meta: number };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
-
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const fmt = (n: number) => BRL.format(n);
 const pct = (v: number | null | undefined, digits = 1) =>
   v != null ? `${v.toFixed(digits)}%` : "—";
 const DIAS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-const MESES = [
+const MESES   = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
 
-// ── Aggregation helpers ───────────────────────────────────────────────────────
-
-function aggByKey<T>(rows: T[], keyFn: (r: T) => string, valFn: (r: T) => number): { key: string; total: number }[] {
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function aggByKey<T>(rows: T[], keyFn: (r: T) => string, valFn: (r: T) => number) {
   const map = new Map<string, number>();
-  for (const r of rows) {
-    const k = keyFn(r);
-    map.set(k, (map.get(k) ?? 0) + valFn(r));
-  }
-  return Array.from(map.entries())
-    .map(([key, total]) => ({ key, total }))
-    .sort((a, b) => b.total - a.total);
+  for (const r of rows) { const k = keyFn(r); map.set(k, (map.get(k) ?? 0) + valFn(r)); }
+  return Array.from(map.entries()).map(([key, total]) => ({ key, total })).sort((a, b) => b.total - a.total);
+}
+
+// ── Count-up hook ─────────────────────────────────────────────────────────────
+function useCountUp(target: number, duration = 600): number {
+  const [val, setVal] = useState(0);
+  const rafRef = useRef<number>(0);
+  const prevRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (prevRef.current === target) return;
+    prevRef.current = target;
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVal(target); return;
+    }
+    cancelAnimationFrame(rafRef.current);
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min((now - t0) / duration, 1);
+      const e = 1 - Math.pow(1 - p, 3);
+      setVal(target * e);
+      if (p < 1) rafRef.current = requestAnimationFrame(step);
+      else setVal(target);
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+
+  return val;
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-
 export default function ReceitaPage() {
   const { unit } = useUnit();
   const today = new Date();
@@ -79,54 +119,43 @@ export default function ReceitaPage() {
   const [showImport, setShowImport] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Data
-  const [workdays, setWorkdays] = useState<Workday[]>([]);
-  const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
-  const [descontos, setDescontos] = useState<Desconto[]>([]);
-  const [ambientes, setAmbientes] = useState<Ambiente[]>([]);
-  const [turnos, setTurnos] = useState<Turno[]>([]);
-  const [grupos, setGrupos] = useState<Grupo[]>([]);
-  const [metaReceita, setMetaReceita] = useState<number | null>(null);
+  const [workdays,       setWorkdays]       = useState<Workday[]>([]);
+  const [pagamentos,     setPagamentos]     = useState<Pagamento[]>([]);
+  const [descontos,      setDescontos]      = useState<Desconto[]>([]);
+  const [ambientes,      setAmbientes]      = useState<Ambiente[]>([]);
+  const [turnos,         setTurnos]         = useState<Turno[]>([]);
+  const [grupos,         setGrupos]         = useState<Grupo[]>([]);
+  const [metaReceita,    setMetaReceita]    = useState<number | null>(null);
   const [metasDiaSemana, setMetasDiaSemana] = useState<MetaDiaSemana[]>([]);
-  const [metasOverride, setMetasOverride] = useState<MetaOverride[]>([]);
-  const [metaEdits, setMetaEdits] = useState<Map<string, number | null>>(new Map());
-  const [savingMetas, setSavingMetas] = useState(false);
-  const [metaSaveMsg, setMetaSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [metasOverride,  setMetasOverride]  = useState<MetaOverride[]>([]);
+  const [metaEdits,      setMetaEdits]      = useState<Map<string, number | null>>(new Map());
+  const [savingMetas,    setSavingMetas]    = useState(false);
+  const [metaSaveMsg,    setMetaSaveMsg]    = useState<{ ok: boolean; text: string } | null>(null);
+  const [expandedDates,  setExpandedDates]  = useState<Set<string>>(new Set());
 
-  // Import
-  const movRef = useRef<HTMLInputElement>(null);
+  const movRef   = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
   const caixasRef = useRef<HTMLInputElement>(null);
-  const [movFile, setMovFile] = useState<File | null>(null);
+  const [movFile,   setMovFile]   = useState<File | null>(null);
   const [vendaFile, setVendaFile] = useState<File | null>(null);
   const [caixaFiles, setCaixaFiles] = useState<File[]>([]);
-  const [importing, setImporting] = useState(false);
-  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [importing,     setImporting]     = useState(false);
+  const [importMsg,     setImportMsg]     = useState<{ ok: boolean; text: string } | null>(null);
   const [importProgress, setImportProgress] = useState<string>("");
   const [dbError, setDbError] = useState<string | null>(null);
 
-  // ── Load data ──────────────────────────────────────────────────────────────
-
+  // ── Load ──────────────────────────────────────────────────────────────────
   async function loadData() {
     if (!unit) return;
     setLoading(true);
-
-    const mm = String(mes).padStart(2, "0");
-    const start  = `${ano}-${mm}-01`;
-    const end    = new Date(ano, mes, 0).toISOString().split("T")[0]!;
-    const mesAno = `${ano}-${mm}`;
-
+    const mm    = String(mes).padStart(2, "0");
+    const start = `${ano}-${mm}-01`;
+    const end   = new Date(ano, mes, 0).toISOString().split("T")[0]!;
     try {
-      const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: mesAno });
+      const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: `${ano}-${mm}` });
       const res  = await fetch(`${API_BASE}/api/lorean/workdays?${params}`);
       const json = await res.json();
-
-      if (!res.ok) {
-        setDbError(json.error ?? `HTTP ${res.status}`);
-        setLoading(false);
-        return;
-      }
-
+      if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
       setWorkdays(json.workdays         ?? []);
       setPagamentos(json.pagamentos     ?? []);
       setDescontos(json.descontos       ?? []);
@@ -136,542 +165,462 @@ export default function ReceitaPage() {
       setMetaReceita(json.meta          ?? null);
       setMetasDiaSemana(json.metasDiaSemana ?? []);
       setMetasOverride(json.metasOverride   ?? []);
-      setMetaEdits(new Map());
-      setMetaSaveMsg(null);
-      setDbError(null);
-    } catch (e) {
-      setDbError(String(e));
-    } finally {
-      setLoading(false);
-    }
+      setMetaEdits(new Map()); setMetaSaveMsg(null); setExpandedDates(new Set()); setDbError(null);
+    } catch (e) { setDbError(String(e)); }
+    finally { setLoading(false); }
   }
 
   useEffect(() => { loadData(); }, [unit?.id, mes, ano]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Import handler — one PDF per call ─────────────────────────────────────
-
+  // ── Import ─────────────────────────────────────────────────────────────────
   async function handleImport() {
     if (!unit) return;
-    setImporting(true);
-    setImportMsg(null);
-
+    setImporting(true); setImportMsg(null);
     const steps: { tipo: string; arquivo: File; label: string }[] = [];
     if (movFile)   steps.push({ tipo: "movimento", arquivo: movFile,   label: "Movimento" });
     if (vendaFile) steps.push({ tipo: "venda",     arquivo: vendaFile, label: "Venda" });
     caixaFiles.forEach((f, i) =>
-      steps.push({ tipo: "caixa", arquivo: f, label: `Caixa${caixaFiles.length > 1 ? ` ${i + 1}` : ""}` }),
-    );
-
-    const allErrors: string[] = [];
-    let workdayId: string | null = null;
-
+      steps.push({ tipo: "caixa", arquivo: f, label: `Caixa${caixaFiles.length > 1 ? ` ${i + 1}` : ""}` }));
+    const allErrors: string[] = []; let workdayId: string | null = null;
     try {
       for (let i = 0; i < steps.length; i++) {
         const { tipo, arquivo, label } = steps[i]!;
-        setImportProgress(`${i + 1}/${steps.length} — Processando ${label}…`);
-
+        setImportProgress(`${i + 1}/${steps.length} — ${label}…`);
         const fd = new FormData();
-        fd.append("tipo", tipo);
-        fd.append("arquivo", arquivo);
-        fd.append("unit_id", unit.id);
+        fd.append("tipo", tipo); fd.append("arquivo", arquivo); fd.append("unit_id", unit.id);
         if (workdayId) fd.append("workday_id", workdayId);
-
         let json: { success: boolean; workday_id?: string | null; errors?: string[] };
-        try {
-          const res = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd });
-          json = await res.json();
-        } catch (e) {
-          allErrors.push(`${label}: falha na requisição — ${String(e)}`);
-          continue;
-        }
-
+        try { const r = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd }); json = await r.json(); }
+        catch (e) { allErrors.push(`${label}: ${String(e)}`); continue; }
         if (json.errors?.length) allErrors.push(...json.errors);
         if (json.workday_id) workdayId = json.workday_id;
       }
-
-      if (allErrors.length === 0) {
+      if (!allErrors.length) {
         setImportMsg({ ok: true, text: "Importado com sucesso!" });
-        setMovFile(null); setVendaFile(null); setCaixaFiles([]);
-        setShowImport(false);
+        setMovFile(null); setVendaFile(null); setCaixaFiles([]); setShowImport(false);
         await loadData();
-      } else {
-        setImportMsg({ ok: false, text: allErrors.join(" | ") });
-      }
-    } catch (e) {
-      setImportMsg({ ok: false, text: String(e) });
-    } finally {
-      setImporting(false);
-      setImportProgress("");
-    }
+      } else { setImportMsg({ ok: false, text: allErrors.join(" | ") }); }
+    } catch (e) { setImportMsg({ ok: false, text: String(e) }); }
+    finally { setImporting(false); setImportProgress(""); }
   }
 
-  // ── Save meta overrides ────────────────────────────────────────────────────
-
+  // ── Save metas ─────────────────────────────────────────────────────────────
   async function handleSaveMetas() {
     if (!unit) return;
-    setSavingMetas(true);
-    setMetaSaveMsg(null);
+    setSavingMetas(true); setMetaSaveMsg(null);
     try {
       const overrides = Array.from(metaEdits.entries()).map(([data, meta]) => ({ data, meta }));
       const res = await fetch(`${API_BASE}/api/lorean/metas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ unit_id: unit.id, overrides }),
       });
       const json = await res.json();
-      if (!res.ok) {
-        setMetaSaveMsg({ ok: false, text: json.error ?? `HTTP ${res.status}` });
-      } else {
-        setMetaSaveMsg({ ok: true, text: "Metas salvas!" });
-        setMetaEdits(new Map());
-        await loadData();
-      }
-    } catch (e) {
-      setMetaSaveMsg({ ok: false, text: String(e) });
-    } finally {
-      setSavingMetas(false);
-    }
+      if (!res.ok) { setMetaSaveMsg({ ok: false, text: json.error ?? `HTTP ${res.status}` }); }
+      else { setMetaSaveMsg({ ok: true, text: "Metas salvas!" }); setMetaEdits(new Map()); await loadData(); }
+    } catch (e) { setMetaSaveMsg({ ok: false, text: String(e) }); }
+    finally { setSavingMetas(false); }
   }
 
   // ── Aggregations ───────────────────────────────────────────────────────────
-
-  const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real,      0);
-  const totalDesconto = workdays.reduce((s, w) => s + (w.desconto    ?? 0),      0);
-  const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta     ?? 0),      0);
+  const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real, 0);
+  const totalDesconto = workdays.reduce((s, w) => s + (w.desconto ?? 0), 0);
+  const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta  ?? 0), 0);
   const totalLiquida  = totalBruto - totalDesconto;
-  const totalClientes = workdays.reduce((s, w) => s + (w.clientes    ?? 0),      0);
+  const totalClientes = workdays.reduce((s, w) => s + (w.clientes ?? 0), 0);
   const ticketMedio   = totalClientes > 0 ? totalBruto / totalClientes : null;
   const atingMeta     = metaReceita && metaReceita > 0 ? (totalBruto / metaReceita) * 100 : null;
 
-  // Lookup: dia_semana (0–6) → meta padrão
-  const metaByDiaSemana = new Map<number, number>(
-    metasDiaSemana.map((m) => [m.dia_semana, m.meta]),
-  );
+  const metaByDiaSemana   = new Map<number, number>(metasDiaSemana.map((m) => [m.dia_semana, m.meta]));
+  const metaOverrideByData = new Map<string, number>(metasOverride.map((o) => [o.data, o.meta]));
 
-  // Override por data específica (salvo no DB)
-  const metaOverrideByData = new Map<string, number>(
-    metasOverride.map((o) => [o.data, o.meta]),
-  );
-
-  // override > padrão semanal > null
   const resolveMetaForDate = (data: string): number | null => {
     if (metaOverrideByData.has(data)) return metaOverrideByData.get(data)!;
-    const diaSemana = new Date(data + "T12:00:00").getDay();
-    return metaByDiaSemana.get(diaSemana) ?? null;
+    const ds = new Date(data + "T12:00:00").getDay();
+    return metaByDiaSemana.get(ds) ?? null;
   };
 
-  // Receita consolidada por data (soma todos os turnos do dia)
   const receitaByData = new Map<string, number>();
-  for (const w of workdays) {
-    receitaByData.set(w.data, (receitaByData.get(w.data) ?? 0) + w.receita_bruta_real);
-  }
+  for (const w of workdays) receitaByData.set(w.data, (receitaByData.get(w.data) ?? 0) + w.receita_bruta_real);
 
-  const pagAgg = aggByKey(pagamentos, (p) => p.forma, (p) => p.valor_recebido ?? 0);
-  const descAgg = aggByKey(descontos, (d) => d.motivo, (d) => d.consumo ?? 0);
-  const ambAgg = aggByKey(ambientes, (a) => a.ambiente, (a) => a.produto ?? 0);
-  const turAgg = aggByKey(turnos, (t) => t.turno, (t) => t.produto ?? 0);
+  const pagAgg  = aggByKey(pagamentos, (p) => p.forma,    (p) => p.valor_recebido ?? 0);
+  const descAgg = aggByKey(descontos,  (d) => d.motivo,   (d) => d.consumo ?? 0);
+  const ambAgg  = aggByKey(ambientes,  (a) => a.ambiente, (a) => a.produto ?? 0);
+  const turAgg  = aggByKey(turnos,     (t) => t.turno,    (t) => t.produto ?? 0);
 
   const gruposAgg = (() => {
     const map = new Map<string, number>();
-    for (const g of grupos) {
-      map.set(g.grupo, (map.get(g.grupo) ?? 0) + (g.bruto ?? 0));
-    }
+    for (const g of grupos) map.set(g.grupo, (map.get(g.grupo) ?? 0) + (g.bruto ?? 0));
     return Array.from(map.entries())
       .map(([grupo, bruto]) => ({ grupo, bruto, pct: totalBruto > 0 ? (bruto / totalBruto) * 100 : 0 }))
-      .sort((a, b) => b.bruto - a.bruto)
-      .slice(0, 10);
+      .sort((a, b) => b.bruto - a.bruto).slice(0, 8);
   })();
 
-  // Chart data — one bar per date (dedup turnos), meta resolvida por data
-  const chartData = Array.from(receitaByData.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([data, bruto]) => ({ dia: data.slice(8), bruto, meta: resolveMetaForDate(data) }));
+  // Day groups
+  const dayGroups: DayGroup[] = (() => {
+    const map = new Map<string, Workday[]>();
+    for (const w of workdays) { if (!map.has(w.data)) map.set(w.data, []); map.get(w.data)!.push(w); }
+    return Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a)).map(([date, rows]) => {
+      const totalReceita  = rows.reduce((s, r) => s + r.receita_bruta_real, 0);
+      const totalGorjeta  = rows.reduce((s, r) => s + (r.gorjeta ?? 0), 0);
+      const totalClientes = rows.reduce((s, r) => s + (r.clientes ?? 0), 0);
+      const first = rows[0]!;
+      return { date, rows, totalReceita, totalGorjeta, totalClientes,
+        desconto: first.desconto ?? 0, cmv_pct: first.cmv_pct ?? null,
+        ticketMedio: totalClientes > 0 ? totalReceita / totalClientes : null };
+    });
+  })();
+
+  // Chart + sparkline
+  const chartData = Array.from(receitaByData.entries()).sort(([a], [b]) => a.localeCompare(b))
+    .map(([data, bruto]) => ({ dia: data.slice(8), data, bruto, meta: resolveMetaForDate(data) }));
+
+  const sparkReceita  = chartData.slice(-14).map((d) => ({ v: d.bruto }));
+  const sparkClientes = (() => {
+    const m = new Map<string, number>();
+    for (const w of workdays) m.set(w.data, (m.get(w.data) ?? 0) + (w.clientes ?? 0));
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b)).slice(-14).map(([, v]) => ({ v }));
+  })();
+
+  // Expansion
+  const allDates   = dayGroups.map((g) => g.date);
+  const allExpanded = allDates.length > 0 && allDates.every((d) => expandedDates.has(d));
+  const toggleAll  = () => setExpandedDates(allExpanded ? new Set() : new Set(allDates));
+  const toggleDate = (date: string) => setExpandedDates((prev) => {
+    const next = new Set(prev); if (next.has(date)) next.delete(date); else next.add(date); return next;
+  });
 
   // ── Render ─────────────────────────────────────────────────────────────────
-
   const mesLabel = `${MESES[mes - 1]} ${ano}`;
-  const hasData = workdays.length > 0;
+  const hasData  = workdays.length > 0;
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <header style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", letterSpacing: -0.6, margin: 0 }}>
-            Receita
-          </h1>
-          <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}>
-            {unit?.name ?? "—"} · {mesLabel}
-          </p>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: -0.6, margin: 0 }}>Receita</h1>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>{unit?.name ?? "—"} · {mesLabel}</p>
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          {/* Seletor mês/ano */}
-          <select
-            value={mes}
-            onChange={(e) => setMes(Number(e.target.value))}
-            style={selectStyle}
-          >
-            {MESES.map((m, i) => (
-              <option key={i + 1} value={i + 1}>{m}</option>
-            ))}
+          <select value={mes} onChange={(e) => setMes(Number(e.target.value))} style={selectStyle}>
+            {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
           </select>
-          <select
-            value={ano}
-            onChange={(e) => setAno(Number(e.target.value))}
-            style={selectStyle}
-          >
-            {[2024, 2025, 2026, 2027].map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
+          <select value={ano} onChange={(e) => setAno(Number(e.target.value))} style={selectStyle}>
+            {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
-
-          {/* Botão importar */}
-          <button
-            onClick={() => { setShowImport((v) => !v); setImportMsg(null); }}
-            style={{
-              padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-              background: showImport ? "var(--surface-3)" : "var(--brand)",
-              color: showImport ? "var(--text)" : "#fff",
-              border: "none", cursor: "pointer", transition: "all var(--t)",
-            }}
-          >
+          <button onClick={() => { setShowImport((v) => !v); setImportMsg(null); }} style={{
+            padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: showImport ? C.surface3 : C.brand, color: showImport ? C.text : "#fff",
+            border: "none", cursor: "pointer",
+          }}>
             {showImport ? "Fechar" : "Importar PDFs"}
           </button>
         </div>
       </header>
 
-      {/* ── Painel de importação ────────────────────────────────────────────── */}
+      {/* Import panel */}
       {showImport && (
-        <div style={{
-          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12,
-          padding: "20px 24px", marginBottom: 24,
-        }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", margin: "0 0 16px" }}>
-            Importar relatórios Lorean
-          </h3>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Importar relatórios Lorean</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <FileSlot
-              label="Movimento (Workday)"
-              accept=".pdf"
-              inputRef={movRef}
-              file={movFile}
-              onChange={(f) => setMovFile(f)}
-            />
-            <FileSlot
-              label="Venda"
-              accept=".pdf"
-              inputRef={vendaRef}
-              file={vendaFile}
-              onChange={(f) => setVendaFile(f)}
-            />
-            <MultiFileSlot
-              label="Caixa(s)"
-              accept=".pdf"
-              inputRef={caixasRef}
-              files={caixaFiles}
-              onChange={(fs) => setCaixaFiles(fs)}
-            />
+            <FileSlot label="Movimento" accept=".pdf" inputRef={movRef}   file={movFile}   onChange={setMovFile} />
+            <FileSlot label="Venda"     accept=".pdf" inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
+            <MultiFileSlot label="Caixa(s)" accept=".pdf" inputRef={caixasRef} files={caixaFiles} onChange={setCaixaFiles} />
           </div>
-
-          {importProgress && (
-            <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 12 }}>
-              ⏳ {importProgress}
-            </p>
-          )}
-
+          {importProgress && <p style={{ fontSize: 13, color: C.text3, marginBottom: 12 }}>⏳ {importProgress}</p>}
           {importMsg && (
             <div style={{
               padding: "10px 14px", borderRadius: 8, marginBottom: 12, fontSize: 13,
-              background: importMsg.ok ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-              color: importMsg.ok ? "#22C55E" : "#EF4444",
-              border: `1px solid ${importMsg.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+              background: importMsg.ok ? "rgba(52,211,153,0.08)" : "rgba(248,113,113,0.08)",
+              color: importMsg.ok ? C.receita : C.alerta,
+              border: `1px solid ${importMsg.ok ? "rgba(52,211,153,0.25)" : "rgba(248,113,113,0.25)"}`,
             }}>
               {importMsg.ok ? "✓ " : "✗ "}{importMsg.text}
             </div>
           )}
-
-          <button
-            disabled={importing || (!movFile && !vendaFile && caixaFiles.length === 0)}
-            onClick={handleImport}
-            style={{
-              padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-              background: importing ? "var(--surface-3)" : "var(--brand)",
-              color: importing ? "var(--text-3)" : "#fff",
-              border: "none", cursor: importing ? "not-allowed" : "pointer",
-              opacity: (!movFile && !vendaFile && caixaFiles.length === 0) ? 0.4 : 1,
-            }}
-          >
+          <button disabled={importing || (!movFile && !vendaFile && !caixaFiles.length)} onClick={handleImport} style={{
+            padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: importing ? C.surface3 : C.brand, color: importing ? C.text3 : "#fff",
+            border: "none", cursor: importing ? "not-allowed" : "pointer",
+            opacity: (!movFile && !vendaFile && !caixaFiles.length) ? 0.4 : 1,
+          }}>
             {importing ? "Processando…" : "Processar e importar"}
           </button>
         </div>
       )}
 
-      {/* ── Loading ─────────────────────────────────────────────────────────── */}
-      {loading && (
-        <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-3)", fontSize: 14 }}>
-          Carregando dados…
-        </div>
-      )}
+      {loading && <div style={{ textAlign: "center", padding: "40px 0", color: C.text3, fontSize: 14 }}>Carregando…</div>}
 
-      {/* ── Empty state ─────────────────────────────────────────────────────── */}
       {!loading && !hasData && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-3)", fontSize: 14 }}>
-          {dbError ? (
-            <>
-              <span style={{ color: "#EF4444" }}>Erro ao buscar dados: {dbError}</span>
-              <br />
-              <span style={{ fontSize: 12 }}>unit_id: {unit?.id}</span>
-            </>
-          ) : (
-            <>
-              Sem dados de receita para {mesLabel}. Importe os PDFs do Lorean para começar.
-              <br />
-              <span style={{ fontSize: 11, marginTop: 4, display: "block" }}>
-                unit_id: {unit?.id} · {unit?.name}
-              </span>
-            </>
-          )}
+        <div style={{ textAlign: "center", padding: "60px 0", color: C.text3, fontSize: 14 }}>
+          {dbError ? <span style={{ color: C.alerta }}>Erro: {dbError}</span>
+            : <>Sem dados para {mesLabel}. Importe os PDFs do Lorean.</>}
         </div>
       )}
 
-      {/* ── KPI Cards ───────────────────────────────────────────────────────── */}
       {!loading && hasData && (
         <>
+          {/* KPI Cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 28 }}>
-            <KpiCard
-              label="Receita Bruta"
-              value={BRL.format(totalBruto)}
+            <KpiCardAnimated label="Receita Bruta"   rawValue={totalBruto}    format={fmt} sparkData={sparkReceita}
               sub={atingMeta != null ? `${atingMeta.toFixed(1)}% da meta` : undefined}
-              alert={atingMeta != null && atingMeta < 90}
-              ok={atingMeta != null && atingMeta >= 100}
-            />
-            <KpiCard
-              label="Desconto"
-              value={BRL.format(totalDesconto)}
+              alert={atingMeta != null && atingMeta < 90} ok={atingMeta != null && atingMeta >= 100} />
+            <KpiCardAnimated label="Desconto"        rawValue={totalDesconto} format={fmt} sparkData={sparkReceita}
               sub={totalBruto > 0 ? pct((totalDesconto / totalBruto) * 100) + " da bruta" : undefined}
-              alert={totalBruto > 0 && (totalDesconto / totalBruto) > 0.08}
-            />
-            <KpiCard
-              label="Gorjeta"
-              value={BRL.format(totalGorjeta)}
-              sub={totalBruto > 0 ? pct((totalGorjeta / totalBruto) * 100) + " cobrado" : undefined}
-            />
-            <KpiCard
-              label="Receita Líquida"
-              value={BRL.format(totalLiquida)}
-            />
-            <KpiCard
-              label="Clientes"
-              value={totalClientes.toLocaleString("pt-BR")}
-            />
-            <KpiCard
-              label="Ticket Médio"
-              value={ticketMedio != null ? BRL.format(ticketMedio) : "—"}
-              sub={metaReceita && totalClientes > 0 ? `Meta: ${BRL.format(metaReceita / totalClientes)}` : undefined}
-            />
+              alert={totalBruto > 0 && totalDesconto / totalBruto > 0.08} />
+            <KpiCardAnimated label="Gorjeta"         rawValue={totalGorjeta}  format={fmt} sparkData={sparkReceita}
+              sub={totalBruto > 0 ? pct((totalGorjeta / totalBruto) * 100) + " cobrado" : undefined} />
+            <KpiCardAnimated label="Receita Líquida" rawValue={totalLiquida}  format={fmt} sparkData={sparkReceita} />
+            <KpiCardAnimated label="Clientes"        rawValue={totalClientes}
+              format={(n) => Math.round(n).toLocaleString("pt-BR")} sparkData={sparkClientes} />
+            <KpiCardAnimated label="Ticket Médio"    rawValue={ticketMedio ?? 0}
+              format={ticketMedio != null ? fmt : () => "—"} sparkData={sparkReceita} />
           </div>
 
-          {/* ── Tabela dia a dia ────────────────────────────────────────────── */}
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
-            <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Dia a dia</span>
+          {/* Tabela agrupada por dia */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Dia a dia</span>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {metaSaveMsg && (
-                  <span style={{ fontSize: 12, color: metaSaveMsg.ok ? "#22C55E" : "#EF4444" }}>
+                  <span style={{ fontSize: 12, color: metaSaveMsg.ok ? C.receita : C.alerta }}>
                     {metaSaveMsg.ok ? "✓ " : "✗ "}{metaSaveMsg.text}
                   </span>
                 )}
                 {metaEdits.size > 0 && (
-                  <button
-                    onClick={handleSaveMetas}
-                    disabled={savingMetas}
-                    style={{
-                      padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600,
-                      background: savingMetas ? "var(--surface-3)" : "var(--brand)",
-                      color: savingMetas ? "var(--text-3)" : "#fff",
-                      border: "none", cursor: savingMetas ? "not-allowed" : "pointer",
-                    }}
-                  >
+                  <button onClick={handleSaveMetas} disabled={savingMetas} style={{
+                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 600,
+                    background: savingMetas ? C.surface3 : C.brand, color: savingMetas ? C.text3 : "#fff",
+                    border: "none", cursor: savingMetas ? "not-allowed" : "pointer",
+                  }}>
                     {savingMetas ? "Salvando…" : "Salvar metas"}
                   </button>
                 )}
+                <button onClick={toggleAll} style={{
+                  padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
+                  background: C.surface3, color: C.text2, border: "none", cursor: "pointer",
+                }}>
+                  {allExpanded ? "Recolher todos" : "Expandir todos"}
+                </button>
               </div>
             </div>
+
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    {["Data", "Turno", "Dia", "Bruto", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
+                  <tr style={{ background: C.surface2 }}>
+                    <th style={{ width: 36, padding: "8px 0 8px 12px", borderBottom: `1px solid ${C.border}` }} />
+                    {["Data / Dia", "Bruto", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
                       <th key={h} style={{
-                        padding: "8px 12px", textAlign: h === "Data" || h === "Dia" ? "left" : "right",
+                        padding: "8px 12px", textAlign: h === "Data / Dia" ? "left" : "right",
                         fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase",
-                        color: "var(--text-3)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap",
+                        color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap",
                       }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {workdays.map((w) => {
-                    const dt = new Date(w.data + "T12:00:00");
-                    const diaSemanaLabel = DIAS_PT[dt.getDay()];
-                    const metaDoDia = resolveMetaForDate(w.data);
-                    const receitaDoDia = receitaByData.get(w.data) ?? w.receita_bruta_real;
-                    const ating = metaDoDia && metaDoDia > 0 ? (receitaDoDia / metaDoDia) * 100 : null;
-                    const pendingMeta = metaEdits.get(w.data);
-                    const inputVal = pendingMeta !== undefined
+                  {dayGroups.map((g) => {
+                    const meta       = resolveMetaForDate(g.date);
+                    const atingPct   = meta && meta > 0 ? Math.min((g.totalReceita / meta) * 100, 100) : null;
+                    const atingFull  = meta && meta > 0 ? (g.totalReceita / meta) * 100 : null;
+                    const isExpanded = expandedDates.has(g.date);
+                    const hasMultiple = g.rows.length > 1;
+
+                    const leftBorder = meta == null ? "transparent"
+                      : g.totalReceita >= meta ? C.receita
+                      : g.totalReceita >= meta * 0.7 ? C.meta : C.alerta;
+
+                    const rowBg = atingPct != null
+                      ? `linear-gradient(90deg, rgba(52,211,153,0.07) 0%, rgba(52,211,153,0.07) ${atingPct.toFixed(1)}%, transparent ${atingPct.toFixed(1)}%)`
+                      : undefined;
+
+                    const pendingMeta = metaEdits.get(g.date);
+                    const inputVal    = pendingMeta !== undefined
                       ? (pendingMeta == null ? "" : String(pendingMeta))
-                      : (metaDoDia != null ? String(metaDoDia) : "");
+                      : (meta != null ? String(meta) : "");
+
+                    const dt = new Date(g.date + "T12:00:00");
+
                     return (
-                      <tr key={w.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "10px 12px", color: "var(--text-2)", fontWeight: 500 }}>
-                          {w.data.split("-").reverse().join("/")}
-                        </td>
-                        <td style={{ padding: "10px 12px", color: "var(--text-3)", whiteSpace: "nowrap" }}>
-                          {w.turno ? (TURNO_LABEL[w.turno] ?? w.turno) : "—"}
-                        </td>
-                        <td style={{ padding: "10px 12px", color: "var(--text-3)" }}>{diaSemanaLabel}</td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {BRL.format(w.receita_bruta_real)}
-                        </td>
-                        <td style={{ padding: "6px 12px", textAlign: "right" }}>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            value={inputVal}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              const n = raw === "" ? null : parseFloat(raw);
-                              setMetaEdits((prev) => {
-                                const next = new Map(prev);
-                                next.set(w.data, (n == null || isNaN(n)) ? null : n);
-                                return next;
-                              });
-                            }}
-                            style={{
-                              width: 88, textAlign: "right", fontSize: 12,
-                              background: "transparent", border: "none",
-                              borderBottom: `1px dashed ${pendingMeta !== undefined ? "var(--brand)" : "rgba(245,240,232,0.15)"}`,
-                              color: pendingMeta !== undefined ? "var(--brand)" : (metaDoDia != null ? "var(--text-2)" : "var(--text-3)"),
-                              padding: "2px 0", outline: "none",
-                            }}
-                          />
-                        </td>
-                        <td style={{
-                          padding: "10px 12px", textAlign: "right", fontWeight: 600,
-                          color: ating == null ? "var(--text-3)" : ating >= 100 ? "#22C55E" : "#EF4444",
-                        }}>
-                          {ating != null ? `${ating.toFixed(0)}%` : "—"}
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {BRL.format(w.desconto ?? 0)}
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {BRL.format(w.gorjeta ?? 0)}
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {w.clientes ?? "—"}
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
-                          {w.ticket_medio != null ? BRL.format(w.ticket_medio) : "—"}
-                        </td>
-                        <td style={{
-                          padding: "10px 12px", textAlign: "right",
-                          color: w.cmv_pct != null && w.cmv_pct > 0.32 ? "#EF4444" : w.cmv_pct != null && w.cmv_pct > 0.28 ? "#F59E0B" : "var(--text-2)",
-                        }}>
-                          {w.cmv_pct != null ? pct(w.cmv_pct * 100) : "—"}
-                        </td>
-                      </tr>
+                      <Fragment key={g.date}>
+                        {/* Master row */}
+                        <tr style={{ borderBottom: `1px solid ${C.border}`, background: rowBg }}>
+                          <td style={{ padding: "10px 0 10px 12px", width: 36, verticalAlign: "middle" }}>
+                            {hasMultiple && (
+                              <button aria-expanded={isExpanded} onClick={() => toggleDate(g.date)} style={{
+                                background: "none", border: "none", cursor: "pointer",
+                                color: C.text3, fontSize: 16, padding: "2px 4px", lineHeight: 1,
+                                display: "inline-block",
+                                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                transition: "transform 200ms ease",
+                              }}>›</button>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 12px", borderLeft: `2px solid ${leftBorder}`, fontWeight: 600, color: C.text2, whiteSpace: "nowrap" }}>
+                            {g.date.split("-").reverse().join("/")} <span style={{ color: C.text3, fontWeight: 400, marginLeft: 4 }}>{DIAS_PT[dt.getDay()]}</span>
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2, fontWeight: 600 }}>{fmt(g.totalReceita)}</td>
+                          <td style={{ padding: "6px 12px", textAlign: "right" }}>
+                            <input type="number" min="0" step="100" value={inputVal}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const n   = raw === "" ? null : parseFloat(raw);
+                                setMetaEdits((prev) => { const next = new Map(prev); next.set(g.date, (n == null || isNaN(n)) ? null : n); return next; });
+                              }}
+                              style={{
+                                width: 88, textAlign: "right", fontSize: 12,
+                                background: "transparent", border: "none",
+                                borderBottom: `1px dashed ${pendingMeta !== undefined ? C.brand : "rgba(245,240,232,0.15)"}`,
+                                color: pendingMeta !== undefined ? C.brand : (meta != null ? C.text2 : C.text3),
+                                padding: "2px 0", outline: "none",
+                              }} />
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700,
+                            color: atingFull == null ? C.text3 : atingFull >= 100 ? C.receita : atingFull >= 70 ? C.meta : C.alerta }}>
+                            {atingFull != null ? `${atingFull.toFixed(0)}%` : "—"}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2 }}>{fmt(g.desconto)}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2 }}>{fmt(g.totalGorjeta)}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2 }}>{g.totalClientes || "—"}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2 }}>
+                            {g.ticketMedio != null ? fmt(g.ticketMedio) : "—"}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right",
+                            color: g.cmv_pct != null && g.cmv_pct > 0.32 ? C.alerta : g.cmv_pct != null && g.cmv_pct > 0.28 ? C.meta : C.text2 }}>
+                            {g.cmv_pct != null ? pct(g.cmv_pct * 100) : "—"}
+                          </td>
+                        </tr>
+
+                        {/* Expansion row */}
+                        {hasMultiple && (
+                          <tr key={`${g.date}-exp`}>
+                            <td colSpan={10} style={{ padding: 0, border: "none" }}>
+                              <div style={{
+                                maxHeight: isExpanded ? `${g.rows.length * 52}px` : "0",
+                                opacity: isExpanded ? 1 : 0,
+                                overflow: "hidden",
+                                transition: "max-height 250ms ease-out, opacity 200ms ease-out",
+                                background: C.surface2,
+                              }}>
+                                {g.rows.map((row) => {
+                                  const tc = row.turno === "almoco" ? C.almoco : row.turno === "jantar" ? C.jantar : C.text3;
+                                  const tl = row.turno === "almoco" ? "Almoço" : row.turno === "jantar" ? "Jantar" : (row.turno ?? "—");
+                                  const tBg = row.turno === "almoco" ? "rgba(245,158,11,0.14)" : row.turno === "jantar" ? "rgba(129,140,248,0.14)" : "rgba(138,130,120,0.14)";
+                                  return (
+                                    <div key={row.id} style={{
+                                      display: "flex", alignItems: "center", gap: 0,
+                                      padding: "9px 12px 9px 48px",
+                                      borderTop: `1px solid ${C.border}`, fontSize: 12,
+                                    }}>
+                                      <span style={{
+                                        display: "inline-flex", alignItems: "center", padding: "2px 8px",
+                                        borderRadius: 4, fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+                                        background: tBg, color: tc, marginRight: 16, flexShrink: 0, width: 60,
+                                      }}>{tl}</span>
+                                      <span style={{ color: C.text2, fontWeight: 600, width: 110, textAlign: "right", marginRight: 20 }}>
+                                        {fmt(row.receita_bruta_real)}
+                                      </span>
+                                      <span style={{ color: C.text3, marginRight: 16 }}>Gorjeta: {fmt(row.gorjeta ?? 0)}</span>
+                                      <span style={{ color: C.text3, marginRight: 16 }}>Clientes: {row.clientes ?? "—"}</span>
+                                      <span style={{ color: C.text3 }}>
+                                        Ticket: {row.clientes && row.clientes > 0 ? fmt(row.receita_bruta_real / row.clientes) : "—"}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
                 <tfoot>
-                  <tr style={{ background: "var(--surface-2)", fontWeight: 700 }}>
-                    <td colSpan={3} style={{ padding: "10px 12px", color: "var(--text)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>{BRL.format(totalBruto)}</td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>
-                      {metaReceita ? BRL.format(metaReceita) : "—"}
-                    </td>
-                    <td style={{
-                      padding: "10px 12px", textAlign: "right",
-                      color: atingMeta == null ? "var(--text-3)" : atingMeta >= 100 ? "#22C55E" : "#EF4444",
-                    }}>
+                  <tr style={{ background: C.surface2, fontWeight: 700, borderTop: `1px solid ${C.border}` }}>
+                    <td colSpan={2} style={{ padding: "10px 12px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{fmt(totalBruto)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text3 }}>{metaReceita ? fmt(metaReceita) : "—"}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: atingMeta == null ? C.text3 : atingMeta >= 100 ? C.receita : atingMeta >= 70 ? C.meta : C.alerta }}>
                       {atingMeta != null ? `${atingMeta.toFixed(0)}%` : "—"}
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>{BRL.format(totalDesconto)}</td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>{BRL.format(totalGorjeta)}</td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>{totalClientes}</td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text)" }}>
-                      {ticketMedio != null ? BRL.format(ticketMedio) : "—"}
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>—</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{fmt(totalDesconto)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{fmt(totalGorjeta)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{totalClientes}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{ticketMedio != null ? fmt(ticketMedio) : "—"}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: C.text3 }}>—</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           </div>
 
-          {/* ── Gráfico receita vs meta ─────────────────────────────────────── */}
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", margin: "0 0 16px" }}>
-              Receita diária vs meta
-            </p>
-            <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={chartData} barSize={22} margin={{ top: 4, right: 8, bottom: 0, left: 40 }}>
-                <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "var(--text-3)" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: "var(--text-3)" }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  formatter={(val) => [BRL.format(Number(val ?? 0)), ""]}
-                  contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                />
-                <Bar dataKey="bruto" radius={[4, 4, 0, 0]}>
+          {/* Gráfico */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
+            <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Receita diária vs meta</p>
+            <ResponsiveContainer width="100%" height={240}>
+              <ComposedChart data={chartData} barSize={20} margin={{ top: 4, right: 8, bottom: 0, left: 40 }}>
+                <defs>
+                  <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.receita} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.receita} stopOpacity={0.15} />
+                  </linearGradient>
+                  <linearGradient id="gM" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.meta} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.meta} stopOpacity={0.15} />
+                  </linearGradient>
+                  <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.alerta} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.alerta} stopOpacity={0.15} />
+                  </linearGradient>
+                  <linearGradient id="gN" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.neutro} stopOpacity={0.8} />
+                    <stop offset="100%" stopColor={C.neutro} stopOpacity={0.1} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="dia" tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="bruto" radius={[6, 6, 0, 0]} animationDuration={800} animationEasing="ease-out">
                   {chartData.map((d, i) => (
-                    <Cell key={i} fill={d.meta != null && d.bruto >= d.meta ? "#22C55E" : "#EF4444"} fillOpacity={0.85} />
+                    <Cell key={i} fill={
+                      d.meta == null ? "url(#gN)"
+                        : d.bruto >= d.meta ? "url(#gR)"
+                        : d.bruto >= d.meta * 0.7 ? "url(#gM)"
+                        : "url(#gA)"
+                    } />
                   ))}
                 </Bar>
-                <Line dataKey="meta" type="monotone" stroke="#F59E0B" strokeDasharray="4 3" strokeWidth={1.5} dot={false} connectNulls={false} />
+                <Line dataKey="meta" type="monotone" stroke={C.meta} strokeDasharray="4 3" strokeWidth={1.5}
+                  dot={(props: any) => {
+                    const item = chartData[props.index];
+                    if (!item || !metaOverrideByData.has(item.data)) return <g />;
+                    return <circle cx={props.cx} cy={props.cy} r={4} fill={C.meta} stroke="#1A1A18" strokeWidth={1.5} />;
+                  }}
+                  connectNulls={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
 
-          {/* ── Pagamentos + Descontos ─────────────────────────────────────── */}
+          {/* Pagamentos + Descontos */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <ListCard title="Por forma de pagamento" rows={pagAgg} total={pagAgg.reduce((s, r) => s + r.total, 0)} />
-            <ListCard title="Desconto por motivo" rows={descAgg} total={descAgg.reduce((s, r) => s + r.total, 0)} />
+            <DonutCard title="Por forma de pagamento" rows={pagAgg} />
+            <AnimHBarCard title="Desconto por motivo"  rows={descAgg} />
           </div>
 
-          {/* ── Ambientes + Turnos ─────────────────────────────────────────── */}
+          {/* Ambientes + Turnos */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <SplitCard title="Por ambiente" rows={ambAgg} />
-            <SplitCard title="Por turno" rows={turAgg} />
+            <AnimHBarCard title="Por ambiente" rows={ambAgg} />
+            <AnimHBarCard title="Por turno"    rows={turAgg} />
           </div>
 
-          {/* ── Top grupos ─────────────────────────────────────────────────── */}
+          {/* Grupos */}
           {gruposAgg.length > 0 && (
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", margin: "0 0 16px" }}>
-                Top grupos de produto
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {gruposAgg.map((g) => (
-                  <div key={g.grupo} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 12, color: "var(--text-2)", width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {g.grupo}
-                    </span>
-                    <div style={{ flex: 1, height: 8, background: "var(--surface-3)", borderRadius: 4, overflow: "hidden" }}>
-                      <div style={{ width: `${Math.min(g.pct, 100)}%`, height: "100%", background: "var(--brand)", borderRadius: 4, transition: "width 0.4s ease" }} />
-                    </div>
-                    <span style={{ fontSize: 12, color: "var(--text-3)", width: 44, textAlign: "right", flexShrink: 0 }}>
-                      {pct(g.pct, 0)}
-                    </span>
-                    <span style={{ fontSize: 12, color: "var(--text-2)", width: 90, textAlign: "right", flexShrink: 0 }}>
-                      {BRL.format(g.bruto)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
+              <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Top grupos de produto</p>
+              <AnimHBarRows rows={gruposAgg.map((g) => ({ key: g.grupo, total: g.bruto }))} total={totalBruto} />
             </div>
           )}
         </>
@@ -682,147 +631,202 @@ export default function ReceitaPage() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, alert, ok }: { label: string; value: string; sub?: string; alert?: boolean; ok?: boolean }) {
-  const color = alert ? "#EF4444" : ok ? "#22C55E" : "var(--text)";
+function KpiCardAnimated({ label, rawValue, format, sparkData, sub, alert, ok }: {
+  label: string; rawValue: number; format: (n: number) => string;
+  sparkData: { v: number }[]; sub?: string; alert?: boolean; ok?: boolean;
+}) {
+  const animVal    = useCountUp(rawValue);
+  const color      = alert ? C.alerta : ok ? C.receita : C.text;
+  const sparkColor = alert ? C.alerta : ok ? C.receita : C.text3;
+
+  return (
+    <div
+      style={{
+        background: C.surface,
+        border: `1px solid ${alert ? "rgba(248,113,113,0.3)" : ok ? "rgba(52,211,153,0.3)" : C.border}`,
+        borderRadius: 10, padding: "16px 18px",
+        transition: "transform 200ms ease, box-shadow 200ms ease", cursor: "default",
+      }}
+      onMouseEnter={(e) => { const el = e.currentTarget; el.style.transform = "translateY(-2px)"; el.style.boxShadow = "0 8px 24px rgba(0,0,0,0.35)"; }}
+      onMouseLeave={(e) => { const el = e.currentTarget; el.style.transform = ""; el.style.boxShadow = ""; }}
+    >
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: C.text3, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color, letterSpacing: -0.4 }}>{format(animVal)}</div>
+      {sub && <div style={{ fontSize: 11, color: C.text3, marginTop: 3 }}>{sub}</div>}
+      {sparkData.length > 1 && (
+        <div style={{ height: 40, marginTop: 8 }}>
+          <SparklineChart data={sparkData} color={sparkColor} id={label} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SparklineChart({ data, color, id }: { data: { v: number }[]; color: string; id: string }) {
+  const gradId = `sp-${id.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  return (
+    <ResponsiveContainer width="100%" height={40}>
+      <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor={color} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={color} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.5} fill={`url(#${gradId})`} dot={false} isAnimationActive={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ChartTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const bruto = payload.find((p: any) => p.dataKey === "bruto")?.value as number ?? 0;
+  const meta  = payload.find((p: any) => p.dataKey === "meta")?.value as number | null ?? null;
+  const ating = meta && meta > 0 ? (bruto / meta) * 100 : null;
   return (
     <div style={{
-      background: "var(--surface)",
-      border: `1px solid ${alert ? "rgba(239,68,68,0.3)" : ok ? "rgba(34,197,94,0.3)" : "var(--border)"}`,
-      borderRadius: 8, padding: "16px 18px",
+      background: "rgba(13,13,12,0.88)", backdropFilter: "blur(12px)",
+      border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "12px 16px", fontSize: 12, minWidth: 155,
     }}>
-      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "var(--text-3)", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, color, letterSpacing: -0.4 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>{sub}</div>}
+      <TRow label="Receita" value={fmt(bruto)} color={C.receita} />
+      {meta != null && <TRow label="Meta" value={fmt(meta)} color={C.meta} />}
+      {ating != null && (
+        <TRow label="Ating." value={`${ating.toFixed(0)}%`}
+          color={ating >= 100 ? C.receita : ating >= 70 ? C.meta : C.alerta} />
+      )}
+    </div>
+  );
+}
+function TRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginTop: 4 }}>
+      <span style={{ color: C.text3 }}>{label}</span>
+      <span style={{ color, fontWeight: 600 }}>{value}</span>
     </div>
   );
 }
 
-function ListCard({ title, rows, total }: { title: string; rows: { key: string; total: number }[]; total: number }) {
-  const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const PIE_COLORS = [C.receita, C.meta, C.jantar, C.almoco, C.alerta, C.neutro];
+
+function DonutCard({ title, rows }: { title: string; rows: { key: string; total: number }[] }) {
+  const total = rows.reduce((s, r) => s + r.total, 0);
+  const data  = rows.slice(0, 6);
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 20px" }}>
-      <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", margin: "0 0 12px" }}>{title}</p>
-      {rows.length === 0
-        ? <p style={{ fontSize: 12, color: "var(--text-3)" }}>Sem dados</p>
-        : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {rows.map((r) => (
-              <div key={r.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "var(--text-2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</span>
-                <span style={{ fontSize: 11, color: "var(--text-3)", flexShrink: 0 }}>
-                  {total > 0 ? `${((r.total / total) * 100).toFixed(1)}%` : "—"}
-                </span>
-                <span style={{ fontSize: 12, color: "var(--text)", fontWeight: 600, flexShrink: 0, width: 90, textAlign: "right" }}>
-                  {BRL.format(r.total)}
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px" }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{title}</p>
+      {!data.length ? <p style={{ fontSize: 12, color: C.text3 }}>Sem dados</p> : (
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ position: "relative", flexShrink: 0, width: 140, height: 140 }}>
+            <PieChart width={140} height={140}>
+              <Pie data={data} dataKey="total" cx="50%" cy="50%" innerRadius={46} outerRadius={64} paddingAngle={2} strokeWidth={0}>
+                {data.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+              </Pie>
+            </PieChart>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                {total > 0 ? `${((data[0]?.total ?? 0) / total * 100).toFixed(0)}%` : "—"}
+              </span>
+              <span style={{ fontSize: 9, color: C.text3, textAlign: "center", maxWidth: 52, lineHeight: 1.2 }}>
+                {data[0]?.key ?? ""}
+              </span>
+            </div>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 7 }}>
+            {data.map((r, i) => (
+              <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: C.text2, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</span>
+                <span style={{ fontSize: 11, color: C.text, fontWeight: 600, flexShrink: 0 }}>
+                  {total > 0 ? `${(r.total / total * 100).toFixed(1)}%` : "—"}
                 </span>
               </div>
             ))}
           </div>
-      }
+        </div>
+      )}
     </div>
   );
 }
 
-function SplitCard({ title, rows }: { title: string; rows: { key: string; total: number }[] }) {
-  const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+function AnimHBarCard({ title, rows }: { title: string; rows: { key: string; total: number }[] }) {
   const total = rows.reduce((s, r) => s + r.total, 0);
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 20px" }}>
-      <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", margin: "0 0 12px" }}>{title}</p>
-      {rows.length === 0
-        ? <p style={{ fontSize: 12, color: "var(--text-3)" }}>Sem dados</p>
-        : <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(rows.length, 2)}, 1fr)`, gap: 10 }}>
-            {rows.map((r) => (
-              <div key={r.key} style={{ background: "var(--surface-2)", borderRadius: 8, padding: "12px 14px" }}>
-                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.8, color: "var(--text-3)", marginBottom: 4 }}>{r.key}</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{BRL.format(r.total)}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
-                  {total > 0 ? `${((r.total / total) * 100).toFixed(1)}%` : "—"}
-                </div>
-              </div>
-            ))}
-          </div>
-      }
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px" }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{title}</p>
+      {!rows.length ? <p style={{ fontSize: 12, color: C.text3 }}>Sem dados</p>
+        : <AnimHBarRows rows={rows} total={total} />}
     </div>
   );
 }
 
-function FileSlot({
-  label, accept, inputRef, file, onChange,
-}: {
-  label: string; accept: string;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  file: File | null;
-  onChange: (f: File | null) => void;
+function AnimHBarRows({ rows, total }: { rows: { key: string; total: number }[]; total: number }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setVisible(true), 60); return () => clearTimeout(t); }, []);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {rows.map((r, i) => (
+        <div key={r.key}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 12, color: C.text2, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{r.key}</span>
+            <span style={{ fontSize: 11, color: C.text, fontWeight: 600, marginLeft: 8, flexShrink: 0 }}>{fmt(r.total)}</span>
+          </div>
+          <div style={{ height: 5, background: C.surface3, borderRadius: 3, overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              width: visible ? `${total > 0 ? (r.total / total * 100).toFixed(1) : 0}%` : "0%",
+              background: `linear-gradient(90deg, ${C.brand}, rgba(196,98,45,0.5))`,
+              borderRadius: 3,
+              transition: `width 600ms ${i * 60}ms ease-out`,
+            }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FileSlot({ label, accept, inputRef, file, onChange }: {
+  label: string; accept: string; inputRef: React.RefObject<HTMLInputElement | null>;
+  file: File | null; onChange: (f: File | null) => void;
 }) {
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
-        {label}
-      </div>
-      <div
-        onClick={() => inputRef.current?.click()}
-        style={{
-          border: `1px dashed ${file ? "var(--brand)" : "var(--border)"}`,
-          borderRadius: 8, padding: "14px 12px", cursor: "pointer",
-          background: file ? "var(--brand-soft)" : "var(--surface-2)",
-          textAlign: "center", fontSize: 12, color: file ? "var(--brand)" : "var(--text-3)",
-          transition: "all var(--t)",
-        }}
-      >
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>{label}</div>
+      <div onClick={() => inputRef.current?.click()} style={{
+        border: `1px dashed ${file ? C.brand : C.border}`, borderRadius: 8, padding: "14px 12px",
+        cursor: "pointer", background: file ? "rgba(196,98,45,0.08)" : C.surface2,
+        textAlign: "center", fontSize: 12, color: file ? C.brand : C.text3,
+      }}>
         {file ? `✓ ${file.name}` : "Clique para selecionar PDF"}
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={accept}
-        style={{ display: "none" }}
-        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-      />
+      <input ref={inputRef} type="file" accept={accept} style={{ display: "none" }}
+        onChange={(e) => onChange(e.target.files?.[0] ?? null)} />
     </div>
   );
 }
 
-function MultiFileSlot({
-  label, accept, inputRef, files, onChange,
-}: {
-  label: string; accept: string;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  files: File[];
-  onChange: (fs: File[]) => void;
+function MultiFileSlot({ label, accept, inputRef, files, onChange }: {
+  label: string; accept: string; inputRef: React.RefObject<HTMLInputElement | null>;
+  files: File[]; onChange: (fs: File[]) => void;
 }) {
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
-        {label}
-      </div>
-      <div
-        onClick={() => inputRef.current?.click()}
-        style={{
-          border: `1px dashed ${files.length ? "var(--brand)" : "var(--border)"}`,
-          borderRadius: 8, padding: "14px 12px", cursor: "pointer",
-          background: files.length ? "var(--brand-soft)" : "var(--surface-2)",
-          textAlign: "center", fontSize: 12, color: files.length ? "var(--brand)" : "var(--text-3)",
-          transition: "all var(--t)",
-        }}
-      >
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>{label}</div>
+      <div onClick={() => inputRef.current?.click()} style={{
+        border: `1px dashed ${files.length ? C.brand : C.border}`, borderRadius: 8, padding: "14px 12px",
+        cursor: "pointer", background: files.length ? "rgba(196,98,45,0.08)" : C.surface2,
+        textAlign: "center", fontSize: 12, color: files.length ? C.brand : C.text3,
+      }}>
         {files.length ? `✓ ${files.length} arquivo(s)` : "Clique para selecionar PDFs"}
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={accept}
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => onChange(Array.from(e.target.files ?? []))}
-      />
+      <input ref={inputRef} type="file" accept={accept} multiple style={{ display: "none" }}
+        onChange={(e) => onChange(Array.from(e.target.files ?? []))} />
     </div>
   );
 }
-
-// ── Shared style ──────────────────────────────────────────────────────────────
 
 const selectStyle: React.CSSProperties = {
   padding: "7px 10px", borderRadius: 8, fontSize: 13, fontWeight: 500,
-  background: "var(--surface-2)", border: "1px solid var(--border)",
-  color: "var(--text)", cursor: "pointer",
+  background: C.surface2, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer",
 };
