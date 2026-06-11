@@ -51,10 +51,10 @@ export async function GET(request: Request) {
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null, metasDiaSemana: [] }, { headers: CORS });
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
   }
 
-  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes] = await Promise.all([
+  const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes] = await Promise.all([
     db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("motivo, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("ambiente, produto, clientes").in("workday_id_fk", ids),
@@ -64,6 +64,7 @@ export async function GET(request: Request) {
       ? db.from("metas_projecoes").select("meta_faturamento").eq("mes_ano", mes_ano).maybeSingle()
       : Promise.resolve({ data: null }),
     db.from("metas_dia_semana").select("dia_semana, meta").eq("unit_id", unit_id),
+    db.from("metas_dia_override").select("data, meta").eq("unit_id", unit_id).gte("data", start).lte("data", end),
   ]);
 
   // Soma valor_recebido por workday para calcular receita_bruta_real
@@ -128,11 +129,12 @@ export async function GET(request: Request) {
   return Response.json({
     workdays:        workdaysFinal,
     pagamentos:      pagamentosClean,
-    descontos:       descRes.data     ?? [],
-    ambientes:       ambRes.data      ?? [],
-    turnos:          turRes.data      ?? [],
-    grupos:          grpRes.data      ?? [],
+    descontos:       descRes.data      ?? [],
+    ambientes:       ambRes.data       ?? [],
+    turnos:          turRes.data       ?? [],
+    grupos:          grpRes.data       ?? [],
     meta:            (metaRes as any).data?.meta_faturamento ?? null,
-    metasDiaSemana:  metasDsRes.data  ?? [],
+    metasDiaSemana:  metasDsRes.data   ?? [],
+    metasOverride:   overrideRes.data  ?? [],
   }, { headers: CORS });
 }

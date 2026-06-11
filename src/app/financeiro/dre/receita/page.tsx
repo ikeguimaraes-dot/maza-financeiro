@@ -42,6 +42,7 @@ type Ambiente = { ambiente: string; produto: number | null; clientes: number | n
 type Turno = { turno: string; produto: number | null; clientes: number | null };
 type Grupo = { grupo: string; bruto: number | null; pct_bruto: number | null };
 type MetaDiaSemana = { dia_semana: number; meta: number };
+type MetaOverride  = { data: string; meta: number };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -87,6 +88,10 @@ export default function ReceitaPage() {
   const [grupos, setGrupos] = useState<Grupo[]>([]);
   const [metaReceita, setMetaReceita] = useState<number | null>(null);
   const [metasDiaSemana, setMetasDiaSemana] = useState<MetaDiaSemana[]>([]);
+  const [metasOverride, setMetasOverride] = useState<MetaOverride[]>([]);
+  const [metaEdits, setMetaEdits] = useState<Map<string, number | null>>(new Map());
+  const [savingMetas, setSavingMetas] = useState(false);
+  const [metaSaveMsg, setMetaSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Import
   const movRef = useRef<HTMLInputElement>(null);
@@ -130,6 +135,9 @@ export default function ReceitaPage() {
       setGrupos(json.grupos             ?? []);
       setMetaReceita(json.meta          ?? null);
       setMetasDiaSemana(json.metasDiaSemana ?? []);
+      setMetasOverride(json.metasOverride   ?? []);
+      setMetaEdits(new Map());
+      setMetaSaveMsg(null);
       setDbError(null);
     } catch (e) {
       setDbError(String(e));
@@ -197,6 +205,34 @@ export default function ReceitaPage() {
     }
   }
 
+  // ── Save meta overrides ────────────────────────────────────────────────────
+
+  async function handleSaveMetas() {
+    if (!unit) return;
+    setSavingMetas(true);
+    setMetaSaveMsg(null);
+    try {
+      const overrides = Array.from(metaEdits.entries()).map(([data, meta]) => ({ data, meta }));
+      const res = await fetch(`${API_BASE}/api/lorean/metas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unit_id: unit.id, overrides }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setMetaSaveMsg({ ok: false, text: json.error ?? `HTTP ${res.status}` });
+      } else {
+        setMetaSaveMsg({ ok: true, text: "Metas salvas!" });
+        setMetaEdits(new Map());
+        await loadData();
+      }
+    } catch (e) {
+      setMetaSaveMsg({ ok: false, text: String(e) });
+    } finally {
+      setSavingMetas(false);
+    }
+  }
+
   // ── Aggregations ───────────────────────────────────────────────────────────
 
   const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real,      0);
@@ -207,10 +243,22 @@ export default function ReceitaPage() {
   const ticketMedio   = totalClientes > 0 ? totalBruto / totalClientes : null;
   const atingMeta     = metaReceita && metaReceita > 0 ? (totalBruto / metaReceita) * 100 : null;
 
-  // Lookup: dia_semana (0–6) → meta
+  // Lookup: dia_semana (0–6) → meta padrão
   const metaByDiaSemana = new Map<number, number>(
     metasDiaSemana.map((m) => [m.dia_semana, m.meta]),
   );
+
+  // Override por data específica (salvo no DB)
+  const metaOverrideByData = new Map<string, number>(
+    metasOverride.map((o) => [o.data, o.meta]),
+  );
+
+  // override > padrão semanal > null
+  const resolveMetaForDate = (data: string): number | null => {
+    if (metaOverrideByData.has(data)) return metaOverrideByData.get(data)!;
+    const diaSemana = new Date(data + "T12:00:00").getDay();
+    return metaByDiaSemana.get(diaSemana) ?? null;
+  };
 
   // Receita consolidada por data (soma todos os turnos do dia)
   const receitaByData = new Map<string, number>();
@@ -234,14 +282,10 @@ export default function ReceitaPage() {
       .slice(0, 10);
   })();
 
-  // Chart data — one bar per date (dedup turnos), meta variável por dia da semana
+  // Chart data — one bar per date (dedup turnos), meta resolvida por data
   const chartData = Array.from(receitaByData.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([data, bruto]) => {
-      const diaSemana = new Date(data + "T12:00:00").getDay();
-      const meta = metaByDiaSemana.size > 0 ? (metaByDiaSemana.get(diaSemana) ?? null) : null;
-      return { dia: data.slice(8), bruto, meta };
-    });
+    .map(([data, bruto]) => ({ dia: data.slice(8), bruto, meta: resolveMetaForDate(data) }));
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -431,8 +475,29 @@ export default function ReceitaPage() {
 
           {/* ── Tabela dia a dia ────────────────────────────────────────────── */}
           <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
-            <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Dia a dia</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {metaSaveMsg && (
+                  <span style={{ fontSize: 12, color: metaSaveMsg.ok ? "#22C55E" : "#EF4444" }}>
+                    {metaSaveMsg.ok ? "✓ " : "✗ "}{metaSaveMsg.text}
+                  </span>
+                )}
+                {metaEdits.size > 0 && (
+                  <button
+                    onClick={handleSaveMetas}
+                    disabled={savingMetas}
+                    style={{
+                      padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600,
+                      background: savingMetas ? "var(--surface-3)" : "var(--brand)",
+                      color: savingMetas ? "var(--text-3)" : "#fff",
+                      border: "none", cursor: savingMetas ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {savingMetas ? "Salvando…" : "Salvar metas"}
+                  </button>
+                )}
+              </div>
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -450,11 +515,14 @@ export default function ReceitaPage() {
                 <tbody>
                   {workdays.map((w) => {
                     const dt = new Date(w.data + "T12:00:00");
-                    const diaSemanaIdx = dt.getDay();
-                    const diaSemanaLabel = DIAS_PT[diaSemanaIdx];
-                    const metaDoDia = metaByDiaSemana.size > 0 ? (metaByDiaSemana.get(diaSemanaIdx) ?? null) : null;
+                    const diaSemanaLabel = DIAS_PT[dt.getDay()];
+                    const metaDoDia = resolveMetaForDate(w.data);
                     const receitaDoDia = receitaByData.get(w.data) ?? w.receita_bruta_real;
                     const ating = metaDoDia && metaDoDia > 0 ? (receitaDoDia / metaDoDia) * 100 : null;
+                    const pendingMeta = metaEdits.get(w.data);
+                    const inputVal = pendingMeta !== undefined
+                      ? (pendingMeta == null ? "" : String(pendingMeta))
+                      : (metaDoDia != null ? String(metaDoDia) : "");
                     return (
                       <tr key={w.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "10px 12px", color: "var(--text-2)", fontWeight: 500 }}>
@@ -467,8 +535,29 @@ export default function ReceitaPage() {
                         <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-2)" }}>
                           {BRL.format(w.receita_bruta_real)}
                         </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-3)" }}>
-                          {metaDoDia != null ? BRL.format(metaDoDia) : "—"}
+                        <td style={{ padding: "6px 12px", textAlign: "right" }}>
+                          <input
+                            type="number"
+                            min="0"
+                            step="100"
+                            value={inputVal}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const n = raw === "" ? null : parseFloat(raw);
+                              setMetaEdits((prev) => {
+                                const next = new Map(prev);
+                                next.set(w.data, (n == null || isNaN(n)) ? null : n);
+                                return next;
+                              });
+                            }}
+                            style={{
+                              width: 88, textAlign: "right", fontSize: 12,
+                              background: "transparent", border: "none",
+                              borderBottom: `1px dashed ${pendingMeta !== undefined ? "var(--brand)" : "rgba(245,240,232,0.15)"}`,
+                              color: pendingMeta !== undefined ? "var(--brand)" : (metaDoDia != null ? "var(--text-2)" : "var(--text-3)"),
+                              padding: "2px 0", outline: "none",
+                            }}
+                          />
                         </td>
                         <td style={{
                           padding: "10px 12px", textAlign: "right", fontWeight: 600,
