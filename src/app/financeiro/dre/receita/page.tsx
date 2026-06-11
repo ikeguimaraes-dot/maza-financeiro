@@ -201,9 +201,8 @@ export default function ReceitaPage() {
     if (!unit) return;
     setImporting(true); setImportMsg(null);
     const steps: { tipo: string; arquivo: File; label: string }[] = [];
-    if (movFile)   steps.push({ tipo: "movimento",     arquivo: movFile,   label: "Movimento" });
-    if (vendaFile) steps.push({ tipo: "venda",          arquivo: vendaFile, label: "Venda (grupos e equipe)" });
-    if (vendaFile) steps.push({ tipo: "venda_produtos", arquivo: vendaFile, label: "Venda (produtos)" });
+    if (movFile)   steps.push({ tipo: "movimento", arquivo: movFile,   label: "Movimento" });
+    if (vendaFile) steps.push({ tipo: "venda",     arquivo: vendaFile, label: "Venda" });
     caixaFiles.forEach((f, i) =>
       steps.push({ tipo: "caixa", arquivo: f, label: `Caixa${caixaFiles.length > 1 ? ` ${i + 1}` : ""}` }));
     const allErrors: string[] = []; let workdayId: string | null = null;

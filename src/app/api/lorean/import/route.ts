@@ -59,6 +59,12 @@ Formato esperado:
   ],
   "cancelamentos_detalhe": [
     { "item": string, "usuario": string, "motivo": string, "qtd": number, "valor": number }
+  ],
+  "horarios": [
+    { "hora": number, "clientes": number, "gorjeta": number, "produto": number, "consumo": number }
+  ],
+  "usuarios": [
+    { "usuario": string, "qtd": number, "gorjeta": number, "produto": number, "consumo": number }
   ]
 }
 
@@ -71,7 +77,9 @@ Regras:
 - Campos não encontrados no PDF: usar null
 - Arrays vazios se a seção não existir: []
 - descontos_detalhe: extrair da seção detalhada de Desconto que lista cada produto descontado com Usuário, Motivo, Qtde e Consumo (ignorar as linhas de cabeçalho de comanda como '115 - LOREAN DESK'). valor = coluna Consumo.
-- cancelamentos_detalhe: extrair da seção detalhada de Cancelado que lista cada produto cancelado com Usuário, Motivo, Qtde e Consumo (ignorar linhas de cabeçalho de comanda como '103 - LOREAN DESK'). valor = coluna Consumo.`;
+- cancelamentos_detalhe: extrair da seção detalhada de Cancelado que lista cada produto cancelado com Usuário, Motivo, Qtde e Consumo (ignorar linhas de cabeçalho de comanda como '103 - LOREAN DESK'). valor = coluna Consumo.
+- horarios: da seção 'Horário' (hora como inteiro: '20h' → 20). Arrays vazios se a seção não existir: []
+- usuarios: da seção 'Usuário'. Arrays vazios se a seção não existir: []`;
 
 const CAIXA_PROMPT = `Extraia os dados deste relatório de fechamento de caixa Lorean e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
@@ -95,25 +103,7 @@ Regras:
 - Campos não encontrados: usar null
 - pagamentos: array vazio [] se não houver`;
 
-const VENDA_PROMPT_1 = `Extraia os dados deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
-
-Extraia SOMENTE estes 2 arrays: grupos de produto e cancelamentos.
-
-Formato esperado:
-{
-  "grupos": [
-    { "grupo": string, "pct_bruto": number, "bruto": number, "desconto": number, "gorjeta": number, "consumo": number }
-  ],
-  "cancelamentos": [
-    { "motivo": string, "qtd": number, "consumo": number }
-  ]
-}
-
-Regras:
-- pct_bruto: valor decimal (ex: 0.17 para 17%)
-- Arrays vazios se a seção não existir no PDF: []`;
-
-const VENDA_PROMPT_3 = `Extraia TODOS os produtos vendidos de TODAS as seções de grupo deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
+const VENDA_PROMPT = `Extraia TODOS os produtos vendidos de TODAS as seções de grupo deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
 Cada seção tem um título de grupo (ex: Soft Drinks, Vinho Tinto, Da Brasa) e linhas de produtos com colunas Qtde, Garrafa, CMV, Bruto, Desconto, Gorjeta, Total.
 
@@ -128,24 +118,6 @@ Regras:
 - cmv_pct: valor decimal (ex: 0.27 para 27%)
 - Ignorar linhas de subtotal das seções
 - Array vazio [] se não houver produtos`;
-
-const VENDA_PROMPT_2 = `Extraia os dados deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
-
-Extraia SOMENTE estes 2 arrays: vendas por horário e vendas por garçom/usuário.
-
-Formato esperado:
-{
-  "horarios": [
-    { "hora": number, "clientes": number, "gorjeta": number, "produto": number, "consumo": number }
-  ],
-  "usuarios": [
-    { "usuario": string, "qtd": number, "gorjeta": number, "produto": number, "consumo": number }
-  ]
-}
-
-Regras:
-- horarios.hora: número inteiro da hora (12, 13, 14 ... 23)
-- Arrays vazios se a seção não existir no PDF: []`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -302,16 +274,20 @@ async function insertWorkday(
     supabase.from("lorean_descontos").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_horarios").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wd.id),
   ]);
 
   const inserts: PromiseLike<any>[] = [];
-  if (parsed.pagamentos?.length)         inserts.push(supabase.from("lorean_pagamentos").insert(parsed.pagamentos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.ambientes?.length)          inserts.push(supabase.from("lorean_ambientes").insert(parsed.ambientes.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.turnos?.length)             inserts.push(supabase.from("lorean_turnos").insert(parsed.turnos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.grupos?.length)             inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.descontos?.length)          inserts.push(supabase.from("lorean_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.pagamentos?.length)             inserts.push(supabase.from("lorean_pagamentos").insert(parsed.pagamentos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.ambientes?.length)              inserts.push(supabase.from("lorean_ambientes").insert(parsed.ambientes.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.turnos?.length)                 inserts.push(supabase.from("lorean_turnos").insert(parsed.turnos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.grupos?.length)                 inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.descontos?.length)              inserts.push(supabase.from("lorean_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   if (parsed.descontos_detalhe?.length)      inserts.push(supabase.from("lorean_descontos_detalhe").insert(parsed.descontos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   if (parsed.cancelamentos_detalhe?.length)  inserts.push(supabase.from("lorean_cancelamentos_detalhe").insert(parsed.cancelamentos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.horarios?.length)               inserts.push(supabase.from("lorean_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
+  if (parsed.usuarios?.length)               inserts.push(supabase.from("lorean_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
   await Promise.all(inserts as Promise<any>[]);
 
   return wd.id;
@@ -326,7 +302,6 @@ async function insertVenda(
 ): Promise<void> {
   let wdId = workdayUuid;
 
-  // Fall back to filename-based lookup if UUID not provided
   if (!wdId) {
     const wdMatch = filename.match(/\((\d+)/);
     const loreanWorkdayId = wdMatch ? parseInt(wdMatch[1]!, 10) : null;
@@ -341,19 +316,13 @@ async function insertVenda(
     wdId = wd.id;
   }
 
-  await Promise.all([
-    supabase.from("lorean_grupos").delete().eq("workday_id_fk", wdId),
-    supabase.from("lorean_cancelamentos").delete().eq("workday_id_fk", wdId),
-    supabase.from("lorean_horarios").delete().eq("workday_id_fk", wdId),
-    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wdId),
-  ]);
-
-  const inserts: PromiseLike<any>[] = [];
-  if (parsed.grupos?.length)        inserts.push(supabase.from("lorean_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
-  if (parsed.cancelamentos?.length) inserts.push(supabase.from("lorean_cancelamentos").insert(parsed.cancelamentos.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
-  if (parsed.horarios?.length)      inserts.push(supabase.from("lorean_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
-  if (parsed.usuarios?.length)      inserts.push(supabase.from("lorean_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wdId }))).then());
-  await Promise.all(inserts as Promise<any>[]);
+  await supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wdId);
+  if (parsed.produtos?.length) {
+    const { error } = await supabase.from("lorean_produtos_dia").insert(
+      (parsed.produtos as any[]).map((r) => ({ ...r, workday_id_fk: wdId })),
+    );
+    if (error) throw new Error(`lorean_produtos_dia insert: ${error.message}`);
+  }
 }
 
 async function insertCaixa(
@@ -435,39 +404,10 @@ export async function POST(request: Request) {
       console.log("[lorean/import] Movimento done, workday_id:", workday_id);
     }
 
-    else if (tipo === "venda") {
-      const [part1, part2] = await Promise.all([
-        parsePdf(b64, VENDA_PROMPT_1, "venda-part1"),
-        parsePdf(b64, VENDA_PROMPT_2, "venda-part2"),
-      ]);
-      await insertVenda(supabase, { ...part1, ...part2 }, unitId, workdayUuid, arquivo.name);
-      console.log("[lorean/import] Venda (grupos/equipe) done");
-    }
-
-    else if (tipo === "venda_produtos") {
-      const parsed = await parsePdf(b64, VENDA_PROMPT_3, "venda-produtos");
-
-      let wdId: string | null = workdayUuid;
-      if (!wdId) {
-        const wdMatch = arquivo.name.match(/\((\d+)/);
-        const loreanWorkdayId = wdMatch ? parseInt(wdMatch[1]!, 10) : null;
-        if (!loreanWorkdayId) throw new Error(`Cannot extract workday_id from filename: "${arquivo.name}"`);
-        const { data: wd } = await supabase
-          .from("lorean_workdays").select("id")
-          .eq("unit_id", unitId).eq("workday_id", loreanWorkdayId).maybeSingle();
-        if (!wd) throw new Error(`Workday não encontrado para workday_id=${loreanWorkdayId}`);
-        wdId = wd.id;
-      }
-      if (!wdId) throw new Error("workday_id não resolvido para venda_produtos");
-
-      await supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wdId);
-      if (parsed.produtos?.length) {
-        const { error } = await supabase.from("lorean_produtos_dia").insert(
-          (parsed.produtos as any[]).map((r) => ({ ...r, workday_id_fk: wdId })),
-        );
-        if (error) throw new Error(`lorean_produtos_dia insert: ${error.message}`);
-      }
-      console.log(`[lorean/import] Venda produtos done: ${(parsed.produtos as any[])?.length ?? 0} produtos`);
+    else if (tipo === "venda" || tipo === "venda_produtos") {
+      const parsed = await parsePdf(b64, VENDA_PROMPT, "venda");
+      await insertVenda(supabase, parsed, unitId, workdayUuid, arquivo.name);
+      console.log(`[lorean/import] Venda produtos done: ${parsed.produtos?.length ?? 0} produtos`);
     }
 
     else if (tipo === "caixa") {
