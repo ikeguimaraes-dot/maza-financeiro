@@ -64,7 +64,6 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
     .order("fornecedor_nome")
     .order("item_descricao")
     .limit(10000)
-  if (q) rowsQuery = rowsQuery.ilike("item_descricao", `%${q}%`)
   const { data: rows } = await rowsQuery
 
   // Previous month for MoM comparison
