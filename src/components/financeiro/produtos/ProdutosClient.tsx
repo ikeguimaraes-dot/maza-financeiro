@@ -55,8 +55,6 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
   // ── Tabela filters ──────────────────────────────────────────────────────────
   const [localQ, setLocalQ] = useState(q)
 
-  // Sync when URL changes externally (month nav)
-  useEffect(() => { setLocalQ(q) }, [q])
 
   const [filterCat, setFilterCat] = useState("")
   const [filterCmv, setFilterCmv] = useState<"all" | "cmv" | "no_cmv">("all")
