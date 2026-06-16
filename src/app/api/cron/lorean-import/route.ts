@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   }
 
   const res = await fetch(
-    "https://iqgrvptrtphvbmvrqntm.supabase.co/functions/v1/process-lorean-emails?limit=5",
+    "https://iqgrvptrtphvbmvrqntm.supabase.co/functions/v1/process-lorean-emails?limit=1",
     {
       method: "POST",
       headers: {
