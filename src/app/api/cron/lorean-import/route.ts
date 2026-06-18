@@ -7,9 +7,14 @@ const MAX_ITERATIONS = 6
 
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization")
+  console.log("[cron] auth header present:", !!authHeader)
+  console.log("[cron] CRON_SECRET present:", !!process.env.CRON_SECRET)
+
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
+
+  console.log("[cron] iniciando loop de processamento")
 
   const detail: object[] = []
   let iterations = 0
@@ -40,5 +45,6 @@ export async function GET(req: Request) {
     }
   }
 
+  console.log("[cron] concluído:", { iterations, total_processed })
   return Response.json({ iterations, total_processed, detail })
 }
