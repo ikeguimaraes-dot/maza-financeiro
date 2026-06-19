@@ -411,7 +411,7 @@ export default async function FinanceiroHubPage() {
             margin: "0 0 10px",
           }}
         >
-          Top 30 produtos · {competenciaLabel(comp)}
+          Top 60 produtos · {competenciaLabel(comp)}
         </h2>
         <TopProdutosTable produtos={topProdutos} />
       </section>

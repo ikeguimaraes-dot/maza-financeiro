@@ -800,7 +800,7 @@ export async function getTopProdutosMes(): Promise<TopProdutoItem[]> {
 
     return Array.from(map.values())
       .sort((a, b) => b.total - a.total)
-      .slice(0, 30);
+      .slice(0, 60);
   } catch {
     return [];
   }
