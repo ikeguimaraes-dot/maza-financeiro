@@ -1,13 +1,22 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import type { TopProdutoItem } from "@/app/financeiro/actions"
 import { formatBRL } from "@/lib/financeiro/utils"
+
+type SortKey = "total" | "qtd"
+type View = "todos" | "categoria"
 
 type Props = { produtos: TopProdutoItem[] }
 
 export function TopProdutosTable({ produtos }: Props) {
-  const [view, setView] = useState<"todos" | "categoria">("todos")
+  const [view, setView] = useState<View>("todos")
+  const [sort, setSort] = useState<SortKey>("total")
+
+  const sorted = useMemo(
+    () => [...produtos].sort((a, b) => b[sort] - a[sort]),
+    [produtos, sort],
+  )
 
   if (!produtos.length) {
     return (
@@ -29,39 +38,71 @@ export function TopProdutosTable({ produtos }: Props) {
 
   return (
     <div>
-      {/* Toggle */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        {(["todos", "categoria"] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            style={{
-              padding: "5px 14px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: view === v ? "var(--brand)" : "var(--surface)",
-              color: view === v ? "#fff" : "var(--text-2)",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-              letterSpacing: 0.3,
-            }}
-          >
-            {v === "todos" ? "Todos" : "Por categoria"}
-          </button>
-        ))}
+      {/* Controles */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {/* View toggle */}
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["todos", "categoria"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              style={{
+                padding: "5px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: view === v ? "var(--brand)" : "var(--surface)",
+                color: view === v ? "#fff" : "var(--text-2)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+                letterSpacing: 0.3,
+              }}
+            >
+              {v === "todos" ? "Todos" : "Por categoria"}
+            </button>
+          ))}
+        </div>
+
+        {/* Sort toggle */}
+        <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+          <span style={{ fontSize: 11, color: "var(--text-3)", alignSelf: "center" }}>
+            Ordenar:
+          </span>
+          {([
+            ["total", "Faturamento"],
+            ["qtd", "Quantidade"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSort(key)}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: sort === key ? "var(--text)" : "var(--surface)",
+                color: sort === key ? "var(--bg, #fff)" : "var(--text-2)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+                letterSpacing: 0.3,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {view === "todos" ? (
-        <FlatTable produtos={produtos} />
+        <FlatTable produtos={sorted} sort={sort} />
       ) : (
-        <CategoriaView produtos={produtos} />
+        <CategoriaView produtos={sorted} sort={sort} />
       )}
     </div>
   )
 }
 
-function FlatTable({ produtos }: { produtos: TopProdutoItem[] }) {
+function FlatTable({ produtos, sort }: { produtos: TopProdutoItem[]; sort: SortKey }) {
   return (
     <div
       style={{
@@ -88,8 +129,8 @@ function FlatTable({ produtos }: { produtos: TopProdutoItem[] }) {
         <span>#</span>
         <span>Produto</span>
         <span>Categoria</span>
-        <span style={{ textAlign: "right" }}>Qtd</span>
-        <span style={{ textAlign: "right" }}>Total</span>
+        <span style={{ textAlign: "right", color: sort === "qtd" ? "var(--brand)" : undefined }}>Qtd</span>
+        <span style={{ textAlign: "right", color: sort === "total" ? "var(--brand)" : undefined }}>Total</span>
       </div>
       {produtos.map((p, i) => (
         <div
@@ -129,10 +170,24 @@ function FlatTable({ produtos }: { produtos: TopProdutoItem[] }) {
           >
             {p.grupo}
           </span>
-          <span style={{ fontSize: 12, color: "var(--text-2)", textAlign: "right" }}>
-            {p.qtd % 1 === 0 ? p.qtd.toFixed(0) : p.qtd.toFixed(1)}
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: sort === "qtd" ? 700 : 400,
+              color: sort === "qtd" ? "var(--text)" : "var(--text-2)",
+              textAlign: "right",
+            }}
+          >
+            {fmtQtd(p.qtd)}
           </span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", textAlign: "right" }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: sort === "total" ? 700 : 500,
+              color: "var(--text)",
+              textAlign: "right",
+            }}
+          >
             {formatBRL(p.total)}
           </span>
         </div>
@@ -141,7 +196,7 @@ function FlatTable({ produtos }: { produtos: TopProdutoItem[] }) {
   )
 }
 
-function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
+function CategoriaView({ produtos, sort }: { produtos: TopProdutoItem[]; sort: SortKey }) {
   const groupMap = new Map<string, { items: TopProdutoItem[]; total: number; qtd: number }>()
   for (const p of produtos) {
     const g = p.grupo || "Sem categoria"
@@ -155,11 +210,13 @@ function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
     }
   }
 
-  const groups = Array.from(groupMap.entries()).sort((a, b) => b[1].total - a[1].total)
+  const groups = Array.from(groupMap.entries()).sort(
+    (a, b) => b[1][sort] - a[1][sort],
+  )
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {groups.map(([grupo, { items, total }]) => (
+      {groups.map(([grupo, { items, total, qtd }]) => (
         <div
           key={grupo}
           style={{
@@ -169,7 +226,6 @@ function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
             overflow: "hidden",
           }}
         >
-          {/* Cabeçalho de categoria */}
           <div
             style={{
               display: "flex",
@@ -177,18 +233,21 @@ function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
               alignItems: "center",
               padding: "10px 16px",
               borderBottom: "1px solid var(--border)",
-              background: "var(--surface-2, var(--surface))",
             }}
           >
             <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", letterSpacing: 0.3 }}>
               {grupo}
             </span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--brand)" }}>
-              {formatBRL(total)}
-            </span>
+            <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                {fmtQtd(qtd)} un
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--brand)" }}>
+                {formatBRL(total)}
+              </span>
+            </div>
           </div>
 
-          {/* Itens da categoria */}
           {items.map((p, i) => (
             <div
               key={p.produto}
@@ -212,8 +271,15 @@ function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
               >
                 {p.produto}
               </span>
-              <span style={{ fontSize: 11, color: "var(--text-3)", textAlign: "right" }}>
-                {p.qtd % 1 === 0 ? p.qtd.toFixed(0) : p.qtd.toFixed(1)} un
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: sort === "qtd" ? 700 : 400,
+                  color: sort === "qtd" ? "var(--text)" : "var(--text-3)",
+                  textAlign: "right",
+                }}
+              >
+                {fmtQtd(p.qtd)} un
               </span>
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", textAlign: "right" }}>
                 {formatBRL(p.total)}
@@ -224,4 +290,8 @@ function CategoriaView({ produtos }: { produtos: TopProdutoItem[] }) {
       ))}
     </div>
   )
+}
+
+function fmtQtd(n: number): string {
+  return n % 1 === 0 ? n.toFixed(0) : n.toFixed(1)
 }
