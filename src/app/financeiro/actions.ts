@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createSupabaseServerClient } from "@kph/db/supabase/server";
 import { requireUser } from "@kph/auth/server";
+import { getCurrentUnit } from "@kph/auth/unit";
 import type { ActionResult } from "@/lib/result";
 import {
   createMenuItemSchema,
@@ -738,6 +739,69 @@ export async function getEventOptionsForBrand(brandId: string): Promise<
     return (data ?? []) as Array<{ id: string; nome: string; data_inicio: string }>;
   } catch (e) {
     console.error("[getEventOptionsForBrand] exceção:", e);
+    return [];
+  }
+}
+
+// ── Top produtos do mês ───────────────────────────────────────────────────────
+
+export type TopProdutoItem = {
+  produto: string
+  grupo: string
+  qtd: number
+  total: number
+}
+
+export async function getTopProdutosMes(): Promise<TopProdutoItem[]> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    if (!supabase) return [];
+
+    const unit = await getCurrentUnit();
+    const unitId = unit?.id;
+    if (!unitId) return [];
+
+    const comp = getCompetenciaAtual();
+    const start = comp;
+    const [y, m] = comp.split("-").map(Number) as [number, number];
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const end = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
+
+    const { data: workdays } = await supabase
+      .from("lorean_workdays")
+      .select("id")
+      .eq("unit_id", unitId)
+      .gte("data", start)
+      .lt("data", end);
+
+    if (!workdays?.length) return [];
+
+    const ids = workdays.map((w: { id: string }) => w.id);
+
+    const { data: produtos } = await supabase
+      .from("lorean_produtos_dia")
+      .select("grupo, produto, qtd, total")
+      .in("workday_id_fk", ids);
+
+    if (!produtos?.length) return [];
+
+    const map = new Map<string, TopProdutoItem>();
+    for (const p of produtos as Array<{ grupo: string; produto: string; qtd: number; total: number }>) {
+      const key = `${p.grupo}::${p.produto}`;
+      const ex = map.get(key);
+      if (ex) {
+        ex.qtd += p.qtd ?? 0;
+        ex.total += p.total ?? 0;
+      } else {
+        map.set(key, { produto: p.produto, grupo: p.grupo, qtd: p.qtd ?? 0, total: p.total ?? 0 });
+      }
+    }
+
+    return Array.from(map.values())
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 30);
+  } catch {
     return [];
   }
 }

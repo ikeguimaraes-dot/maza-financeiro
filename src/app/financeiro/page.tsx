@@ -6,7 +6,9 @@ import {
   getAprovacoesPendentes,
   getBrandsOperacionais,
   getFinanceiroResumoGrupo,
+  getTopProdutosMes,
 } from "./actions";
+import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
 import { KpiCard } from "@kph/ui/kpi-card";
 import { ProgressBar } from "@kph/ui/progress-bar";
 import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
@@ -34,7 +36,7 @@ export default async function FinanceiroHubPage() {
   const supabase = await createSupabaseServerClient();
   const comp = getCompetenciaAtual();
 
-  const [resumo, brands, aprovacoes, dresPorMarca] = await Promise.all([
+  const [resumo, brands, aprovacoes, dresPorMarca, topProdutos] = await Promise.all([
     getFinanceiroResumoGrupo(),
     getBrandsOperacionais(),
     getAprovacoesPendentes(null),
@@ -44,6 +46,7 @@ export default async function FinanceiroHubPage() {
           .select("*")
           .eq("competencia", comp)
       : Promise.resolve({ data: [] as DreConsolidadoRow[] }),
+    getTopProdutosMes(),
   ]);
 
   const dreByBrand = new Map<string, DreConsolidadoRow>();
@@ -395,6 +398,23 @@ export default async function FinanceiroHubPage() {
           })}
         </section>
       )}
+
+      {/* Top 30 produtos do mês */}
+      <section style={{ marginBottom: 28 }}>
+        <h2
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+            color: "var(--text-3)",
+            margin: "0 0 10px",
+          }}
+        >
+          Top 30 produtos · {competenciaLabel(comp)}
+        </h2>
+        <TopProdutosTable produtos={topProdutos} />
+      </section>
 
       {semOperacao.length > 0 && (
         <details>
