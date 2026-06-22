@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AreaChart, Area,
   ComposedChart, Bar, Line,
@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
+import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
 
 const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
 
@@ -316,6 +317,17 @@ export default function ReceitaPage() {
   const dayUsuarios        = usuarios.filter((u) => selOrigIds.has(u.workday_id_fk));
   const dayDescontos       = descontos.filter((d) => selOrigIds.has(d.workday_id_fk));
   const dayProdutos        = produtosDia.filter((p) => selOrigIds.has(p.workday_id_fk));
+
+  const top60Mes = useMemo(() => {
+    const map = new Map<string, { produto: string; grupo: string; qtd: number; total: number }>();
+    for (const p of produtosDia) {
+      const key = `${p.grupo}::${p.produto}`;
+      const ex = map.get(key);
+      if (ex) { ex.qtd += p.qtd ?? 0; ex.total += p.total ?? 0; }
+      else map.set(key, { produto: p.produto, grupo: p.grupo, qtd: p.qtd ?? 0, total: p.total ?? 0 });
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total).slice(0, 60);
+  }, [produtosDia]);
   const dayDescontosDetlh      = descontosDetalhe.filter((d) => selOrigIds.has(d.workday_id_fk));
   const dayCancelamentos       = cancelamentos.filter((c) => selOrigIds.has(c.workday_id_fk));
   const dayCancelamentosDetlh  = cancelamentosDetalhe.filter((c) => selOrigIds.has(c.workday_id_fk));
@@ -714,6 +726,14 @@ export default function ReceitaPage() {
               <AnimHBarRows rows={gruposAgg.map((g) => ({ key: g.grupo, total: g.bruto }))} total={totalBruto} />
             </div>
           )}
+
+          {/* Top 60 produtos do mês */}
+          <div style={{ marginBottom: 28 }}>
+            <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>
+              Top 60 produtos · {mesLabel}
+            </p>
+            <TopProdutosTable produtos={top60Mes} />
+          </div>
         </>
       )}
     </div>
