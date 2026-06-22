@@ -72,7 +72,7 @@ export default async function ContasAPagarPage({
             Contas a Pagar
           </h1>
           <p style={{ fontSize: 13, color: "var(--text-3)", margin: 0 }}>
-            TOTVS · {competenciaLabel(comp)}
+            {competenciaLabel(comp)}
           </p>
         </div>
 
