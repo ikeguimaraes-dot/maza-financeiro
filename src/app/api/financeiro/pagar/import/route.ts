@@ -96,6 +96,7 @@ export async function POST(req: Request) {
     }
 
     return {
+      id:                    crypto.randomUUID(),
       tipo:                  toStr(r["Tipo"]),
       n_nota_fiscal:         toStr(r["N.Nota Fiscal"] != null ? String(Math.round(Number(r["N.Nota Fiscal"]))) : null),
       razao_fornecedor:      toStr(r["Razão Fornecedor"]),
