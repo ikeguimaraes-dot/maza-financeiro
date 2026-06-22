@@ -82,7 +82,8 @@ export async function POST(req: Request) {
 
   const records = rows.map((r) => {
     const dComp = toDate(r["D. Competência"])
-    const rm = refMes(dComp)
+    const dVenc = toDate(r["D. Vencimento"])
+    const rm = refMes(dVenc)
     if (rm) refMesesSet.add(rm)
 
     return {
