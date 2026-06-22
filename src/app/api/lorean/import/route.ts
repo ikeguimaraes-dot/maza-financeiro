@@ -134,14 +134,14 @@ async function fileToBase64(file: File): Promise<string> {
   return Buffer.from(buf).toString("base64");
 }
 
-async function parsePdf(pdfBase64: string, prompt: string, label: string) {
+async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 16384) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
   const client = new Anthropic({ apiKey });
   const response = await (client.messages.create as any)({
     model: "claude-sonnet-4-6",
-    max_tokens: 16384,
+    max_tokens: maxTokens,
     messages: [
       {
         role: "user",
@@ -405,7 +405,7 @@ export async function POST(request: Request) {
     }
 
     else if (tipo === "venda" || tipo === "venda_produtos") {
-      const parsed = await parsePdf(b64, VENDA_PROMPT, "venda");
+      const parsed = await parsePdf(b64, VENDA_PROMPT, "venda", 32768);
       await insertVenda(supabase, parsed, unitId, workdayUuid, arquivo.name);
       console.log(`[lorean/import] Venda produtos done: ${parsed.produtos?.length ?? 0} produtos`);
     }
