@@ -392,7 +392,7 @@ export async function POST(request: Request) {
     let workday_id: string | null = workdayUuid;
 
     if (tipo === "movimento") {
-      const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento", 32768);
+      const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento", 64000);
       const dateOverride = extractDateFromFilename(arquivo.name);
       if (dateOverride) parsed.data = dateOverride;
       // Extract abertura_at / fechamento_at via regex — more reliable than Claude for this field
@@ -401,7 +401,17 @@ export async function POST(request: Request) {
       if (abertura_at !== null) parsed.abertura_at = abertura_at;
       if (fechamento_at !== null) parsed.fechamento_at = fechamento_at;
       console.log("[lorean/import] timestamps from regex:", abertura_at, fechamento_at);
-      console.log("[lorean/import] Movimento parsed — horarios:", parsed.horarios?.length ?? 0, "usuarios:", parsed.usuarios?.length ?? 0);
+      console.log("[lorean/import] Movimento parsed —", {
+        pagamentos: parsed.pagamentos?.length ?? 0,
+        ambientes: parsed.ambientes?.length ?? 0,
+        turnos: parsed.turnos?.length ?? 0,
+        grupos: parsed.grupos?.length ?? 0,
+        descontos: parsed.descontos?.length ?? 0,
+        descontos_detalhe: parsed.descontos_detalhe?.length ?? 0,
+        cancelamentos_detalhe: parsed.cancelamentos_detalhe?.length ?? 0,
+        horarios: parsed.horarios?.length ?? 0,
+        usuarios: parsed.usuarios?.length ?? 0,
+      });
       workday_id = await insertWorkday(supabase, parsed, unitId);
       console.log("[lorean/import] Movimento done, workday_id:", workday_id);
     }
