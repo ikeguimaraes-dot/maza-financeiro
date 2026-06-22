@@ -139,7 +139,7 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTok
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
   const client = new Anthropic({ apiKey });
-  const response = await (client.messages.create as any)({
+  const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: maxTokens,
     messages: [
@@ -151,7 +151,8 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTok
         ],
       },
     ],
-  });
+  } as any);
+  const response = await stream.finalMessage();
 
   if (response.stop_reason === "max_tokens") {
     throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
