@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@kph/auth/server";
 import { getPagarKpisETitulos } from "../actions-operations";
+import { ImportPagarButton } from "@/components/financeiro/ImportPagarButton";
 import {
   competenciaLabel,
   competenciaShift,
@@ -75,25 +76,28 @@ export default async function ContasAPagarPage({
           </p>
         </div>
 
-        <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <NavMonth href={`?competencia=${compPrev}`} label="←" title="Mês anterior" />
-          <span
-            style={{
-              padding: "6px 14px",
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-              color: "var(--text)",
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-            }}
-          >
-            {competenciaLabel(comp)}
-          </span>
-          <NavMonth href={`?competencia=${compNext}`} label="→" title="Mês seguinte" />
-        </nav>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <ImportPagarButton />
+          <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <NavMonth href={`?competencia=${compPrev}`} label="←" title="Mês anterior" />
+            <span
+              style={{
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+                color: "var(--text)",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+              }}
+            >
+              {competenciaLabel(comp)}
+            </span>
+            <NavMonth href={`?competencia=${compNext}`} label="→" title="Mês seguinte" />
+          </nav>
+        </div>
       </header>
 
       {/* KPIs */}
