@@ -138,9 +138,7 @@ export async function getTitulosAPagar(
 
   const { data, error } = await ops
     .from("titulos_a_pagar")
-    .select(
-      "id,tipo,fantasia_fornecedor,razao_fornecedor,descricao_c_gerencial,n_titulo,parcela,portador,d_lancamento,d_competencia,d_vencimento,v_titulo,v_saldo_atual,dias_atraso_atual,situacao_atual,tipo_sep,fluxo_de_caixa,ref_mes",
-    )
+    .select("*")
     .eq("ref_mes", refMes)
     .order("d_vencimento", { ascending: true, nullsFirst: false });
 

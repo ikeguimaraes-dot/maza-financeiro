@@ -212,27 +212,77 @@ export type WorkdayUsuario = {
  */
 export type TituloAPagar = {
   id: string;
+  // identificação
   tipo: string | null;
+  origem: string | null;
   n_nota_fiscal: string | null;
-  fantasia_fornecedor: string | null;
+  empresa: string | null;
+  fantasia_empresa: string | null;
+  // fornecedor
+  fornecedor: string | null;
   razao_fornecedor: string | null;
+  fantasia_fornecedor: string | null;
   cnpj_cpf_fornecedor: string | null;
+  n_conta: string | null;
   t_fornecedor: string | null;
-  descricao_c_gerencial: string | null;
+  grupo_economico: string | null;
+  // endereço
+  cep: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  pais: string | null;
+  // condições
+  condicao_compra: string | null;
+  prazo_medio: number | null;
+  serie: string | null;
+  // título
   n_titulo: string | null;
   parcela: string | null;
+  documento: string | null;
+  portador_num: string | null;
   portador: string | null;
-  d_lancamento: string | null; // DATE
-  d_competencia: string | null; // DATE
-  d_vencimento: string | null; // DATE
+  c_gerencial: string | null;
+  descricao_c_gerencial: string | null;
+  // datas
+  d_lancamento: string | null;
+  d_competencia: string | null;
+  d_autorizacao_pgto: string | null;
+  d_vencimento: string | null;
+  dia_semana: string | null;
+  // valores
+  v_desconto: number | null;
+  v_multa_atraso: number | null;
+  v_juros_dia: number | null;
   v_titulo: number | null;
+  v_original: number | null;
+  v_saldo_anterior: number | null;
+  v_credito_periodo: number | null;
+  v_debito_periodo: number | null;
+  d_liquidacao_periodo: string | null;
+  situacao_periodo: string | null;
+  v_saldo_periodo: number | null;
+  dias_atraso_periodo: number | null;
+  v_atraso_periodo: number | null;
+  v_atualizado_periodo: number | null;
+  d_liquidacao_atual: string | null;
+  situacao_atual: string | null;
   v_saldo_atual: number | null;
   dias_atraso_atual: number | null;
-  situacao_atual: string | null;
-  tipo_sep: string | null;
+  v_atraso_atual: number | null;
+  v_atualizado_atual: number | null;
+  // período
+  ano: number | null;
+  mes: string | null;
+  semana: number | null;
+  trimestre: number | null;
+  quadrimestre: number | null;
+  // flags
   fluxo_de_caixa: boolean;
+  tipo_sep: string | null;
+  // controle
   importado_em: string;
-  ref_mes: string | null; // DATE — YYYY-MM-01
+  ref_mes: string | null;
 };
 
 /** Vendas diárias simplificadas (preenchimento manual). */
