@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@kph/auth/server";
 import { getPagarKpisETitulos } from "../actions-operations";
 import { ImportPagarButton } from "@/components/financeiro/ImportPagarButton";
+import { FiltroCategoria } from "@/components/financeiro/FiltroCategoria";
 import {
   competenciaLabel,
   competenciaShift,
@@ -13,7 +14,7 @@ import { KpiCard } from "@kph/ui/kpi-card";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Promise<{ competencia?: string }>;
+type SearchParams = Promise<{ competencia?: string; categoria?: string }>;
 
 const compRegex = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -26,11 +27,40 @@ export default async function ContasAPagarPage({
   const sp = await searchParams;
   const compRaw = sp.competencia ?? getCompetenciaAtual();
   const comp = compRegex.test(compRaw) ? compRaw : getCompetenciaAtual();
+  const categoriaFiltro = sp.categoria ?? "";
 
   const compPrev = competenciaShift(comp, -1);
   const compNext = competenciaShift(comp, 1);
 
-  const { titulos, kpis } = await getPagarKpisETitulos(comp);
+  const { titulos: todosOsTitulos } = await getPagarKpisETitulos(comp);
+
+  // categorias únicas ordenadas
+  const categorias = [...new Set(
+    todosOsTitulos.map((t) => t.descricao_c_gerencial).filter(Boolean) as string[]
+  )].sort();
+
+  // filtra por categoria se selecionada
+  const titulos = categoriaFiltro
+    ? todosOsTitulos.filter((t) => t.descricao_c_gerencial === categoriaFiltro)
+    : todosOsTitulos;
+
+  // recomputa KPIs sobre o subconjunto filtrado
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const em30d = new Date(hoje); em30d.setDate(em30d.getDate() + 30);
+  const kpis = (() => {
+    let total_valor = 0, total_saldo = 0, vencidos_count = 0, vencidos_valor = 0, a_vencer_30d_valor = 0, fluxo_caixa_valor = 0;
+    for (const t of titulos) {
+      const v = t.v_titulo ?? 0; const s = t.v_saldo_atual ?? 0;
+      total_valor += v; total_saldo += s;
+      if (t.fluxo_de_caixa) fluxo_caixa_valor += s;
+      if (t.d_vencimento) {
+        const venc = new Date(`${t.d_vencimento}T12:00:00`);
+        if (venc < hoje) { vencidos_count++; vencidos_valor += s; }
+        else if (venc <= em30d) a_vencer_30d_valor += s;
+      }
+    }
+    return { total_titulos: titulos.length, total_valor, total_saldo, vencidos_count, vencidos_valor, a_vencer_30d_valor, fluxo_caixa_valor };
+  })();
 
   const semDados = titulos.length === 0;
 
@@ -76,7 +106,8 @@ export default async function ContasAPagarPage({
           </p>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <FiltroCategoria categorias={categorias} atual={categoriaFiltro} />
           <ImportPagarButton />
           <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <NavMonth href={`?competencia=${compPrev}`} label="←" title="Mês anterior" />
