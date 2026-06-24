@@ -1,8 +1,11 @@
-// Importação de relatório CONSOLIDADO de produtos (período longo).
-// A extração do PDF de Venda é IDÊNTICA ao import diário — ambos importam a MESMA
-// função de @/lib/lorean/vendaExtract (mesmo modelo, max_tokens, streaming e parse).
-// A ÚNICA diferença é o DESTINO: aqui grava nas tabelas vendas_consolidado_* (por
-// período), no diário grava nas lorean_* (por dia/turno).
+// Importação de relatório CONSOLIDADO (período longo) — Venda (produtos) e
+// Movimento (resumo operacional + seções consolidadas). Todos os PDFs são
+// OPCIONAIS; exige-se ao menos um. O período é UPSERTado por
+// (unit_id, data_inicio, data_fim), então subir um PDF depois ANEXA ao período
+// existente sem apagar o que já foi importado de outro PDF.
+//
+// A extração de produtos (Venda) é IDÊNTICA ao import diário (parsePdf
+// compartilhada). A única diferença das duas rotas é o DESTINO no banco.
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import { VENDA_PROMPT, parsePdf } from "@/lib/lorean/vendaExtract";
@@ -21,7 +24,6 @@ export function OPTIONS() {
   return new Response(null, { headers: CORS });
 }
 
-// Helpers que GARANTEM resposta JSON (nunca new Response("texto"))
 function jsonError(message: string, status = 500) {
   return Response.json({ success: false, error: message, errors: [message] }, { status, headers: CORS });
 }
@@ -29,21 +31,22 @@ function jsonOk(body: Record<string, unknown>) {
   return Response.json({ success: true, errors: [], ...body }, { headers: CORS });
 }
 
-// ── Helper local: só o cliente Supabase (a extração do PDF é compartilhada) ─────
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase env vars not configured");
   return createClient(url, key);
 }
+type Supa = ReturnType<typeof getServiceClient>;
 
-// Fatia o PDF em blocos de N páginas. Um relatório de 6 meses (31 páginas) é
-// grande demais para uma única chamada ao Claude (timeout 300s); blocos de 4
-// páginas são o tamanho comprovado que importa rápido. Cada bloco vira um PDF
-// menor em base64, processado numa chamada separada.
+const num = (v: unknown) => { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; };
+const str = (v: unknown) => String(v ?? "").trim();
+const BLOCO_MAX_TOKENS = 8000; // ~3 páginas cabem com folga; gera rápido (~15-25s/bloco)
+
+// Fatia o PDF em blocos de N páginas (mesma solução usada no PDF de Venda).
 async function splitPdfIntoBlocks(
   pdfBytes: Uint8Array,
-  pagesPerBlock = 4,
+  pagesPerBlock = 3,
 ): Promise<{ b64: string; from: number; to: number }[]> {
   const src = await PDFDocument.load(pdfBytes);
   const total = src.getPageCount();
@@ -61,6 +64,266 @@ async function splitPdfIntoBlocks(
   return blocks;
 }
 
+// Processa um PDF em blocos de 3 páginas, em ondas de 4, chamando parsePdf por bloco.
+async function processInBlocks(
+  file: File,
+  prompt: string,
+  tag: string,
+): Promise<any[]> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const blocks = await splitPdfIntoBlocks(bytes, 3);
+  const totalPaginas = blocks.length ? blocks[blocks.length - 1]!.to : 0;
+  console.log(`[${tag}] PDF tem ${totalPaginas} páginas, dividido em ${blocks.length} blocos`);
+  const parts: any[] = [];
+  const CONC = 4;
+  for (let i = 0; i < blocks.length; i += CONC) {
+    const grupo = blocks.slice(i, i + CONC);
+    const resultados = await Promise.all(
+      grupo.map(async (blk, j) => {
+        const idx = i + j + 1;
+        console.log(`[${tag}] processando bloco ${idx}/${blocks.length} (páginas ${blk.from}-${blk.to})`);
+        const parsed = await parsePdf(blk.b64, prompt, `${tag}_bloco_${idx}`, BLOCO_MAX_TOKENS);
+        return parsed;
+      }),
+    );
+    parts.push(...resultados);
+  }
+  return parts;
+}
+
+// ── Prompt do MOVIMENTO consolidado ───────────────────────────────────────────
+const MOVIMENTO_PROMPT = `Este é um trecho (algumas páginas) de um relatório Lorean de MOVIMENTO consolidado de um período (vários meses somados). Extraia APENAS o que estiver presente NESTAS páginas e retorne APENAS JSON válido, sem texto adicional, sem markdown.
+
+Formato esperado:
+{
+  "resumo": {
+    "acessos": number, "permanencia_media": "HH:MM:SS",
+    "ticket_medio": number, "ticket_real": number,
+    "bruto": number, "produto": number, "custo": number, "desconto": number,
+    "gorjeta": number, "convite": number, "lucro": number, "entrada": number,
+    "consumo": number, "devedor": number,
+    "pgto_fechado": number, "pgto_recebido": number, "pgto_diferenca": number,
+    "cash": number, "card": number, "pix": number
+  },
+  "mensal":     [ { "mes": "Jan/2026", "ordem": 1, "bruto": number, "liquido": number, "clientes": number, "ticket_medio": number } ],
+  "turno":      [ { "turno": string, "bruto": number, "clientes": number, "ticket_medio": number } ],
+  "dia_semana": [ { "dia_semana": "Seg", "ordem": 2, "bruto": number, "clientes": number, "ticket_medio": number } ],
+  "ambiente":   [ { "ambiente": string, "bruto": number, "clientes": number } ],
+  "funcionarios":[ { "funcionario": string, "bruto": number, "qtd_vendas": number } ]
+}
+
+Regras:
+- "resumo": quadro de TOTAIS do período (Acessos/Clientes, Permanência média, Ticket médio e real, Bruto, Produto, Custo/CMV, Desconto, Gorjeta, Convite/Cortesia, Lucro, Entrada, Consumo, Devedor; e o fechamento de pagamentos: Fechado, Recebido, Diferença, e as formas Dinheiro, Cartão, Pix). Se este quadro NÃO aparecer nestas páginas, use "resumo": null.
+- "cash"=dinheiro; "card"=cartão (some débito+crédito se vierem separados); "pix"=pix.
+- Valores monetários: número decimal sem "R$" e sem separador de milhar (ex: 1234567.89). Use ponto como separador decimal.
+- "permanencia_media": string no formato "HH:MM:SS".
+- "mensal": faturamento por mês; "ordem" = posição cronológica (Jan=1, Fev=2, ...).
+- "turno": por turno (ex: Almoço, Jantar, Tarde, Noite).
+- "dia_semana": por dia da semana; use Dom/Seg/Ter/Qua/Qui/Sex/Sáb; "ordem" Dom=1 ... Sáb=7.
+- "ambiente": por ambiente/setor/sala.
+- "funcionarios": por funcionário/vendedor/garçom (bruto vendido e quantidade de vendas/atendimentos).
+- Extraia SOMENTE linhas presentes nestas páginas. Use [] para seção ausente e null para resumo ausente. NÃO invente dados.`;
+
+// ── UPSERT do período por (unit_id, data_inicio, data_fim) ─────────────────────
+async function upsertPeriodo(
+  supabase: Supa,
+  unitId: string,
+  dataInicio: string,
+  dataFim: string,
+  label: string,
+): Promise<string> {
+  const { data: existing } = await supabase
+    .from("vendas_consolidado_periodo")
+    .select("id")
+    .eq("unit_id", unitId)
+    .eq("data_inicio", dataInicio)
+    .eq("data_fim", dataFim)
+    .maybeSingle();
+  if (existing) {
+    await supabase.from("vendas_consolidado_periodo").update({ label }).eq("id", existing.id);
+    console.log("[vc] período existente reaproveitado, id:", existing.id);
+    return existing.id;
+  }
+  const { data: ins, error } = await supabase
+    .from("vendas_consolidado_periodo")
+    .insert({ unit_id: unitId, data_inicio: dataInicio, data_fim: dataFim, label })
+    .select("id")
+    .single();
+  if (error) throw new Error(`vendas_consolidado_periodo: ${error.message}`);
+  console.log("[vc] período criado, id:", ins.id);
+  return ins.id;
+}
+
+// ── Venda → produtos (substitui os produtos do período) ───────────────────────
+async function processVenda(supabase: Supa, periodoId: string, file: File): Promise<number> {
+  const parts = await processInBlocks(file, VENDA_PROMPT, "vc");
+  const produtosRaw: any[] = [];
+  for (const p of parts) {
+    const prods = Array.isArray(p?.produtos) ? p.produtos : [];
+    produtosRaw.push(...prods);
+  }
+  console.log("[vc] produtos parseados (somados dos blocos):", produtosRaw.length);
+  if (!produtosRaw.length) throw new Error("Nenhum produto extraído do PDF de Venda");
+
+  const map = new Map<string, { grupo: string; produto: string; quantidade: number; valor_bruto: number; valor_desconto: number; valor_liquido: number }>();
+  for (const p of produtosRaw) {
+    const grupo = str(p.grupo) || "—";
+    const produto = str(p.produto) || "—";
+    const key = `${grupo}::${produto}`;
+    const ex = map.get(key);
+    const qtd = num(p.qtd), bruto = num(p.bruto), desconto = num(p.desconto), total = num(p.total);
+    if (ex) { ex.quantidade += qtd; ex.valor_bruto += bruto; ex.valor_desconto += desconto; ex.valor_liquido += total; }
+    else map.set(key, { grupo, produto, quantidade: qtd, valor_bruto: bruto, valor_desconto: desconto, valor_liquido: total });
+  }
+  const agregados = Array.from(map.values());
+  const totalLiquido = agregados.reduce((s, r) => s + r.valor_liquido, 0);
+  console.log("[vc] total agregado:", agregados.length, "produtos · totalLiquido:", totalLiquido);
+
+  const rows = agregados.map((r) => ({
+    periodo_id: periodoId,
+    grupo: r.grupo, produto: r.produto,
+    quantidade: r.quantidade, valor_bruto: r.valor_bruto,
+    valor_desconto: r.valor_desconto, valor_liquido: r.valor_liquido,
+    participacao_pct: totalLiquido > 0 ? (r.valor_liquido / totalLiquido) * 100 : 0,
+  }));
+
+  // Substitui os produtos do período (re-upload do Venda regrava sem duplicar).
+  await supabase.from("vendas_consolidado_produtos").delete().eq("periodo_id", periodoId);
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    const { error } = await supabase.from("vendas_consolidado_produtos").insert(slice);
+    if (error) throw new Error(`vendas_consolidado_produtos: ${error.message}`);
+    console.log(`[vc] chunk inserido ${i + slice.length}/${rows.length}`);
+  }
+  console.log("[vc] produtos inseridos:", rows.length);
+  return rows.length;
+}
+
+// Agrega linhas de uma seção entre blocos, somando por chave.
+function aggSection(parts: any[], listKey: string, keyField: string, sumFields: string[]) {
+  const m = new Map<string, any>();
+  for (const part of parts) {
+    const list = Array.isArray(part?.[listKey]) ? part[listKey] : [];
+    for (const row of list) {
+      const k = str(row[keyField]);
+      if (!k) continue;
+      let ex = m.get(k);
+      if (!ex) {
+        ex = { [keyField]: k, ordem: row.ordem != null ? num(row.ordem) : null };
+        for (const f of sumFields) ex[f] = 0;
+        m.set(k, ex);
+      }
+      for (const f of sumFields) ex[f] += num(row[f]);
+      if (ex.ordem == null && row.ordem != null) ex.ordem = num(row.ordem);
+    }
+  }
+  return Array.from(m.values());
+}
+
+// ── Movimento → resumo + seções consolidadas ──────────────────────────────────
+async function processMovimento(supabase: Supa, periodoId: string, file: File) {
+  const parts = await processInBlocks(file, MOVIMENTO_PROMPT, "vc-mov");
+
+  // Resumo: 1 quadro de totais — aparece em um bloco só; mescla 1º valor não-vazio.
+  const RES_NUM = ["acessos","ticket_medio","ticket_real","bruto","produto","custo","desconto","gorjeta","convite","lucro","entrada","consumo","devedor","pgto_fechado","pgto_recebido","pgto_diferenca","cash","card","pix"];
+  const resumo: any = { permanencia_media: null };
+  for (const f of RES_NUM) resumo[f] = null;
+  let temResumo = false;
+  for (const part of parts) {
+    const r = part?.resumo;
+    if (!r || typeof r !== "object") continue;
+    if (resumo.permanencia_media == null && str(r.permanencia_media)) resumo.permanencia_media = str(r.permanencia_media);
+    for (const f of RES_NUM) {
+      if (resumo[f] == null || resumo[f] === 0) {
+        const v = num(r[f]);
+        if (v !== 0) { resumo[f] = v; temResumo = true; }
+      }
+    }
+  }
+  console.log("[vc-mov] resumo presente:", temResumo);
+
+  // Seções (somadas por chave; ticket/participação recalculados no fim).
+  const mensal = aggSection(parts, "mensal", "mes", ["bruto", "liquido", "clientes"])
+    .map((r) => ({ ...r, ticket_medio: r.clientes > 0 ? r.bruto / r.clientes : 0 }))
+    .sort((a, b) => (a.ordem ?? 99) - (b.ordem ?? 99));
+
+  const turnoRaw = aggSection(parts, "turno", "turno", ["bruto", "clientes"]);
+  const turnoTotal = turnoRaw.reduce((s, r) => s + r.bruto, 0);
+  const turno = turnoRaw.map((r) => ({
+    ...r,
+    ticket_medio: r.clientes > 0 ? r.bruto / r.clientes : 0,
+    participacao_pct: turnoTotal > 0 ? (r.bruto / turnoTotal) * 100 : 0,
+  })).sort((a, b) => b.bruto - a.bruto);
+
+  const dia = aggSection(parts, "dia_semana", "dia_semana", ["bruto", "clientes"])
+    .map((r) => ({ ...r, ticket_medio: r.clientes > 0 ? r.bruto / r.clientes : 0 }))
+    .sort((a, b) => (a.ordem ?? 99) - (b.ordem ?? 99));
+
+  const ambRaw = aggSection(parts, "ambiente", "ambiente", ["bruto", "clientes"]);
+  const ambTotal = ambRaw.reduce((s, r) => s + r.bruto, 0);
+  const ambiente = ambRaw.map((r) => ({
+    ...r,
+    participacao_pct: ambTotal > 0 ? (r.bruto / ambTotal) * 100 : 0,
+  })).sort((a, b) => b.bruto - a.bruto);
+
+  const funcionarios = aggSection(parts, "funcionarios", "funcionario", ["bruto", "qtd_vendas"])
+    .sort((a, b) => b.bruto - a.bruto)
+    .slice(0, 40);
+
+  console.log("[vc-mov] seções:", { mensal: mensal.length, turno: turno.length, dia: dia.length, ambiente: ambiente.length, funcionarios: funcionarios.length });
+
+  // Regrava cada seção do período (delete + insert) sem tocar nos produtos.
+  await Promise.all([
+    supabase.from("vendas_consolidado_resumo").delete().eq("periodo_id", periodoId),
+    supabase.from("vendas_consolidado_mensal").delete().eq("periodo_id", periodoId),
+    supabase.from("vendas_consolidado_turno").delete().eq("periodo_id", periodoId),
+    supabase.from("vendas_consolidado_dia_semana").delete().eq("periodo_id", periodoId),
+    supabase.from("vendas_consolidado_ambiente").delete().eq("periodo_id", periodoId),
+    supabase.from("vendas_consolidado_funcionarios").delete().eq("periodo_id", periodoId),
+  ]);
+
+  if (temResumo) {
+    const row: any = { periodo_id: periodoId, permanencia_media: resumo.permanencia_media };
+    for (const f of RES_NUM) row[f] = resumo[f];
+    if (row.acessos != null) row.acessos = Math.round(num(row.acessos));
+    const { error } = await supabase.from("vendas_consolidado_resumo").insert(row);
+    if (error) throw new Error(`vendas_consolidado_resumo: ${error.message}`);
+  }
+  if (mensal.length) {
+    const { error } = await supabase.from("vendas_consolidado_mensal").insert(
+      mensal.map((r) => ({ periodo_id: periodoId, mes: r.mes, ordem: r.ordem, bruto: r.bruto, liquido: r.liquido, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio })),
+    );
+    if (error) throw new Error(`vendas_consolidado_mensal: ${error.message}`);
+  }
+  if (turno.length) {
+    const { error } = await supabase.from("vendas_consolidado_turno").insert(
+      turno.map((r) => ({ periodo_id: periodoId, turno: r.turno, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio, participacao_pct: r.participacao_pct })),
+    );
+    if (error) throw new Error(`vendas_consolidado_turno: ${error.message}`);
+  }
+  if (dia.length) {
+    const { error } = await supabase.from("vendas_consolidado_dia_semana").insert(
+      dia.map((r) => ({ periodo_id: periodoId, dia_semana: r.dia_semana, ordem: r.ordem, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio })),
+    );
+    if (error) throw new Error(`vendas_consolidado_dia_semana: ${error.message}`);
+  }
+  if (ambiente.length) {
+    const { error } = await supabase.from("vendas_consolidado_ambiente").insert(
+      ambiente.map((r) => ({ periodo_id: periodoId, ambiente: r.ambiente, bruto: r.bruto, clientes: Math.round(num(r.clientes)), participacao_pct: r.participacao_pct })),
+    );
+    if (error) throw new Error(`vendas_consolidado_ambiente: ${error.message}`);
+  }
+  if (funcionarios.length) {
+    const { error } = await supabase.from("vendas_consolidado_funcionarios").insert(
+      funcionarios.map((r) => ({ periodo_id: periodoId, funcionario: r.funcionario, bruto: r.bruto, qtd_vendas: Math.round(num(r.qtd_vendas)) })),
+    );
+    if (error) throw new Error(`vendas_consolidado_funcionarios: ${error.message}`);
+  }
+  console.log("[vc-mov] gravado");
+  return { resumo: temResumo, mensal: mensal.length, turno: turno.length, dia_semana: dia.length, ambiente: ambiente.length, funcionarios: funcionarios.length };
+}
+
 // ── Route handler ──────────────────────────────────────────────────────────────
 export async function POST(request: Request) {
   console.log("[vendas-consolidado/import] POST called");
@@ -68,7 +331,6 @@ export async function POST(request: Request) {
   console.log("[vendas-consolidado] SERVICE_ROLE:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   try {
-    // Falha cedo e com JSON se as envs não estão configuradas
     if (!process.env.ANTHROPIC_API_KEY) return jsonError("ANTHROPIC_API_KEY não configurada no ambiente", 500);
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return jsonError("Supabase (URL/SERVICE_ROLE) não configurado no ambiente", 500);
@@ -85,130 +347,49 @@ export async function POST(request: Request) {
     const dataInicio = formData.get("data_inicio") as string | null;
     const dataFim    = formData.get("data_fim") as string | null;
     const labelRaw   = formData.get("label") as string | null;
-    // Mesmos 3 PDFs do Lorean. O consolidado de produtos vem do relatório de Venda.
     const vendaFile     = formData.get("venda") as File | null;
     const movimentoFile = formData.get("movimento") as File | null;
     const caixaFile     = formData.get("caixa") as File | null;
 
     console.log("[vendas-consolidado/import] unit_id:", unitId, "inicio:", dataInicio, "fim:", dataFim,
-      "venda:", vendaFile?.name, vendaFile?.size, "movimento:", movimentoFile?.name, "caixa:", caixaFile?.name);
+      "venda:", vendaFile?.name, "movimento:", movimentoFile?.name, "caixa:", caixaFile?.name);
 
     if (!unitId || !dataInicio || !dataFim) {
       return jsonError("unit_id, data_inicio e data_fim são obrigatórios", 400);
     }
-    if (!vendaFile) {
-      return jsonError("O PDF de Venda é obrigatório (origem dos produtos consolidados)", 400);
+    // Todos os PDFs são opcionais — exige ao menos um.
+    if (!vendaFile && !movimentoFile && !caixaFile) {
+      return jsonError("Selecione ao menos um PDF (Movimento, Venda ou Caixa)", 400);
     }
 
-    let supabase: ReturnType<typeof getServiceClient>;
+    let supabase: Supa;
     try {
       supabase = getServiceClient();
     } catch (e) {
       return jsonError(`supabase: ${String(e)}`, 500);
     }
 
-    // 1) Fatia o PDF em blocos de 3 páginas e extrai os produtos de cada bloco.
-    //    Cada bloco usa a MESMA parsePdf compartilhada com o import diário, mas com
-    //    max_tokens REDUZIDO (8000): ~3 páginas têm ~100 produtos, que cabem em
-    //    ~6000 tokens. O tempo de geração é proporcional aos tokens gerados, então
-    //    8000 (vs 32768) derruba o tempo por bloco de ~110s para ~15-25s.
-    //    NÃO mexe no import diário, que processa o PDF inteiro e mantém os 32768.
-    const BLOCO_MAX_TOKENS = 8000;
-    const vendaBytes = new Uint8Array(await vendaFile.arrayBuffer());
-    const blocks = await splitPdfIntoBlocks(vendaBytes, 3);
-    const totalPaginas = blocks.length ? blocks[blocks.length - 1]!.to : 0;
-    console.log(`[vc] PDF tem ${totalPaginas} páginas, dividido em ${blocks.length} blocos`);
-
-    if (!blocks.length) {
-      return jsonError("PDF de Venda sem páginas legíveis", 422);
-    }
-
-    // Processa em paralelo, em grupos de 4 (chamadas menores = menos risco de rate limit).
-    const produtosRaw: any[] = [];
-    const CONC = 4;
-    for (let i = 0; i < blocks.length; i += CONC) {
-      const grupo = blocks.slice(i, i + CONC);
-      const resultados = await Promise.all(
-        grupo.map(async (blk, j) => {
-          const idx = i + j + 1;
-          console.log(`[vc] processando bloco ${idx}/${blocks.length} (páginas ${blk.from}-${blk.to})`);
-          const parsed = await parsePdf(blk.b64, VENDA_PROMPT, `venda_bloco_${idx}`, BLOCO_MAX_TOKENS);
-          const prods = Array.isArray(parsed.produtos) ? parsed.produtos : [];
-          console.log(`[vc] bloco ${idx} retornou ${prods.length} produtos`);
-          return prods;
-        }),
-      );
-      for (const prods of resultados) produtosRaw.push(...prods);
-    }
-    console.log("[vc] produtos parseados (somados dos blocos):", produtosRaw.length);
-
-    if (!produtosRaw.length) {
-      return jsonError("Nenhum produto extraído do PDF de Venda", 422);
-    }
-
-    // 2) Agrega por grupo+produto (for finito sobre o array parseado — sem loop infinito)
-    const num = (v: unknown) => { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; };
-    const map = new Map<string, { grupo: string; produto: string; quantidade: number; valor_bruto: number; valor_desconto: number; valor_liquido: number }>();
-    for (const p of produtosRaw) {
-      const grupo   = String(p.grupo ?? "—");
-      const produto = String(p.produto ?? "—");
-      const key = `${grupo}::${produto}`;
-      const ex = map.get(key);
-      const qtd = num(p.qtd), bruto = num(p.bruto), desconto = num(p.desconto), total = num(p.total);
-      if (ex) {
-        ex.quantidade += qtd; ex.valor_bruto += bruto; ex.valor_desconto += desconto; ex.valor_liquido += total;
-      } else {
-        map.set(key, { grupo, produto, quantidade: qtd, valor_bruto: bruto, valor_desconto: desconto, valor_liquido: total });
-      }
-    }
-    const agregados = Array.from(map.values());
-    const totalLiquido = agregados.reduce((s, r) => s + r.valor_liquido, 0);
-    // Produtos repetidos entre blocos (tabela quebrada entre páginas) já foram
-    // SOMADOS pelo Map acima (chave grupo+produto).
-    console.log("[vc] total agregado:", agregados.length, "produtos · totalLiquido:", totalLiquido);
-
-    // 3) Cria o período
+    // UPSERT do período — anexa aos dados já importados, sem duplicar.
     const label = labelRaw?.trim() || `${dataInicio} a ${dataFim}`;
-    console.log("[vc] inserindo periodo");
-    const { data: periodo, error: pErr } = await supabase
-      .from("vendas_consolidado_periodo")
-      .insert({ unit_id: unitId, data_inicio: dataInicio, data_fim: dataFim, label })
-      .select("id")
-      .single();
-    if (pErr) throw new Error(`vendas_consolidado_periodo: ${pErr.message}`);
-    console.log("[vc] periodo inserido, id:", periodo.id);
+    const periodoId = await upsertPeriodo(supabase, unitId, dataInicio, dataFim, label);
 
-    // 4) Monta as linhas com participação % calculada (sempre numérica finita)
-    const rows = agregados.map((r) => ({
-      periodo_id:       periodo.id,
-      grupo:            r.grupo,
-      produto:          r.produto,
-      quantidade:       r.quantidade,
-      valor_bruto:      r.valor_bruto,
-      valor_desconto:   r.valor_desconto,
-      valor_liquido:    r.valor_liquido,
-      participacao_pct: totalLiquido > 0 ? (r.valor_liquido / totalLiquido) * 100 : 0,
-    }));
+    const resultado: Record<string, unknown> = { periodo_id: periodoId };
 
-    // Insere em lote, em chunks de 500 (cada chunk é um único insert com await)
-    console.log("[vc] inserindo", rows.length, "produtos em lote");
-    const CHUNK = 500;
-    let prodErr: { message: string } | null = null;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const slice = rows.slice(i, i + CHUNK);
-      const { error } = await supabase.from("vendas_consolidado_produtos").insert(slice);
-      if (error) { prodErr = error; break; }
-      console.log(`[vc] chunk inserido ${i + slice.length}/${rows.length}`);
+    if (vendaFile) {
+      console.log("[vc] processando PDF de Venda");
+      resultado.produtos = await processVenda(supabase, periodoId, vendaFile);
     }
-    if (prodErr) {
-      // rollback do período para não deixar período órfão sem produtos
-      await supabase.from("vendas_consolidado_periodo").delete().eq("id", periodo.id);
-      throw new Error(`vendas_consolidado_produtos: ${prodErr.message}`);
+    if (movimentoFile) {
+      console.log("[vc-mov] processando PDF de Movimento");
+      resultado.movimento = await processMovimento(supabase, periodoId, movimentoFile);
+    }
+    if (caixaFile) {
+      // Sem destino definido para o Caixa no consolidado — aceito e ignorado.
+      console.log("[vc] PDF de Caixa recebido — sem processamento definido, ignorado");
     }
 
-    console.log("[vc] produtos inseridos");
-    console.log("[vc] done — periodo_id:", periodo.id, "produtos:", rows.length);
-    return jsonOk({ periodo_id: periodo.id, produtos: rows.length });
+    console.log("[vc] done —", resultado);
+    return jsonOk(resultado);
   } catch (e) {
     console.error("[vendas-consolidado/import] unhandled error:", e);
     return jsonError(String(e), 500);

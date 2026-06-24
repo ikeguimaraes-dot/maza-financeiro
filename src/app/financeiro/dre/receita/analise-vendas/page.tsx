@@ -54,6 +54,21 @@ type Produto = {
 };
 type Curva = "A" | "B" | "C";
 
+type Resumo = {
+  acessos: number | null; permanencia_media: string | null;
+  ticket_medio: number | null; ticket_real: number | null;
+  bruto: number | null; produto: number | null; custo: number | null; desconto: number | null;
+  gorjeta: number | null; convite: number | null; lucro: number | null; entrada: number | null;
+  consumo: number | null; devedor: number | null;
+  pgto_fechado: number | null; pgto_recebido: number | null; pgto_diferenca: number | null;
+  cash: number | null; card: number | null; pix: number | null;
+};
+type Mensal       = { id: string; mes: string; ordem: number | null; bruto: number | null; liquido: number | null; clientes: number | null; ticket_medio: number | null };
+type TurnoRow     = { id: string; turno: string; bruto: number | null; clientes: number | null; ticket_medio: number | null; participacao_pct: number | null };
+type DiaSemanaRow = { id: string; dia_semana: string; ordem: number | null; bruto: number | null; clientes: number | null; ticket_medio: number | null };
+type AmbienteRow  = { id: string; ambiente: string; bruto: number | null; clientes: number | null; participacao_pct: number | null };
+type Funcionario  = { id: string; funcionario: string; bruto: number | null; qtd_vendas: number | null };
+
 // ── Formatters ───────────────────────────────────────────────────────────────
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const fmt = (n: number) => BRL.format(n);
@@ -78,6 +93,13 @@ export default function AnaliseVendasPage() {
   const [periodoSel, setPeriodoSel] = useState<string | null>(null);
   const [periodoAtual, setPeriodoAtual] = useState<Periodo | null>(null);
   const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [resumo, setResumo] = useState<Resumo | null>(null);
+  const [mensal, setMensal] = useState<Mensal[]>([]);
+  const [turno, setTurno] = useState<TurnoRow[]>([]);
+  const [diaSemana, setDiaSemana] = useState<DiaSemanaRow[]>([]);
+  const [ambiente, setAmbiente] = useState<AmbienteRow[]>([]);
+  const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
+  const [funcBusca, setFuncBusca] = useState("");
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -110,6 +132,12 @@ export default function AnaliseVendasPage() {
       setPeriodoAtual(json.periodo ?? null);
       setPeriodoSel(json.periodo?.id ?? null);
       setProdutos(json.produtos ?? []);
+      setResumo(json.resumo ?? null);
+      setMensal(json.mensal ?? []);
+      setTurno(json.turno ?? []);
+      setDiaSemana(json.dia_semana ?? []);
+      setAmbiente(json.ambiente ?? []);
+      setFuncionarios(json.funcionarios ?? []);
     } catch (e) {
       setDbError(String(e));
     } finally {
@@ -124,9 +152,11 @@ export default function AnaliseVendasPage() {
     loadData(id);
   }
 
+  const algumPdf = !!movFile || !!vendaFile || !!caixaFile;
+
   async function handleImport() {
     if (!unit) return;
-    if (!vendaFile) { setImportMsg({ ok: false, text: "O PDF de Venda é obrigatório." }); return; }
+    if (!algumPdf) { setImportMsg({ ok: false, text: "Selecione ao menos um PDF (Movimento, Venda ou Caixa)." }); return; }
     if (!dataInicio || !dataFim) { setImportMsg({ ok: false, text: "Informe data de início e fim." }); return; }
     setImporting(true); setImportMsg(null);
     try {
@@ -135,19 +165,22 @@ export default function AnaliseVendasPage() {
       fd.append("data_inicio", dataInicio);
       fd.append("data_fim", dataFim);
       if (label.trim()) fd.append("label", label.trim());
-      fd.append("venda", vendaFile);
+      if (vendaFile) fd.append("venda", vendaFile);
       if (movFile) fd.append("movimento", movFile);
       if (caixaFile) fd.append("caixa", caixaFile);
       const res = await fetch(`${API_BASE}/api/vendas-consolidado/import`, { method: "POST", body: fd });
       const json = await res.json();
       if (json.success) {
-        setImportMsg({ ok: true, text: `Importado: ${json.produtos} produtos.` });
+        const partes: string[] = [];
+        if (json.produtos != null) partes.push(`${json.produtos} produtos`);
+        if (json.movimento) partes.push("resumo operacional");
+        setImportMsg({ ok: true, text: `Importado: ${partes.join(" + ") || "ok"}.` });
         setMovFile(null); setVendaFile(null); setCaixaFile(null);
         setDataInicio(""); setDataFim(""); setLabel("");
         setShowImport(false);
         await loadData(json.periodo_id);
       } else {
-        setImportMsg({ ok: false, text: (json.errors ?? []).join(" | ") || "Falha na importação" });
+        setImportMsg({ ok: false, text: (json.errors ?? []).join(" | ") || json.error || "Falha na importação" });
       }
     } catch (e) {
       setImportMsg({ ok: false, text: String(e) });
@@ -208,7 +241,16 @@ export default function AnaliseVendasPage() {
     [produtos],
   );
 
-  const hasData = produtos.length > 0;
+  // Funcionários (busca client-side em useMemo)
+  const funcsFiltrados = useMemo(() => {
+    const q = funcBusca.trim().toLowerCase();
+    if (!q) return funcionarios;
+    return funcionarios.filter((f) => f.funcionario.toLowerCase().includes(q));
+  }, [funcionarios, funcBusca]);
+
+  const hasProdutos = produtos.length > 0;
+  const hasMovimento = !!resumo || mensal.length > 0 || turno.length > 0 || diaSemana.length > 0 || ambiente.length > 0 || funcionarios.length > 0;
+  const hasData = hasProdutos || hasMovimento;
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -271,9 +313,13 @@ export default function AnaliseVendasPage() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
             <FileSlot label="Movimento (opcional)" inputRef={movRef}   file={movFile}   onChange={setMovFile} />
-            <FileSlot label="Venda (obrigatório)"  inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
+            <FileSlot label="Venda (opcional)"     inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
             <FileSlot label="Caixa (opcional)"     inputRef={caixaRef} file={caixaFile} onChange={setCaixaFile} />
           </div>
+          <p style={{ fontSize: 11, color: C.text3, margin: "0 0 12px" }}>
+            Todos os PDFs são opcionais — selecione ao menos um. Venda → produtos; Movimento → resumo operacional e seções.
+            Subir um PDF depois anexa ao mesmo período sem apagar o que já foi importado.
+          </p>
           {importMsg && (
             <div style={{
               padding: "10px 14px", borderRadius: 8, marginBottom: 12, fontSize: 13,
@@ -284,11 +330,11 @@ export default function AnaliseVendasPage() {
               {importMsg.ok ? "✓ " : "✗ "}{importMsg.text}
             </div>
           )}
-          <button disabled={importing || !vendaFile || !dataInicio || !dataFim} onClick={handleImport} style={{
+          <button disabled={importing || !algumPdf || !dataInicio || !dataFim} onClick={handleImport} style={{
             padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: importing ? C.surface3 : C.brand, color: importing ? C.text3 : "#fff",
             border: "none", cursor: importing ? "not-allowed" : "pointer",
-            opacity: (!vendaFile || !dataInicio || !dataFim) ? 0.4 : 1,
+            opacity: (!algumPdf || !dataInicio || !dataFim) ? 0.4 : 1,
           }}>
             {importing ? "Processando…" : "Processar e importar"}
           </button>
@@ -304,8 +350,9 @@ export default function AnaliseVendasPage() {
         </div>
       )}
 
-      {!loading && hasData && (
+      {!loading && hasProdutos && (
         <>
+          <h2 style={sectionTitle}>Produtos</h2>
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 28 }}>
             <Kpi label="Valor Líquido"    value={fmt(totalLiquido)} />
@@ -372,6 +419,89 @@ export default function AnaliseVendasPage() {
           </div>
         </>
       )}
+
+      {!loading && hasMovimento && (
+        <div style={{ marginTop: hasProdutos ? 40 : 0 }}>
+          <h2 style={sectionTitle}>Resumo Operacional do Período</h2>
+          <p style={{ fontSize: 11, color: C.text3, margin: "-8px 0 16px" }}>
+            Fonte: PDF de Movimento. A Receita Bruta abaixo (Recebido) pode diferir levemente do líquido dos
+            produtos (PDF de Venda){hasProdutos ? ` — ${fmt(totalLiquido)}` : ""} — são fontes diferentes.
+          </p>
+
+          {resumo && <ResumoCards r={resumo} />}
+          {resumo && <PagamentoBreakdown r={resumo} />}
+
+          {mensal.length > 0 && (
+            <ColBarChart
+              title="Faturamento mês a mês"
+              data={mensal.map((m) => ({ nome: m.mes, valor: m.bruto ?? 0 }))}
+              color={C.receita}
+            />
+          )}
+
+          {turno.length > 0 && (
+            <ParticipacaoCards
+              title="Por turno"
+              rows={turno.map((t) => ({ nome: t.turno, bruto: t.bruto ?? 0, pct: t.participacao_pct ?? 0, ticket: t.ticket_medio, clientes: t.clientes }))}
+            />
+          )}
+
+          {diaSemana.length > 0 && (
+            <ColBarChart
+              title="Por dia da semana"
+              data={diaSemana.map((d) => ({ nome: d.dia_semana, valor: d.bruto ?? 0 }))}
+              color="#818cf8"
+            />
+          )}
+
+          {ambiente.length > 0 && (
+            <ParticipacaoCards
+              title="Por ambiente"
+              rows={ambiente.map((a) => ({ nome: a.ambiente, bruto: a.bruto ?? 0, pct: a.participacao_pct ?? 0, clientes: a.clientes }))}
+            />
+          )}
+
+          {funcionarios.length > 0 && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
+              <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  Top {funcionarios.length} funcionários · {funcsFiltrados.length}{funcBusca ? ` de ${funcionarios.length}` : ""}
+                </span>
+                <input
+                  type="text" placeholder="Buscar funcionário…" value={funcBusca}
+                  onChange={(e) => setFuncBusca(e.target.value)}
+                  style={{ ...selectStyle, cursor: "text", minWidth: 220 }}
+                />
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: C.surface2 }}>
+                      {["#", "Funcionário", "Faturamento", "Vendas", "Ticket"].map((h, i) => (
+                        <th key={h} style={{ padding: "9px 12px", borderBottom: `1px solid ${C.border}`, fontSize: 11, fontWeight: 600, color: C.text3, textAlign: i <= 1 ? "left" : "right", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {funcsFiltrados.map((f, i) => {
+                      const tk = (f.qtd_vendas ?? 0) > 0 ? (f.bruto ?? 0) / (f.qtd_vendas ?? 1) : 0;
+                      return (
+                        <tr key={f.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                          <td style={{ padding: "8px 12px", color: C.text3 }}>{i + 1}</td>
+                          <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{f.funcionario}</td>
+                          <td style={{ ...tdNum, color: C.text, fontWeight: 600 }}>{fmt(f.bruto ?? 0)}</td>
+                          <td style={tdNum}>{fmtInt(f.qtd_vendas ?? 0)}</td>
+                          <td style={tdNum}>{tk > 0 ? fmt(tk) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -379,6 +509,7 @@ export default function AnaliseVendasPage() {
 // ── Sub-components ─────────────────────────────────────────────────────────────
 const labelStyle: React.CSSProperties = { display: "block", fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6 };
 const tdNum: React.CSSProperties = { padding: "8px 12px", textAlign: "right", color: C.text2, whiteSpace: "nowrap" };
+const sectionTitle: React.CSSProperties = { fontSize: 18, fontWeight: 700, color: C.text, letterSpacing: -0.3, margin: "0 0 16px" };
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -484,6 +615,97 @@ function TopBarCard({ title, rows, fmtVal, color }: {
           </BarChart>
         </ResponsiveContainer>
       )}
+    </div>
+  );
+}
+
+// ── Movimento (resumo operacional) ─────────────────────────────────────────────
+function ResumoCards({ r }: { r: Resumo }) {
+  const cmvPct  = (r.produto ?? 0) > 0 ? ((r.custo ?? 0) / (r.produto ?? 1)) * 100 : null;
+  const descPct = (r.bruto ?? 0) > 0 ? ((r.desconto ?? 0) / (r.bruto ?? 1)) * 100 : null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 20 }}>
+      <Kpi label="Acessos"           value={r.acessos != null ? fmtInt(r.acessos) : "—"} />
+      <Kpi label="Ticket Médio"      value={r.ticket_medio != null ? fmt(r.ticket_medio) : "—"} sub={r.ticket_real != null ? `Real ${fmt(r.ticket_real)}` : undefined} />
+      <Kpi label="Receita Bruta"     value={r.pgto_recebido != null ? fmt(r.pgto_recebido) : "—"} sub="Recebido (Movimento)" />
+      <Kpi label="CMV"               value={r.custo != null ? fmt(r.custo) : "—"} sub={cmvPct != null ? `${cmvPct.toFixed(1)}% do produto` : undefined} />
+      <Kpi label="Desconto"          value={r.desconto != null ? fmt(r.desconto) : "—"} sub={descPct != null ? `${descPct.toFixed(1)}% da bruta` : undefined} />
+      <Kpi label="Gorjeta"           value={r.gorjeta != null ? fmt(r.gorjeta) : "—"} />
+      <Kpi label="Lucro"             value={r.lucro != null ? fmt(r.lucro) : "—"} />
+      <Kpi label="Permanência média" value={r.permanencia_media || "—"} />
+      <Kpi label="Devedor"           value={r.devedor != null ? fmt(r.devedor) : "—"} />
+    </div>
+  );
+}
+
+function PagamentoBreakdown({ r }: { r: Resumo }) {
+  const items = [
+    { nome: "Dinheiro", v: r.cash ?? 0, col: "#34d399" },
+    { nome: "Cartão",   v: r.card ?? 0, col: "#818cf8" },
+    { nome: "PIX",      v: r.pix ?? 0,  col: "#22d3ee" },
+  ];
+  const total = items.reduce((s, i) => s + i.v, 0);
+  if (total <= 0) return null;
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 14px" }}>Formas de pagamento</p>
+      {items.map((it) => {
+        const p = total > 0 ? (it.v / total) * 100 : 0;
+        return (
+          <div key={it.nome} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: C.text2 }}>{it.nome}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{fmt(it.v)} · {p.toFixed(1)}%</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 4, background: C.surface3, overflow: "hidden" }}>
+              <div style={{ width: `${p}%`, height: "100%", background: it.col }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ColBarChart({ title, data, color }: { title: string; data: { nome: string; valor: number }[]; color: string }) {
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{title}</p>
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+          <XAxis dataKey="nome" tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} interval={0} />
+          <YAxis tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} width={42} />
+          <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} contentStyle={{ background: "#1A1A18", border: "1px solid rgba(245,240,232,0.12)", borderRadius: 8, fontSize: 12 }} formatter={(v: any) => fmt(Number(v))} />
+          <Bar dataKey="valor" radius={[6, 6, 0, 0]} fill={color} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ParticipacaoCards({ title, rows }: {
+  title: string;
+  rows: { nome: string; bruto: number; pct: number; ticket?: number | null; clientes?: number | null }[];
+}) {
+  const max = Math.max(1, ...rows.map((r) => r.pct));
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 28 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: "0 0 14px" }}>{title}</p>
+      {rows.map((r, i) => (
+        <div key={r.nome + i} style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 8 }}>
+            <span style={{ fontSize: 12, color: C.text2 }}>
+              {r.nome}
+              {r.clientes != null ? <span style={{ color: C.text3 }}> · {fmtInt(r.clientes)} cli</span> : null}
+              {r.ticket != null ? <span style={{ color: C.text3 }}> · {fmt(r.ticket)}</span> : null}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{fmt(r.bruto)} · {r.pct.toFixed(1)}%</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 4, background: C.surface3, overflow: "hidden" }}>
+            <div style={{ width: `${(r.pct / max) * 100}%`, height: "100%", background: PIE_COLORS[i % PIE_COLORS.length] }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -54,14 +54,31 @@ export async function GET(request: Request) {
     }
     const periodo = periodos.find((p) => p.id === periodoId) ?? periodos[0]!;
 
-    const { data: produtos, error: prodErr } = await supabase
-      .from("vendas_consolidado_produtos")
-      .select("*")
-      .eq("periodo_id", periodoId)
-      .order("valor_liquido", { ascending: false });
-    if (prodErr) return Response.json({ error: prodErr.message }, { status: 500, headers: CORS });
+    // Produtos + todas as seções do Movimento, em paralelo.
+    const [
+      produtosRes, resumoRes, mensalRes, turnoRes, diaRes, ambienteRes, funcRes,
+    ] = await Promise.all([
+      supabase.from("vendas_consolidado_produtos").select("*").eq("periodo_id", periodoId).order("valor_liquido", { ascending: false }),
+      supabase.from("vendas_consolidado_resumo").select("*").eq("periodo_id", periodoId).maybeSingle(),
+      supabase.from("vendas_consolidado_mensal").select("*").eq("periodo_id", periodoId).order("ordem", { ascending: true }),
+      supabase.from("vendas_consolidado_turno").select("*").eq("periodo_id", periodoId).order("bruto", { ascending: false }),
+      supabase.from("vendas_consolidado_dia_semana").select("*").eq("periodo_id", periodoId).order("ordem", { ascending: true }),
+      supabase.from("vendas_consolidado_ambiente").select("*").eq("periodo_id", periodoId).order("bruto", { ascending: false }),
+      supabase.from("vendas_consolidado_funcionarios").select("*").eq("periodo_id", periodoId).order("bruto", { ascending: false }),
+    ]);
+    if (produtosRes.error) return Response.json({ error: produtosRes.error.message }, { status: 500, headers: CORS });
 
-    return Response.json({ periodos, periodo, produtos: produtos ?? [] }, { headers: CORS });
+    return Response.json({
+      periodos,
+      periodo,
+      produtos: produtosRes.data ?? [],
+      resumo: resumoRes.data ?? null,
+      mensal: mensalRes.data ?? [],
+      turno: turnoRes.data ?? [],
+      dia_semana: diaRes.data ?? [],
+      ambiente: ambienteRes.data ?? [],
+      funcionarios: funcRes.data ?? [],
+    }, { headers: CORS });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500, headers: CORS });
   }
