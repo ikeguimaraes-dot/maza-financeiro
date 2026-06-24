@@ -57,7 +57,13 @@ async function fileToBase64(file: File): Promise<string> {
   return Buffer.from(buf).toString("base64");
 }
 
-async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 16384) {
+// max_tokens: 32768 — o relatório consolidado de 6 meses tem o MESMO catálogo de
+// produtos distintos de um dia (só os valores são somados), então 32768 é o mesmo
+// teto usado no import diário e cabe folgado. claude-sonnet-4-6 suporta até 64000.
+// Mantemos messages.create() (não-streaming): o SDK JS escala o timeout HTTP para
+// até 60min em requests não-streaming com max_tokens alto, então não há risco de
+// timeout (e o Claude responde em ~7s de qualquer forma).
+async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 32768) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
