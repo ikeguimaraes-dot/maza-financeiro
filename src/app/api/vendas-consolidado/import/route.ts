@@ -1,9 +1,10 @@
 // Importação de relatório CONSOLIDADO de produtos (período longo).
-// Reutiliza o MESMO VENDA_PROMPT e a mesma lógica de extração do import diário
-// (src/app/api/lorean/import/route.ts), mas grava nas tabelas vendas_consolidado_*
-// — que não dependem de workday/dia/turno.
-import Anthropic from "@anthropic-ai/sdk";
+// A extração do PDF de Venda é IDÊNTICA ao import diário — ambos importam a MESMA
+// função de @/lib/lorean/vendaExtract (mesmo modelo, max_tokens, streaming e parse).
+// A ÚNICA diferença é o DESTINO: aqui grava nas tabelas vendas_consolidado_* (por
+// período), no diário grava nas lorean_* (por dia/turno).
 import { createClient } from "@supabase/supabase-js";
+import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,75 +28,12 @@ function jsonOk(body: Record<string, unknown>) {
   return Response.json({ success: true, errors: [], ...body }, { headers: CORS });
 }
 
-// ── Prompt (idêntico ao VENDA_PROMPT do import diário) ─────────────────────────
-const VENDA_PROMPT = `Extraia TODOS os produtos vendidos de TODAS as seções de grupo deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
-
-Cada seção tem um título de grupo (ex: Soft Drinks, Vinho Tinto, Da Brasa) e linhas de produtos com colunas Qtde, Garrafa, CMV, Bruto, Desconto, Gorjeta, Total.
-
-Formato esperado:
-{
-  "produtos": [
-    { "grupo": string, "produto": string, "qtd": number, "cmv_pct": number, "bruto": number, "desconto": number, "gorjeta": number, "total": number }
-  ]
-}
-
-Regras:
-- cmv_pct: valor decimal (ex: 0.27 para 27%)
-- Ignorar linhas de subtotal das seções
-- Array vazio [] se não houver produtos`;
-
-// ── Helpers (idênticos ao import diário) ───────────────────────────────────────
+// ── Helper local: só o cliente Supabase (a extração do PDF é compartilhada) ─────
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase env vars not configured");
   return createClient(url, key);
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  return Buffer.from(buf).toString("base64");
-}
-
-// max_tokens: 32768 — o relatório consolidado de 6 meses tem o MESMO catálogo de
-// produtos distintos de um dia (só os valores são somados), então 32768 é o mesmo
-// teto usado no import diário e cabe folgado. claude-sonnet-4-6 suporta até 64000.
-// Mantemos messages.create() (não-streaming): o SDK JS escala o timeout HTTP para
-// até 60min em requests não-streaming com max_tokens alto, então não há risco de
-// timeout (e o Claude responde em ~7s de qualquer forma).
-async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 32768) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-
-  // NÃO-STREAMING: messages.create() resolve assim que a resposta completa chega.
-  // O messages.stream()/finalMessage() depende do evento SSE message_stop e pode
-  // ficar pendurado até o maxDuration se esse evento não fechar (causa do timeout
-  // de 5min mesmo com o Claude tendo respondido 200 em ~7s).
-  const client = new Anthropic({ apiKey });
-  console.log("[vc] chamando Anthropic (create, não-streaming)");
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: maxTokens,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
-          { type: "text", text: prompt },
-        ],
-      },
-    ],
-  } as any);
-  console.log("[vc] resposta Claude recebida, parseando — stop_reason:", response.stop_reason);
-
-  if (response.stop_reason === "max_tokens") {
-    throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
-  }
-  const textBlock = (response.content as any[]).find((b: any) => b.type === "text");
-  if (!textBlock) throw new Error(`No text block from Claude for ${label}`);
-  const clean = textBlock.text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  if (!clean.startsWith("{")) throw new Error(`Claude response not JSON for ${label}: ${clean.slice(0, 80)}`);
-  return JSON.parse(clean);
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
@@ -144,9 +82,11 @@ export async function POST(request: Request) {
       return jsonError(`supabase: ${String(e)}`, 500);
     }
 
-    // 1) Extrai os produtos do PDF de Venda
+    // 1) Extrai os produtos do PDF de Venda — MESMA chamada do import diário
+    //    (parsePdf compartilhada, max_tokens 32768, igual ao diário na linha do "venda").
     const vendaB64 = await fileToBase64(vendaFile);
-    const parsed = await parsePdf(vendaB64, VENDA_PROMPT, "venda_consolidado");
+    console.log("[vc] chamando parsePdf (compartilhada com import diário)");
+    const parsed = await parsePdf(vendaB64, VENDA_PROMPT, "venda_consolidado", 32768);
     const produtosRaw: any[] = Array.isArray(parsed.produtos) ? parsed.produtos : [];
     console.log("[vc] produtos parseados:", produtosRaw.length);
 

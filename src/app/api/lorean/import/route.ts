@@ -1,6 +1,7 @@
 // NextResponse not needed — using native Response.json() throughout
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+// Extração do PDF de Venda compartilhada com /api/vendas-consolidado/import
+import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -103,65 +104,16 @@ Regras:
 - Campos não encontrados: usar null
 - pagamentos: array vazio [] se não houver`;
 
-const VENDA_PROMPT = `Extraia TODOS os produtos vendidos de TODAS as seções de grupo deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
-
-Cada seção tem um título de grupo (ex: Soft Drinks, Vinho Tinto, Da Brasa) e linhas de produtos com colunas Qtde, Garrafa, CMV, Bruto, Desconto, Gorjeta, Total.
-
-Formato esperado:
-{
-  "produtos": [
-    { "grupo": string, "produto": string, "qtd": number, "cmv_pct": number, "bruto": number, "desconto": number, "gorjeta": number, "total": number }
-  ]
-}
-
-Regras:
-- cmv_pct: valor decimal (ex: 0.27 para 27%)
-- Ignorar linhas de subtotal das seções
-- Array vazio [] se não houver produtos`;
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// VENDA_PROMPT, fileToBase64 e parsePdf agora vêm de @/lib/lorean/vendaExtract
+// (compartilhados com a rota consolidada). WORKDAY_PROMPT/CAIXA_PROMPT seguem
+// locais por serem exclusivos do import diário.
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase env vars not configured");
   return createClient(url, key);
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  // Buffer.from() is O(n) — safe for multi-MB PDFs
-  const buf = await file.arrayBuffer();
-  return Buffer.from(buf).toString("base64");
-}
-
-async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 16384) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-
-  const client = new Anthropic({ apiKey });
-  const stream = client.messages.stream({
-    model: "claude-sonnet-4-6",
-    max_tokens: maxTokens,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
-          { type: "text", text: prompt },
-        ],
-      },
-    ],
-  } as any);
-  const response = await stream.finalMessage();
-
-  if (response.stop_reason === "max_tokens") {
-    throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
-  }
-  const textBlock = (response.content as any[]).find((b: any) => b.type === "text");
-  if (!textBlock) throw new Error(`No text block from Claude for ${label}`);
-  const clean = textBlock.text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  if (!clean.startsWith("{")) throw new Error(`Claude response not JSON for ${label}: ${clean.slice(0, 80)}`);
-  return JSON.parse(clean);
 }
 
 function extractDateFromFilename(filename: string): string | null {
