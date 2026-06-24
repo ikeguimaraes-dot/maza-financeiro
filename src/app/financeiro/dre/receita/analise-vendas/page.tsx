@@ -85,6 +85,16 @@ const selectStyle: React.CSSProperties = {
   border: "1px solid var(--border)", cursor: "pointer",
 };
 
+type ProdutoABC = Produto & { _part: number; _acc: number; _curva: Curva };
+
+function sortProdutos(arr: ProdutoABC[], ord: "valor" | "qtd" | "nome"): ProdutoABC[] {
+  const a = [...arr];
+  if (ord === "qtd") a.sort((x, y) => (y.quantidade ?? 0) - (x.quantidade ?? 0));
+  else if (ord === "nome") a.sort((x, y) => x.produto.localeCompare(y.produto, "pt-BR"));
+  else a.sort((x, y) => (y.valor_liquido ?? 0) - (x.valor_liquido ?? 0));
+  return a;
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function AnaliseVendasPage() {
   const { unit } = useUnit();
@@ -103,6 +113,11 @@ export default function AnaliseVendasPage() {
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  // Filtros / ordenação / accordion da seção Produtos (tudo client-side)
+  const [filtroClasse, setFiltroClasse] = useState<"Todas" | Curva>("Todas");
+  const [filtroGrupo, setFiltroGrupo] = useState<string>("Todos");
+  const [ordenacao, setOrdenacao] = useState<"valor" | "qtd" | "nome">("valor");
+  const [classesAbertas, setClassesAbertas] = useState<Record<Curva, boolean>>({ A: false, B: false, C: false });
 
   // Import state
   const [showImport, setShowImport] = useState(false);
@@ -211,14 +226,54 @@ export default function AnaliseVendasPage() {
     return base;
   }, [produtosABC]);
 
-  // Filtro client-side (busca por produto/grupo)
-  const produtosFiltrados = useMemo(() => {
+  // Grupos distintos para o dropdown
+  const gruposDistintos = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of produtos) s.add(p.grupo ?? "—");
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [produtos]);
+
+  const filtrosAtivos = filtroClasse !== "Todas" || filtroGrupo !== "Todos" || busca.trim() !== "";
+
+  // MODO FILTRADO: lista única filtrada + ordenada (desfaz o agrupamento ABC)
+  const listaFiltrada = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return produtosABC;
-    return produtosABC.filter(
-      (p) => p.produto.toLowerCase().includes(q) || (p.grupo ?? "").toLowerCase().includes(q),
+    const arr = produtosABC.filter((p) =>
+      (filtroClasse === "Todas" || p._curva === filtroClasse) &&
+      (filtroGrupo === "Todos" || (p.grupo ?? "—") === filtroGrupo) &&
+      (!q || p.produto.toLowerCase().includes(q) || (p.grupo ?? "").toLowerCase().includes(q)),
     );
-  }, [produtosABC, busca]);
+    return sortProdutos(arr, ordenacao);
+  }, [produtosABC, filtroClasse, filtroGrupo, busca, ordenacao]);
+
+  const resumoFiltrado = useMemo(() => ({
+    n: listaFiltrada.length,
+    valor: listaFiltrada.reduce((s, p) => s + (p.valor_liquido ?? 0), 0),
+    qtd: listaFiltrada.reduce((s, p) => s + (p.quantidade ?? 0), 0),
+  }), [listaFiltrada]);
+
+  // MODO PADRÃO: agrupado por classe ABC (cada classe é um accordion)
+  const gruposABC = useMemo(() => {
+    return (["A", "B", "C"] as Curva[]).map((cls) => {
+      const itens = sortProdutos(produtosABC.filter((p) => p._curva === cls), ordenacao);
+      return {
+        classe: cls,
+        itens,
+        n: itens.length,
+        valor: itens.reduce((s, p) => s + (p.valor_liquido ?? 0), 0),
+        qtd: itens.reduce((s, p) => s + (p.quantidade ?? 0), 0),
+      };
+    });
+  }, [produtosABC, ordenacao]);
+
+  function limparFiltros() {
+    setFiltroClasse("Todas");
+    setFiltroGrupo("Todos");
+    setBusca("");
+  }
+  function toggleClasse(cls: Curva) {
+    setClassesAbertas((prev) => ({ ...prev, [cls]: !prev[cls] }));
+  }
 
   // Participação por grupo
   const porGrupo = useMemo(() => {
@@ -374,48 +429,76 @@ export default function AnaliseVendasPage() {
             <TopBarCard title="Top 10 por Quantidade" rows={topPorQtd.map((p) => ({ nome: p.produto, valor: p.quantidade ?? 0 }))} fmtVal={fmtInt} color="#818cf8" />
           </div>
 
-          {/* Tabela de produtos */}
+          {/* Produtos — controles + lista (agrupada por ABC ou filtrada) */}
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
-            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
-                Produtos · {produtosFiltrados.length}{busca ? ` de ${produtos.length}` : ""}
-              </span>
+            {/* Controles de filtro/ordenação */}
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text, marginRight: "auto" }}>Produtos · {produtos.length}</span>
+              <select value={filtroClasse} onChange={(e) => setFiltroClasse(e.target.value as "Todas" | Curva)} style={selectStyle}>
+                <option value="Todas">Classe: Todas</option>
+                <option value="A">Classe A</option>
+                <option value="B">Classe B</option>
+                <option value="C">Classe C</option>
+              </select>
+              <select value={filtroGrupo} onChange={(e) => setFiltroGrupo(e.target.value)} style={selectStyle}>
+                <option value="Todos">Grupo: Todos</option>
+                {gruposDistintos.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+              <select value={ordenacao} onChange={(e) => setOrdenacao(e.target.value as "valor" | "qtd" | "nome")} style={selectStyle}>
+                <option value="valor">Valor (maior→menor)</option>
+                <option value="qtd">Quantidade (maior→menor)</option>
+                <option value="nome">Nome (A→Z)</option>
+              </select>
               <input
-                type="text" placeholder="Buscar produto ou grupo…" value={busca}
+                type="text" placeholder="Buscar…" value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                style={{ ...selectStyle, cursor: "text", minWidth: 220 }}
+                style={{ ...selectStyle, cursor: "text", minWidth: 160 }}
               />
+              {filtrosAtivos && (
+                <button onClick={limparFiltros} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.surface3, color: C.text2, border: "none", cursor: "pointer" }}>
+                  Limpar filtros
+                </button>
+              )}
             </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ background: C.surface2 }}>
-                    {["ABC", "Grupo", "Produto", "Qtd", "Bruto", "Desconto", "Líquido", "Part.%", "Acum.%"].map((h, i) => (
-                      <th key={h} style={{
-                        padding: "9px 12px", borderBottom: `1px solid ${C.border}`,
-                        fontSize: 11, fontWeight: 600, color: C.text3,
-                        textAlign: i <= 2 ? "left" : "right", whiteSpace: "nowrap",
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {produtosFiltrados.map((p) => (
-                    <tr key={p.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: "8px 12px" }}><CurvaBadge curva={p._curva} /></td>
-                      <td style={{ padding: "8px 12px", color: C.text3 }}>{p.grupo ?? "—"}</td>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{p.produto}</td>
-                      <td style={tdNum}>{fmtInt(p.quantidade ?? 0)}</td>
-                      <td style={tdNum}>{fmt(p.valor_bruto ?? 0)}</td>
-                      <td style={{ ...tdNum, color: C.alerta }}>{fmt(p.valor_desconto ?? 0)}</td>
-                      <td style={{ ...tdNum, color: C.text, fontWeight: 600 }}>{fmt(p.valor_liquido ?? 0)}</td>
-                      <td style={tdNum}>{pct(p._part)}</td>
-                      <td style={{ ...tdNum, color: C.text3 }}>{pct(p._acc)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+            {filtrosAtivos ? (
+              /* MODO FILTRADO — lista única ordenada */
+              <>
+                <div style={{ padding: "10px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 20, flexWrap: "wrap", fontSize: 12, color: C.text3 }}>
+                  <span><b style={{ color: C.text }}>{resumoFiltrado.n}</b> produtos filtrados</span>
+                  <span>Valor <b style={{ color: C.text }}>{fmt(resumoFiltrado.valor)}</b></span>
+                  <span>Qtd <b style={{ color: C.text }}>{fmtInt(resumoFiltrado.qtd)}</b></span>
+                </div>
+                {resumoFiltrado.n === 0
+                  ? <div style={{ padding: "30px 16px", textAlign: "center", color: C.text3, fontSize: 13 }}>Nenhum produto nos filtros.</div>
+                  : <ProdutosTable itens={listaFiltrada} showClasse />}
+              </>
+            ) : (
+              /* MODO PADRÃO — accordion por classe ABC */
+              <div>
+                {gruposABC.map((g, gi) => {
+                  const aberto = classesAbertas[g.classe];
+                  const col = g.classe === "A" ? C.a : g.classe === "B" ? C.b : C.c;
+                  return (
+                    <div key={g.classe} style={{ borderBottom: gi < 2 ? `1px solid ${C.border}` : "none" }}>
+                      <button onClick={() => toggleClasse(g.classe)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ color: C.text3, fontSize: 11, transform: aberto ? "rotate(90deg)" : "none", transition: "transform 0.15s", display: "inline-block" }}>▶</span>
+                        <CurvaBadge curva={g.classe} />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Curva {g.classe}</span>
+                        <span style={{ fontSize: 12, color: C.text3 }}>· {g.n} produtos</span>
+                        <span style={{ marginLeft: "auto", display: "flex", gap: 18, fontSize: 12 }}>
+                          <span style={{ color: C.text3 }}>Qtd <b style={{ color: C.text2 }}>{fmtInt(g.qtd)}</b></span>
+                          <span style={{ color: C.text3 }}>Valor <b style={{ color: col }}>{fmt(g.valor)}</b></span>
+                        </span>
+                      </button>
+                      {aberto && (g.n === 0
+                        ? <div style={{ padding: "0 16px 16px", color: C.text3, fontSize: 12 }}>Sem produtos nesta classe.</div>
+                        : <ProdutosTable itens={g.itens} />)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </>
       )}
@@ -517,6 +600,44 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
       <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 6 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ProdutosTable({ itens, showClasse }: { itens: ProdutoABC[]; showClasse?: boolean }) {
+  const heads = showClasse
+    ? ["Produto", "Grupo", "Classe", "Qtd", "Valor", "Part.%"]
+    : ["Produto", "Grupo", "Qtd", "Valor", "Part.%"];
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: C.surface2 }}>
+            {heads.map((h) => {
+              const leftAlign = h === "Produto" || h === "Grupo" || h === "Classe";
+              return (
+                <th key={h} style={{
+                  padding: "9px 12px", borderBottom: `1px solid ${C.border}`,
+                  fontSize: 11, fontWeight: 600, color: C.text3,
+                  textAlign: leftAlign ? "left" : "right", whiteSpace: "nowrap",
+                }}>{h}</th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {itens.map((p) => (
+            <tr key={p.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+              <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{p.produto}</td>
+              <td style={{ padding: "8px 12px", color: C.text3 }}>{p.grupo ?? "—"}</td>
+              {showClasse && <td style={{ padding: "8px 12px" }}><CurvaBadge curva={p._curva} /></td>}
+              <td style={tdNum}>{fmtInt(p.quantidade ?? 0)}</td>
+              <td style={{ ...tdNum, color: C.text, fontWeight: 600 }}>{fmt(p.valor_liquido ?? 0)}</td>
+              <td style={tdNum}>{pct(p._part)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
