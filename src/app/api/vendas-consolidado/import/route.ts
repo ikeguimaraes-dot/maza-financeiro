@@ -107,12 +107,15 @@ export async function POST(request: Request) {
       return jsonError(`supabase: ${String(e)}`, 500);
     }
 
-    // 1) Fatia o PDF em blocos de 4 páginas e extrai os produtos de cada bloco.
-    //    Cada bloco usa a MESMA parsePdf compartilhada com o import diário
-    //    (claude-sonnet-4-6, streaming, max_tokens 32768) — só que sobre poucas
-    //    páginas, o que é rápido e cabe folgado nos 300s.
+    // 1) Fatia o PDF em blocos de 3 páginas e extrai os produtos de cada bloco.
+    //    Cada bloco usa a MESMA parsePdf compartilhada com o import diário, mas com
+    //    max_tokens REDUZIDO (8000): ~3 páginas têm ~100 produtos, que cabem em
+    //    ~6000 tokens. O tempo de geração é proporcional aos tokens gerados, então
+    //    8000 (vs 32768) derruba o tempo por bloco de ~110s para ~15-25s.
+    //    NÃO mexe no import diário, que processa o PDF inteiro e mantém os 32768.
+    const BLOCO_MAX_TOKENS = 8000;
     const vendaBytes = new Uint8Array(await vendaFile.arrayBuffer());
-    const blocks = await splitPdfIntoBlocks(vendaBytes, 4);
+    const blocks = await splitPdfIntoBlocks(vendaBytes, 3);
     const totalPaginas = blocks.length ? blocks[blocks.length - 1]!.to : 0;
     console.log(`[vc] PDF tem ${totalPaginas} páginas, dividido em ${blocks.length} blocos`);
 
@@ -120,16 +123,16 @@ export async function POST(request: Request) {
       return jsonError("PDF de Venda sem páginas legíveis", 422);
     }
 
-    // Processa em paralelo, em grupos de 3, para não estourar o rate limit do Claude.
+    // Processa em paralelo, em grupos de 4 (chamadas menores = menos risco de rate limit).
     const produtosRaw: any[] = [];
-    const CONC = 3;
+    const CONC = 4;
     for (let i = 0; i < blocks.length; i += CONC) {
       const grupo = blocks.slice(i, i + CONC);
       const resultados = await Promise.all(
         grupo.map(async (blk, j) => {
           const idx = i + j + 1;
           console.log(`[vc] processando bloco ${idx}/${blocks.length} (páginas ${blk.from}-${blk.to})`);
-          const parsed = await parsePdf(blk.b64, VENDA_PROMPT, `venda_bloco_${idx}`, 32768);
+          const parsed = await parsePdf(blk.b64, VENDA_PROMPT, `venda_bloco_${idx}`, BLOCO_MAX_TOKENS);
           const prods = Array.isArray(parsed.produtos) ? parsed.produtos : [];
           console.log(`[vc] bloco ${idx} retornou ${prods.length} produtos`);
           return prods;
