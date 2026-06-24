@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KPH OS · Contratos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0E1014; --surface:#15181F; --surface-2:#1B1F28; --surface-3:#222734;
+  --border:#272C37; --border-soft:#1F2530;
+  --text:#ECEEF1; --text-2:#AAB1BD; --muted:#727A88;
+  --gold:#C9A24B; --gold-2:#E0BE72; --gold-soft:rgba(201,162,75,.13);
+  --green:#48BC8C; --green-soft:rgba(72,188,140,.13);
+  --amber:#E3A93C; --amber-soft:rgba(227,169,60,.14);
+  --red:#E2594E; --red-soft:rgba(226,89,78,.13);
+  --blue:#6E8BFB; --blue-soft:rgba(110,139,251,.13);
+  --r:14px; --shadow:0 18px 50px -12px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'Inter',system-ui,sans-serif; font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased; font-feature-settings:"cv11","ss01";
+  padding:0 0 80px;
+}
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(900px 400px at 88% -8%, rgba(201,162,75,.07), transparent 60%),
+    radial-gradient(700px 500px at -5% 110%, rgba(110,139,251,.05), transparent 55%);
+}
+.tnum{font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px; margin:0 auto; padding:0 32px; position:relative; z-index:1}
+
+/* ---------- header ---------- */
+header{padding:34px 0 24px}
+.crumb{font-size:11.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin-bottom:10px}
+.crumb b{color:var(--gold); font-weight:600}
+.head-row{display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap}
+h1{font-family:'Fraunces',serif; font-weight:500; font-size:40px; letter-spacing:-.01em; line-height:1}
+h1 + p{color:var(--text-2); margin-top:9px; font-size:14px; max-width:520px}
+.head-actions{display:flex; gap:10px; align-items:center}
+
+.unit-seg{display:flex; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:3px}
+.unit-seg button{
+  background:none; border:none; color:var(--text-2); font-family:inherit; font-size:12.5px; font-weight:500;
+  padding:7px 13px; border-radius:8px; cursor:pointer; transition:.16s; white-space:nowrap;
+}
+.unit-seg button:hover{color:var(--text)}
+.unit-seg button.on{background:var(--surface-3); color:var(--text)}
+
+.btn-primary{
+  display:inline-flex; align-items:center; gap:8px; cursor:pointer;
+  background:linear-gradient(180deg,#D7B25E,#C19736); color:#1A1407; border:none;
+  font-family:inherit; font-weight:600; font-size:13.5px; padding:10px 17px; border-radius:11px;
+  box-shadow:0 6px 18px -6px rgba(201,162,75,.5); transition:.16s;
+}
+.btn-primary:hover{transform:translateY(-1px); box-shadow:0 10px 24px -6px rgba(201,162,75,.6)}
+.btn-primary svg{width:16px;height:16px}
+
+/* ---------- stat cards ---------- */
+.stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:26px 0 18px}
+.stat{
+  background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--r);
+  padding:17px 18px 16px; position:relative; overflow:hidden;
+}
+.stat .lab{font-size:11.5px; color:var(--muted); letter-spacing:.04em; display:flex; align-items:center; gap:7px}
+.stat .dot{width:7px;height:7px;border-radius:50%}
+.stat .val{font-size:27px; font-weight:600; letter-spacing:-.02em; margin-top:11px; line-height:1}
+.stat .val small{font-size:14px; color:var(--text-2); font-weight:500; margin-right:1px}
+.stat .sub{font-size:12px; color:var(--text-2); margin-top:7px}
+.stat .sub b{color:var(--text)}
+.stat.alert{border-color:rgba(226,89,78,.3); background:linear-gradient(180deg,var(--red-soft),transparent),var(--surface)}
+
+/* ---------- alerts strip ---------- */
+.alerts{
+  background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--r);
+  padding:16px 18px; margin-bottom:18px;
+}
+.alerts h3{font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-2); margin-bottom:13px; display:flex; align-items:center; gap:8px}
+.alerts h3 .pulse{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 0 rgba(227,169,60,.5);animation:pulse 2.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(227,169,60,.45)}70%{box-shadow:0 0 0 7px rgba(227,169,60,0)}100%{box-shadow:0 0 0 0 rgba(227,169,60,0)}}
+.alert-list{display:flex; flex-direction:column}
+.alert-item{
+  display:flex; align-items:center; gap:14px; padding:11px 4px; cursor:pointer;
+  border-top:1px solid var(--border-soft); transition:.14s;
+}
+.alert-item:first-child{border-top:none}
+.alert-item:hover{padding-left:10px}
+.alert-item .tag{font-size:11px; font-weight:600; padding:4px 9px; border-radius:7px; white-space:nowrap; min-width:78px; text-align:center}
+.alert-item .txt{flex:1; font-size:13.5px}
+.alert-item .txt b{font-weight:600}
+.alert-item .when{font-size:12.5px; font-weight:600; white-space:nowrap}
+.alert-item .arr{color:var(--muted); transition:.14s}
+.alert-item:hover .arr{color:var(--text); transform:translateX(3px)}
+.t-red{background:var(--red-soft); color:#F0897F}
+.t-amber{background:var(--amber-soft); color:#EEC163}
+.c-red{color:#EE8077} .c-amber{color:#E8B84F}
+
+/* ---------- toolbar ---------- */
+.toolbar{display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap}
+.search{position:relative; flex:1; min-width:220px}
+.search svg{position:absolute; left:13px; top:50%; transform:translateY(-50%); width:16px; height:16px; color:var(--muted)}
+.search input{
+  width:100%; background:var(--surface); border:1px solid var(--border); border-radius:11px;
+  color:var(--text); font-family:inherit; font-size:13.5px; padding:10px 14px 10px 38px; outline:none; transition:.16s;
+}
+.search input::placeholder{color:var(--muted)}
+.search input:focus{border-color:rgba(201,162,75,.5); background:var(--surface-2)}
+.chips{display:flex; gap:7px; flex-wrap:wrap}
+.chip{
+  background:var(--surface); border:1px solid var(--border); color:var(--text-2);
+  font-family:inherit; font-size:12.5px; font-weight:500; padding:8px 13px; border-radius:9px; cursor:pointer; transition:.15s; white-space:nowrap;
+}
+.chip:hover{color:var(--text); border-color:var(--muted)}
+.chip.on{background:var(--gold-soft); border-color:rgba(201,162,75,.45); color:var(--gold-2)}
+.view-seg{display:flex; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:3px; margin-left:auto}
+.view-seg button{background:none;border:none;color:var(--muted);cursor:pointer;padding:7px 9px;border-radius:7px;display:flex;transition:.15s}
+.view-seg button svg{width:16px;height:16px}
+.view-seg button.on{background:var(--surface-3);color:var(--text)}
+
+/* ---------- list ---------- */
+.list{background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--r); overflow:hidden}
+.list-head{
+  display:grid; grid-template-columns:2.4fr 1.5fr 1.1fr 1.9fr; gap:16px;
+  padding:12px 22px; font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted);
+  border-bottom:1px solid var(--border-soft);
+}
+.row{
+  display:grid; grid-template-columns:2.4fr 1.5fr 1.1fr 1.9fr; gap:16px; align-items:center;
+  padding:16px 22px; border-bottom:1px solid var(--border-soft); cursor:pointer; transition:.14s; position:relative;
+}
+.row:last-child{border-bottom:none}
+.row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.14s}
+.row:hover{background:var(--surface-2)}
+.row:hover::before{background:var(--gold)}
+.c-name{min-width:0}
+.c-name .t{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.c-name .meta{display:flex; align-items:center; gap:8px; margin-top:5px}
+.cat{font-size:11px; font-weight:600; padding:3px 8px; border-radius:6px; white-space:nowrap}
+.unit-tag{font-size:11.5px; color:var(--muted)}
+.c-party{font-size:13.5px; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.c-party .resp{font-size:11.5px; color:var(--muted); margin-top:3px}
+.c-val{font-weight:600; font-size:14px}
+.c-val small{display:block;font-size:11.5px;color:var(--muted);font-weight:500;margin-top:3px}
+
+/* vigência bar — the signature element */
+.vig{}
+.vig-meta{display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:6px}
+.vig-meta .st{font-weight:600}
+.vig-track{height:7px; background:var(--surface-3); border-radius:4px; position:relative; overflow:hidden}
+.vig-fill{position:absolute; left:0; top:0; bottom:0; border-radius:4px}
+.vig-danger{position:absolute; top:0; bottom:0; opacity:.85}
+.vig-now{position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--text); border-radius:2px; box-shadow:0 0 0 2px var(--surface)}
+.vig-dash{position:absolute; right:0; top:0; bottom:0; width:34%; background:repeating-linear-gradient(90deg, var(--surface-3), var(--surface-3) 4px, transparent 4px, transparent 8px); border-radius:4px}
+
+.empty{padding:60px 20px; text-align:center; color:var(--muted)}
+.empty svg{width:34px;height:34px;opacity:.5;margin-bottom:12px}
+.empty p{font-size:14px}
+
+/* ---------- timeline view ---------- */
+.timeline{background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--r); padding:8px 0; display:none}
+.tl-months{display:grid; grid-template-columns:200px 1fr; padding:10px 22px 14px; border-bottom:1px solid var(--border-soft)}
+.tl-scale{display:flex; justify-content:space-between; font-size:11px; color:var(--muted); position:relative}
+.tl-now-lab{position:absolute; font-size:10.5px; color:var(--text); font-weight:600; transform:translateX(-50%)}
+.tl-row{display:grid; grid-template-columns:200px 1fr; align-items:center; padding:11px 22px; cursor:pointer; transition:.14s}
+.tl-row:hover{background:var(--surface-2)}
+.tl-name{font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:14px}
+.tl-bar-area{position:relative; height:24px}
+.tl-bar{position:absolute; height:24px; border-radius:6px; display:flex; align-items:center; padding:0 9px; font-size:11px; font-weight:600; color:#0E1014; overflow:hidden; white-space:nowrap}
+.tl-nowline{position:absolute; top:-6px; bottom:-6px; width:2px; background:var(--text); opacity:.55; z-index:3}
+
+/* ---------- drawer ---------- */
+.scrim{position:fixed; inset:0; background:rgba(8,9,12,.6); backdrop-filter:blur(2px); opacity:0; pointer-events:none; transition:.25s; z-index:40}
+.scrim.show{opacity:1; pointer-events:auto}
+.drawer{
+  position:fixed; top:0; right:0; bottom:0; width:min(540px,94vw); background:var(--surface);
+  border-left:1px solid var(--border); box-shadow:var(--shadow); transform:translateX(100%); transition:transform .28s cubic-bezier(.4,0,.2,1);
+  z-index:50; overflow-y:auto;
+}
+.drawer.show{transform:translateX(0)}
+.dr-head{padding:24px 26px 20px; border-bottom:1px solid var(--border-soft); position:sticky; top:0; background:var(--surface); z-index:2}
+.dr-close{position:absolute; top:22px; right:22px; background:var(--surface-2); border:1px solid var(--border); color:var(--text-2); width:34px; height:34px; border-radius:9px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:.15s}
+.dr-close:hover{color:var(--text); background:var(--surface-3)}
+.dr-close svg{width:16px;height:16px}
+.dr-head .cat{margin-bottom:11px; display:inline-block}
+.dr-head h2{font-family:'Fraunces',serif; font-weight:500; font-size:25px; letter-spacing:-.01em; line-height:1.15; padding-right:40px}
+.dr-head .party{color:var(--text-2); margin-top:6px; font-size:13.5px}
+.dr-body{padding:22px 26px}
+.dr-vig{background:var(--surface-2); border:1px solid var(--border-soft); border-radius:12px; padding:16px 18px; margin-bottom:20px}
+.dr-vig .lab{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:13px}
+.dr-vig .dates{display:flex; justify-content:space-between; font-size:12px; color:var(--text-2); margin-top:9px}
+.dr-warn{display:flex; gap:10px; align-items:flex-start; background:var(--amber-soft); border:1px solid rgba(227,169,60,.28); border-radius:10px; padding:12px 14px; margin-top:14px; font-size:12.5px; color:#EFC368}
+.dr-warn svg{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:12px; overflow:hidden; margin-bottom:20px}
+.field{background:var(--surface); padding:13px 15px}
+.field .k{font-size:11px; color:var(--muted); letter-spacing:.03em}
+.field .v{font-size:13.5px; font-weight:500; margin-top:5px}
+.dr-sec-lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:4px 0 12px}
+.file{display:flex; align-items:center; gap:12px; background:var(--surface-2); border:1px solid var(--border-soft); border-radius:10px; padding:12px 14px; margin-bottom:8px; transition:.14s; cursor:pointer}
+.file:hover{border-color:var(--gold);background:var(--surface-3)}
+.file .ic{width:34px;height:34px;border-radius:8px;background:var(--red-soft);color:#EE8077;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700}
+.file .fn{flex:1;min-width:0}
+.file .fn .n{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file .fn .s{font-size:11px;color:var(--muted);margin-top:2px}
+.file .dl{color:var(--muted)} .file:hover .dl{color:var(--text)}
+
+/* ---------- modal ---------- */
+.modal{
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-46%) scale(.97); opacity:0; pointer-events:none;
+  width:min(560px,94vw); max-height:90vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border);
+  border-radius:18px; box-shadow:var(--shadow); z-index:50; transition:.24s cubic-bezier(.4,0,.2,1);
+}
+.modal.show{opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1)}
+.mod-head{padding:24px 26px 0}
+.mod-head h2{font-family:'Fraunces',serif;font-weight:500;font-size:24px}
+.mod-head p{color:var(--text-2);font-size:13px;margin-top:5px}
+.mod-body{padding:22px 26px 26px}
+.drop{
+  border:1.5px dashed var(--border); border-radius:14px; padding:30px 20px; text-align:center; cursor:pointer; transition:.18s;
+  background:var(--surface-2);
+}
+.drop:hover{border-color:var(--gold); background:var(--gold-soft)}
+.drop .ic{width:48px;height:48px;border-radius:12px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;color:var(--gold)}
+.drop .ic svg{width:24px;height:24px}
+.drop b{font-size:14px} .drop span{display:block;color:var(--muted);font-size:12.5px;margin-top:5px}
+.ai-scan{display:none; text-align:center; padding:26px 20px}
+.ai-scan.show{display:block}
+.scanner{width:54px;height:54px;margin:0 auto 16px;border-radius:14px;background:var(--gold-soft);display:flex;align-items:center;justify-content:center;color:var(--gold);position:relative;overflow:hidden}
+.scanner svg{width:26px;height:26px;z-index:2}
+.scanner::after{content:"";position:absolute;left:0;right:0;height:30%;background:linear-gradient(180deg,transparent,rgba(201,162,75,.55),transparent);animation:scan 1.3s ease-in-out infinite}
+@keyframes scan{0%{top:-30%}100%{top:100%}}
+.ai-scan b{font-size:14.5px} .ai-scan span{display:block;color:var(--muted);font-size:12.5px;margin-top:6px}
+.ai-form{display:none}
+.ai-form.show{display:block}
+.ai-ribbon{display:flex;align-items:center;gap:9px;background:var(--green-soft);border:1px solid rgba(72,188,140,.3);border-radius:10px;padding:11px 14px;margin-bottom:18px;font-size:12.5px;color:#6FD3A8}
+.ai-ribbon svg{width:16px;height:16px;flex-shrink:0}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:11.5px;color:var(--text-2);margin-bottom:6px;font-weight:500}
+.fg input,.fg select{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:inherit;font-size:13.5px;padding:9px 12px;outline:none;transition:.15s}
+.fg input:focus,.fg select:focus{border-color:rgba(201,162,75,.5)}
+.fg .filled{border-color:rgba(72,188,140,.35)}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mod-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
+.btn-ghost{background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-family:inherit;font-weight:500;font-size:13.5px;padding:10px 17px;border-radius:11px;cursor:pointer;transition:.15s}
+.btn-ghost:hover{color:var(--text);background:var(--surface-3)}
+
+@media(max-width:880px){
+  .stats{grid-template-columns:1fr 1fr}
+  .list-head,.row{grid-template-columns:2fr 1.6fr; }
+  .list-head span:nth-child(3),.list-head span:nth-child(4),.row .c-val,.row .vig{display:none}
+  .wrap{padding:0 18px}
+  h1{font-size:32px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="crumb">KPH OS &nbsp;/&nbsp; Financeiro &nbsp;/&nbsp; <b>Contratos</b></div>
+    <div class="head-row">
+      <div>
+        <h1>Contratos</h1>
+        <p>Todos os acordos do grupo em um lugar — com aviso antes de cada vencimento, não depois.</p>
+      </div>
+      <div class="head-actions">
+        <div class="unit-seg" id="unitSeg">
+          <button class="on" data-unit="all">Todas</button>
+          <button data-unit="meet">Meet &amp; Eat</button>
+          <button data-unit="madonna">Madonna</button>
+          <button data-unit="kph">KPH Holding</button>
+        </div>
+        <button class="btn-primary" onclick="openModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+          Novo contrato
+        </button>
+      </div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="alerts">
+      <h3><span class="pulse"></span> Ação necessária</h3>
+      <div class="alert-list" id="alertList"></div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
+      <input id="search" placeholder="Buscar por contrato, contraparte, responsável...">
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="view-seg" id="viewSeg">
+      <button class="on" data-view="list" title="Lista">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke-linecap="round"/></svg>
+      </button>
+      <button data-view="timeline" title="Linha do tempo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h10M4 12h16M4 17h7" stroke-linecap="round"/><circle cx="18" cy="7" r="1.6" fill="currentColor" stroke="none"/><circle cx="14" cy="17" r="1.6" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="list" id="listView">
+    <div class="list-head">
+      <span>Contrato</span><span>Contraparte</span><span>Valor</span><span>Vigência</span>
+    </div>
+    <div id="rows"></div>
+  </div>
+
+  <div class="timeline" id="timelineView">
+    <div class="tl-months">
+      <div></div>
+      <div class="tl-scale" id="tlScale"></div>
+    </div>
+    <div id="tlRows"></div>
+  </div>
+</div>
+
+<!-- drawer -->
+<div class="scrim" id="scrim" onclick="closeAll()"></div>
+<aside class="drawer" id="drawer"></aside>
+
+<!-- modal -->
+<div class="modal" id="modal">
+  <div class="mod-head">
+    <h2>Novo contrato</h2>
+    <p>Suba o PDF e a IA extrai os dados. Você só confere.</p>
+  </div>
+  <div class="mod-body">
+    <div class="drop" id="drop" onclick="runAI()">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7 9m5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" stroke-linecap="round"/></svg></div>
+      <b>Arraste o contrato em PDF</b>
+      <span>ou clique para selecionar &nbsp;·&nbsp; a leitura é automática</span>
+    </div>
+
+    <div class="ai-scan" id="aiScan">
+      <div class="scanner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2" stroke-linecap="round"/><path d="M4 12h16" stroke-linecap="round"/></svg></div>
+      <b>Lendo o contrato…</b>
+      <span>Identificando contraparte, vigência, valores e reajuste</span>
+    </div>
+
+    <div class="ai-form" id="aiForm">
+      <div class="ai-ribbon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Dados extraídos pela IA — revise e ajuste o que precisar antes de salvar.
+      </div>
+      <div class="fg"><label>Título do contrato</label><input class="filled" value="Locação Comercial — Unidade Itaim"></div>
+      <div class="fg-row">
+        <div class="fg"><label>Contraparte</label><input class="filled" value="Imobiliária Faria Lima Ltda"></div>
+        <div class="fg"><label>Unidade</label><select class="filled"><option>Madonna · Itaim</option><option>Meet &amp; Eat</option><option>KPH Holding</option></select></div>
+      </div>
+      <div class="fg-row">
+        <div class="fg"><label>Categoria</label><select class="filled"><option>Locação</option><option>Fornecimento</option><option>Serviço</option><option>Seguro</option><option>Sociedade</option></select></div>
+        <div class="fg"><label>Valor mensal</label><input class="filled" value="R$ 85.000,00"></div>
+      </div>
+      <div class="fg-row">
+        <div class="fg"><label>Início da vigência</label><input class="filled" value="01/09/2023"></div>
+        <div class="fg"><label>Fim da vigência</label><input class="filled" value="31/08/2028"></div>
+      </div>
+      <div class="fg-row">
+        <div class="fg"><label>Índice de reajuste</label><input class="filled" value="IGP-M"></div>
+        <div class="fg"><label>Aviso prévio (dias)</label><input class="filled" value="180"></div>
+      </div>
+      <div class="mod-foot">
+        <button class="btn-ghost" onclick="closeAll()">Cancelar</button>
+        <button class="btn-primary" onclick="closeAll()">Salvar contrato</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TODAY = new Date('2026-06-24');
+const fmt = n => 'R$ ' + n.toLocaleString('pt-BR');
+const dt = s => s ? new Date(s) : null;
+const dDays = (a,b) => Math.round((b-a)/864e5);
+const brDate = d => d ? d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'}).replace('.','') : '—';
+
+const CATS = {
+  Locacao:{label:'Locação', c:'--gold'}, Seguro:{label:'Seguro', c:'--blue'},
+  Software:{label:'Software', c:'--blue'}, Servico:{label:'Serviço', c:'--green'},
+  Consultoria:{label:'Consultoria', c:'--gold'}, Fornecimento:{label:'Fornecimento', c:'--green'},
+  Manutencao:{label:'Manutenção', c:'--amber'}, Marketing:{label:'Marketing', c:'--blue'},
+  Sociedade:{label:'Sociedade', c:'--red'},
+};
+const UNITS = {meet:'Meet & Eat', madonna:'Madonna · Itaim', kph:'KPH Holding'};
+
+const DATA = [
+  {id:1, t:'Locação Comercial — Itaim', cat:'Locacao', unit:'madonna', party:'Imobiliária Faria Lima Ltda', resp:'Henrique G.', valor:85000, rec:'mês', ini:'2023-09-01', fim:'2028-08-31', aviso:180, idx:'IGP-M', multa:'3 aluguéis', files:[['Contrato de Locação.pdf','2,4 MB','principal'],['1º Aditivo — Reajuste 2025.pdf','480 KB','aditivo']]},
+  {id:2, t:'Locação Comercial — Meet & Eat', cat:'Locacao', unit:'meet', party:'Espólio Família Junqueira', resp:'Henrique G.', valor:62000, rec:'mês', ini:'2022-03-01', fim:'2027-02-28', aviso:90, idx:'IPCA', multa:'3 aluguéis', files:[['Contrato de Locação ME.pdf','1,9 MB','principal']]},
+  {id:3, t:'Seguro Empresarial Multirrisco', cat:'Seguro', unit:'kph', party:'Porto Seguro Cia. de Seguros', resp:'Financeiro', valor:22000, rec:'ano', ini:'2025-08-01', fim:'2026-07-31', aviso:30, idx:'—', multa:'—', files:[['Apólice 2025-2026.pdf','3,1 MB','principal']]},
+  {id:4, t:'Licença POS Lorean', cat:'Software', unit:'kph', party:'Lorean Sistemas Ltda', resp:'TI', valor:2400, rec:'mês', ini:'2024-01-15', fim:null, aviso:60, idx:'—', multa:'—', files:[['Termo de Uso Lorean.pdf','640 KB','principal']]},
+  {id:5, t:'Assessoria Contábil', cat:'Servico', unit:'kph', party:'Contabilizei Assessoria', resp:'Financeiro', valor:6800, rec:'mês', ini:'2023-06-01', fim:null, aviso:30, idx:'—', multa:'—', files:[['Contrato de Prestação.pdf','520 KB','principal']]},
+  {id:6, t:'Consultoria Gastronômica', cat:'Consultoria', unit:'madonna', party:'Marco Bianchi Gastronomia ME', resp:'Henrique G.', valor:14000, rec:'mês', ini:'2025-09-01', fim:'2026-08-31', aviso:30, idx:'—', multa:'1 mensalidade', files:[['Contrato PJ — Chef.pdf','410 KB','principal']]},
+  {id:7, t:'Fornecimento de Bebidas', cat:'Fornecimento', unit:'meet', party:'Premium Drinks Distribuidora', resp:'Compras', valor:0, rec:'consignação', ini:'2024-05-01', fim:'2027-04-30', aviso:60, idx:'—', multa:'—', files:[['Acordo de Consignação.pdf','290 KB','principal']]},
+  {id:8, t:'Manutenção de Equipamentos', cat:'Manutencao', unit:'meet', party:'Cozinha Industrial Tec', resp:'Operações', valor:1900, rec:'mês', ini:'2025-02-01', fim:'2026-07-15', aviso:30, idx:'—', multa:'—', files:[['Contrato Manutenção.pdf','350 KB','principal']]},
+  {id:9, t:'Gestão de Mídia & Social', cat:'Marketing', unit:'madonna', party:'Agência Lumen', resp:'Marketing', valor:9500, rec:'mês', ini:'2026-07-01', fim:'2027-06-30', aviso:30, idx:'—', multa:'—', status:'negociacao', files:[['Proposta Comercial.pdf','1,1 MB','principal']]},
+  {id:10, t:'Acordo de Sócios KPH', cat:'Sociedade', unit:'kph', party:'KPH Participações S.A.', resp:'Sócios', valor:0, rec:'—', ini:'2021-01-01', fim:null, aviso:0, idx:'—', multa:'—', files:[['Acordo de Sócios.pdf','5,8 MB','principal'],['Aditivo — Entrada Sócio.pdf','620 KB','aditivo']]},
+];
+
+// derive status + windows
+DATA.forEach(c=>{
+  c.iniD=dt(c.ini); c.fimD=dt(c.fim);
+  if(c.status==='negociacao'){c.st='Em negociação'; c.stc='--blue'; c.days=null;}
+  else if(!c.fimD){c.st='Indeterminado'; c.stc='--green'; c.days=null;}
+  else{
+    c.days=dDays(TODAY,c.fimD);
+    c.avisoStart=new Date(c.fimD.getTime()-c.aviso*864e5);
+    c.avisoDays=dDays(TODAY,c.avisoStart);
+    if(c.days<0){c.st='Vencido'; c.stc='--red';}
+    else if(c.days<=60){c.st='Vencendo'; c.stc='--amber';}
+    else if(c.avisoDays<=60 && c.aviso>0){c.st='Aviso prévio'; c.stc='--amber';}
+    else{c.st='Ativo'; c.stc='--green';}
+  }
+});
+
+let unit='all', cat='all', q='', view='list';
+
+function visible(){
+  return DATA.filter(c=>
+    (unit==='all'||c.unit===unit) &&
+    (cat==='all'||c.cat===cat) &&
+    (q===''||(c.t+c.party+c.resp).toLowerCase().includes(q))
+  );
+}
+
+function renderStats(){
+  const v=DATA.filter(c=>unit==='all'||c.unit===unit);
+  const ativos=v.filter(c=>c.st!=='Vencido'&&c.st!=='Em negociação').length;
+  const mensal=v.filter(c=>c.rec==='mês'&&c.st!=='Em negociação').reduce((s,c)=>s+c.valor,0);
+  const venc=v.filter(c=>c.days!==null&&c.days>=0&&c.days<=90).length;
+  const acao=v.filter(c=>c.st==='Vencendo'||c.st==='Vencido'||c.st==='Aviso prévio').length;
+  document.getElementById('stats').innerHTML=`
+    <div class="stat"><div class="lab"><span class="dot" style="background:var(--green)"></span>Contratos ativos</div><div class="val tnum">${ativos}</div><div class="sub">de <b>${v.length}</b> no grupo</div></div>
+    <div class="stat"><div class="lab"><span class="dot" style="background:var(--gold)"></span>Compromisso mensal</div><div class="val tnum"><small>R$</small>${mensal.toLocaleString('pt-BR')}</div><div class="sub">recorrente em contratos</div></div>
+    <div class="stat"><div class="lab"><span class="dot" style="background:var(--amber)"></span>Vencem em 90 dias</div><div class="val tnum">${venc}</div><div class="sub">renovar ou encerrar</div></div>
+    <div class="stat alert"><div class="lab"><span class="dot" style="background:var(--red)"></span>Ação necessária</div><div class="val tnum c-red">${acao}</div><div class="sub">prazo de aviso ou vencimento próximo</div></div>`;
+}
+
+function renderAlerts(){
+  const items=DATA
+    .filter(c=>unit==='all'||c.unit===unit)
+    .filter(c=>c.days!==null && (c.days<=90 || (c.aviso>0 && c.avisoDays<=75)))
+    .map(c=>{
+      const avisoSoon = c.aviso>0 && c.avisoDays<=75 && c.avisoDays>=0 && c.avisoDays<c.days;
+      return {c, key: avisoSoon?c.avisoDays:c.days, aviso:avisoSoon};
+    })
+    .sort((a,b)=>a.key-b.key).slice(0,4);
+  document.getElementById('alertList').innerHTML = items.map(({c,key,aviso})=>{
+    const urgent = key<=30;
+    return `<div class="alert-item" onclick="openDrawer(${c.id})">
+      <span class="tag ${urgent?'t-red':'t-amber'}">${aviso?'Aviso prévio':(c.days<0?'Vencido':'Vencimento')}</span>
+      <span class="txt"><b>${c.t}</b> · ${UNITS[c.unit]}${aviso?` — exige ${c.aviso} dias de aviso para encerrar`:''}</span>
+      <span class="when ${urgent?'c-red':'c-amber'} tnum">${key<0?Math.abs(key)+' dias atrás':'em '+key+' dias'}</span>
+      <span class="arr">→</span>
+    </div>`;
+  }).join('') || `<div style="color:var(--muted);font-size:13px;padding:6px 4px">Nenhum prazo crítico nesta seleção. 👌</div>`;
+}
+
+function vigBar(c){
+  if(c.status==='negociacao') return `<div class="vig-track"><div class="vig-fill" style="width:0"></div><div class="vig-dash" style="width:100%;opacity:.6"></div></div>`;
+  if(!c.fimD){ // indeterminado
+    return `<div class="vig-track"><div class="vig-fill" style="left:0;width:64%;background:linear-gradient(90deg,var(--green-soft),var(--green))"></div><div class="vig-dash"></div></div>`;
+  }
+  const total=c.fimD-c.iniD, elapsed=Math.max(0,Math.min(1,(TODAY-c.iniD)/total));
+  const avFrac=Math.max(0,Math.min(1,(c.aviso*864e5)/total));
+  const col = c.days<0?'--red':(c.days<=60?'--amber':'--gold');
+  return `<div class="vig-track">
+    <div class="vig-fill" style="width:${elapsed*100}%;background:linear-gradient(90deg,var(${col}-soft),var(${col}))"></div>
+    ${c.aviso>0?`<div class="vig-danger" style="right:0;width:${avFrac*100}%;background:var(--amber-soft)"></div>`:''}
+    <div class="vig-now" style="left:${elapsed*100}%"></div>
+  </div>`;
+}
+
+function renderRows(){
+  const v=visible();
+  const el=document.getElementById('rows');
+  if(!v.length){el.innerHTML=`<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg><p>Nenhum contrato encontrado com esses filtros.</p></div>`; return;}
+  el.innerHTML=v.map(c=>{
+    const ct=CATS[c.cat];
+    const st = c.days!==null ? (c.days<0?`${Math.abs(c.days)}d vencido`:`vence em ${c.days}d`) : (c.status==='negociacao'?'em negociação':'sem prazo final');
+    return `<div class="row" onclick="openDrawer(${c.id})">
+      <div class="c-name">
+        <div class="t">${c.t}</div>
+        <div class="meta"><span class="cat" style="background:var(${ct.c}-soft);color:var(${ct.c})">${ct.label}</span><span class="unit-tag">${UNITS[c.unit]}</span></div>
+      </div>
+      <div class="c-party">${c.party}<div class="resp">${c.resp}</div></div>
+      <div class="c-val tnum">${c.valor>0?fmt(c.valor):'—'}<small>${c.valor>0?'/ '+c.rec:c.rec}</small></div>
+      <div class="vig">
+        <div class="vig-meta"><span class="st" style="color:var(${c.stc})">${c.st}</span><span class="tnum">${st}</span></div>
+        ${vigBar(c)}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderTimeline(){
+  const v=visible().filter(c=>c.iniD);
+  const min=new Date('2022-01-01'), max=new Date('2029-01-01'), span=max-min;
+  const pos=d=>((d-min)/span)*100;
+  // scale
+  let scale='';
+  for(let y=2022;y<=2028;y++){scale+=`<span style="position:absolute;left:${pos(new Date(y+'-01-01'))}%">${y}</span>`;}
+  scale+=`<span class="tl-now-lab" style="left:${pos(TODAY)}%">hoje</span>`;
+  document.getElementById('tlScale').innerHTML=scale;
+  document.getElementById('tlRows').innerHTML=v.map(c=>{
+    const end=c.fimD||max;
+    const left=pos(c.iniD), width=Math.max(2,pos(end)-pos(c.iniD));
+    const col=c.stc;
+    return `<div class="tl-row" onclick="openDrawer(${c.id})">
+      <div class="tl-name">${c.t}</div>
+      <div class="tl-bar-area">
+        <div class="tl-nowline" style="left:${pos(TODAY)}%"></div>
+        <div class="tl-bar" style="left:${left}%;width:${width}%;background:linear-gradient(90deg,var(${col}),var(${col}));opacity:.92">${fmt? (c.valor>0?fmt(c.valor):'') :''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function render(){renderStats();renderAlerts();renderRows();if(view==='timeline')renderTimeline();}
+
+function openDrawer(id){
+  const c=DATA.find(x=>x.id===id), ct=CATS[c.cat];
+  const warn = c.aviso>0 && c.days!==null && c.avisoDays<=75 && c.days>=0
+    ? `<div class="dr-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+       <span>Para encerrar este contrato é preciso avisar com <b>${c.aviso} dias</b> de antecedência. A janela ${c.avisoDays<0?'já abriu há '+Math.abs(c.avisoDays)+' dias':'abre em '+c.avisoDays+' dias'}.</span></div>` : '';
+  const dr=document.getElementById('drawer');
+  dr.innerHTML=`
+    <div class="dr-head">
+      <button class="dr-close" onclick="closeAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/></svg></button>
+      <span class="cat" style="background:var(${ct.c}-soft);color:var(${ct.c})">${ct.label}</span>
+      <h2>${c.t}</h2>
+      <div class="party">${c.party} &nbsp;·&nbsp; ${UNITS[c.unit]}</div>
+    </div>
+    <div class="dr-body">
+      <div class="dr-vig">
+        <div class="lab">Vigência &nbsp;—&nbsp; <span style="color:var(${c.stc})">${c.st}</span></div>
+        ${vigBar(c)}
+        <div class="dates"><span>${brDate(c.iniD)}</span><span>${c.fimD?brDate(c.fimD):'sem término definido'}</span></div>
+        ${warn}
+      </div>
+      <div class="grid2">
+        <div class="field"><div class="k">Valor</div><div class="v tnum">${c.valor>0?fmt(c.valor)+' / '+c.rec:c.rec}</div></div>
+        <div class="field"><div class="k">Reajuste</div><div class="v">${c.idx}</div></div>
+        <div class="field"><div class="k">Aviso prévio</div><div class="v">${c.aviso>0?c.aviso+' dias':'—'}</div></div>
+        <div class="field"><div class="k">Multa rescisória</div><div class="v">${c.multa}</div></div>
+        <div class="field"><div class="k">Responsável</div><div class="v">${c.resp}</div></div>
+        <div class="field"><div class="k">Renovação</div><div class="v">${c.fimD?'Manual':'Automática'}</div></div>
+      </div>
+      <div class="dr-sec-lab">Documentos &nbsp;(${c.files.length})</div>
+      ${c.files.map(f=>`<div class="file"><div class="ic">PDF</div><div class="fn"><div class="n">${f[0]}</div><div class="s">${f[2]==='aditivo'?'Aditivo · ':''}${f[1]}</div></div><div class="dl"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div>`).join('')}
+    </div>`;
+  document.getElementById('scrim').classList.add('show');
+  dr.classList.add('show');
+}
+
+function openModal(){
+  document.getElementById('drop').style.display='block';
+  document.getElementById('aiScan').classList.remove('show');
+  document.getElementById('aiForm').classList.remove('show');
+  document.getElementById('scrim').classList.add('show');
+  document.getElementById('modal').classList.add('show');
+}
+function runAI(){
+  document.getElementById('drop').style.display='none';
+  document.getElementById('aiScan').classList.add('show');
+  setTimeout(()=>{
+    document.getElementById('aiScan').classList.remove('show');
+    document.getElementById('aiForm').classList.add('show');
+  },1900);
+}
+function closeAll(){
+  document.getElementById('scrim').classList.remove('show');
+  document.getElementById('drawer').classList.remove('show');
+  document.getElementById('modal').classList.remove('show');
+}
+
+// controls
+document.getElementById('unitSeg').onclick=e=>{const b=e.target.closest('button');if(!b)return;document.querySelectorAll('#unitSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');unit=b.dataset.unit;render();};
+document.getElementById('search').oninput=e=>{q=e.target.value.toLowerCase().trim();render();};
+document.getElementById('viewSeg').onclick=e=>{const b=e.target.closest('button');if(!b)return;document.querySelectorAll('#viewSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');view=b.dataset.view;document.getElementById('listView').style.display=view==='list'?'block':'none';document.getElementById('timelineView').style.display=view==='timeline'?'block':'none';render();};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAll();});
+
+// category chips
+const chipDefs=[['all','Todas'],...Object.entries(CATS).map(([k,v])=>[k,v.label])];
+document.getElementById('chips').innerHTML=chipDefs.map(([k,l],i)=>`<button class="chip${i===0?' on':''}" data-cat="${k}">${l}</button>`).join('');
+document.getElementById('chips').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;document.querySelectorAll('#chips .chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');cat=b.dataset.cat;render();};
+
+render();
+</script>
+</body>
+</html>
