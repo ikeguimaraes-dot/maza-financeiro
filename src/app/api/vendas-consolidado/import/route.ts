@@ -19,6 +19,14 @@ export function OPTIONS() {
   return new Response(null, { headers: CORS });
 }
 
+// Helpers que GARANTEM resposta JSON (nunca new Response("texto"))
+function jsonError(message: string, status = 500) {
+  return Response.json({ success: false, error: message, errors: [message] }, { status, headers: CORS });
+}
+function jsonOk(body: Record<string, unknown>) {
+  return Response.json({ success: true, errors: [], ...body }, { headers: CORS });
+}
+
 // ── Prompt (idêntico ao VENDA_PROMPT do import diário) ─────────────────────────
 const VENDA_PROMPT = `Extraia TODOS os produtos vendidos de TODAS as seções de grupo deste relatório Lorean de Venda e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
@@ -82,13 +90,21 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTok
 // ── Route handler ──────────────────────────────────────────────────────────────
 export async function POST(request: Request) {
   console.log("[vendas-consolidado/import] POST called");
+  console.log("[vendas-consolidado] ANTHROPIC_API_KEY:", !!process.env.ANTHROPIC_API_KEY);
+  console.log("[vendas-consolidado] SERVICE_ROLE:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   try {
+    // Falha cedo e com JSON se as envs não estão configuradas
+    if (!process.env.ANTHROPIC_API_KEY) return jsonError("ANTHROPIC_API_KEY não configurada no ambiente", 500);
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return jsonError("Supabase (URL/SERVICE_ROLE) não configurado no ambiente", 500);
+    }
+
     let formData: FormData;
     try {
       formData = await request.formData();
     } catch (e) {
-      return Response.json({ success: false, errors: [`formData: ${String(e)}`] }, { status: 400, headers: CORS });
+      return jsonError(`formData: ${String(e)}`, 400);
     }
 
     const unitId     = formData.get("unit_id") as string | null;
@@ -101,20 +117,20 @@ export async function POST(request: Request) {
     const caixaFile     = formData.get("caixa") as File | null;
 
     console.log("[vendas-consolidado/import] unit_id:", unitId, "inicio:", dataInicio, "fim:", dataFim,
-      "venda:", vendaFile?.name, "movimento:", movimentoFile?.name, "caixa:", caixaFile?.name);
+      "venda:", vendaFile?.name, vendaFile?.size, "movimento:", movimentoFile?.name, "caixa:", caixaFile?.name);
 
     if (!unitId || !dataInicio || !dataFim) {
-      return Response.json({ success: false, errors: ["unit_id, data_inicio e data_fim são obrigatórios"] }, { status: 400, headers: CORS });
+      return jsonError("unit_id, data_inicio e data_fim são obrigatórios", 400);
     }
     if (!vendaFile) {
-      return Response.json({ success: false, errors: ["O PDF de Venda é obrigatório (origem dos produtos consolidados)"] }, { status: 400, headers: CORS });
+      return jsonError("O PDF de Venda é obrigatório (origem dos produtos consolidados)", 400);
     }
 
     let supabase: ReturnType<typeof getServiceClient>;
     try {
       supabase = getServiceClient();
     } catch (e) {
-      return Response.json({ success: false, errors: [`supabase: ${String(e)}`] }, { status: 500, headers: CORS });
+      return jsonError(`supabase: ${String(e)}`, 500);
     }
 
     // 1) Extrai os produtos do PDF de Venda
@@ -124,7 +140,7 @@ export async function POST(request: Request) {
     console.log("[vendas-consolidado/import] produtos extraídos:", produtosRaw.length);
 
     if (!produtosRaw.length) {
-      return Response.json({ success: false, errors: ["Nenhum produto extraído do PDF de Venda"] }, { status: 422, headers: CORS });
+      return jsonError("Nenhum produto extraído do PDF de Venda", 422);
     }
 
     // 2) Agrega por grupo+produto (defensivo: somar caso haja linhas repetidas)
@@ -175,9 +191,9 @@ export async function POST(request: Request) {
     }
 
     console.log(`[vendas-consolidado/import] done — periodo_id: ${periodo.id}, produtos: ${rows.length}`);
-    return Response.json({ success: true, periodo_id: periodo.id, produtos: rows.length, errors: [] }, { headers: CORS });
+    return jsonOk({ periodo_id: periodo.id, produtos: rows.length });
   } catch (e) {
     console.error("[vendas-consolidado/import] unhandled error:", e);
-    return Response.json({ success: false, periodo_id: null, errors: [String(e)] }, { status: 500, headers: CORS });
+    return jsonError(String(e), 500);
   }
 }
