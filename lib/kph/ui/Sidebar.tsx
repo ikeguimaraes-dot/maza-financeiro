@@ -190,6 +190,7 @@ const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/financeiro/produtos",     label: "Relatório de Produtos", icon: Package },
+      { href: "/financeiro/contratos",    label: "Contratos",            icon: FileText },
       { href: "/financeiro/pagar",        label: "Contas a Pagar",       icon: CreditCard },
       { href: "/financeiro/receber",      label: "Contas a Receber",     icon: Banknote },
       { href: "/financeiro/aprovacoes",   label: "Aprovações",            icon: CheckSquare },
