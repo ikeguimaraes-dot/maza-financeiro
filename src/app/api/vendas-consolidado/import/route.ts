@@ -4,7 +4,8 @@
 // A ÚNICA diferença é o DESTINO: aqui grava nas tabelas vendas_consolidado_* (por
 // período), no diário grava nas lorean_* (por dia/turno).
 import { createClient } from "@supabase/supabase-js";
-import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract";
+import { PDFDocument } from "pdf-lib";
+import { VENDA_PROMPT, parsePdf } from "@/lib/lorean/vendaExtract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,6 +35,30 @@ function getServiceClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase env vars not configured");
   return createClient(url, key);
+}
+
+// Fatia o PDF em blocos de N páginas. Um relatório de 6 meses (31 páginas) é
+// grande demais para uma única chamada ao Claude (timeout 300s); blocos de 4
+// páginas são o tamanho comprovado que importa rápido. Cada bloco vira um PDF
+// menor em base64, processado numa chamada separada.
+async function splitPdfIntoBlocks(
+  pdfBytes: Uint8Array,
+  pagesPerBlock = 4,
+): Promise<{ b64: string; from: number; to: number }[]> {
+  const src = await PDFDocument.load(pdfBytes);
+  const total = src.getPageCount();
+  const blocks: { b64: string; from: number; to: number }[] = [];
+  for (let start = 0; start < total; start += pagesPerBlock) {
+    const end = Math.min(start + pagesPerBlock, total);
+    const sub = await PDFDocument.create();
+    const indices: number[] = [];
+    for (let p = start; p < end; p++) indices.push(p);
+    const copied = await sub.copyPages(src, indices);
+    copied.forEach((pg) => sub.addPage(pg));
+    const bytes = await sub.save();
+    blocks.push({ b64: Buffer.from(bytes).toString("base64"), from: start + 1, to: end });
+  }
+  return blocks;
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
@@ -82,13 +107,37 @@ export async function POST(request: Request) {
       return jsonError(`supabase: ${String(e)}`, 500);
     }
 
-    // 1) Extrai os produtos do PDF de Venda — MESMA chamada do import diário
-    //    (parsePdf compartilhada, max_tokens 32768, igual ao diário na linha do "venda").
-    const vendaB64 = await fileToBase64(vendaFile);
-    console.log("[vc] chamando parsePdf (compartilhada com import diário)");
-    const parsed = await parsePdf(vendaB64, VENDA_PROMPT, "venda_consolidado", 32768);
-    const produtosRaw: any[] = Array.isArray(parsed.produtos) ? parsed.produtos : [];
-    console.log("[vc] produtos parseados:", produtosRaw.length);
+    // 1) Fatia o PDF em blocos de 4 páginas e extrai os produtos de cada bloco.
+    //    Cada bloco usa a MESMA parsePdf compartilhada com o import diário
+    //    (claude-sonnet-4-6, streaming, max_tokens 32768) — só que sobre poucas
+    //    páginas, o que é rápido e cabe folgado nos 300s.
+    const vendaBytes = new Uint8Array(await vendaFile.arrayBuffer());
+    const blocks = await splitPdfIntoBlocks(vendaBytes, 4);
+    const totalPaginas = blocks.length ? blocks[blocks.length - 1]!.to : 0;
+    console.log(`[vc] PDF tem ${totalPaginas} páginas, dividido em ${blocks.length} blocos`);
+
+    if (!blocks.length) {
+      return jsonError("PDF de Venda sem páginas legíveis", 422);
+    }
+
+    // Processa em paralelo, em grupos de 3, para não estourar o rate limit do Claude.
+    const produtosRaw: any[] = [];
+    const CONC = 3;
+    for (let i = 0; i < blocks.length; i += CONC) {
+      const grupo = blocks.slice(i, i + CONC);
+      const resultados = await Promise.all(
+        grupo.map(async (blk, j) => {
+          const idx = i + j + 1;
+          console.log(`[vc] processando bloco ${idx}/${blocks.length} (páginas ${blk.from}-${blk.to})`);
+          const parsed = await parsePdf(blk.b64, VENDA_PROMPT, `venda_bloco_${idx}`, 32768);
+          const prods = Array.isArray(parsed.produtos) ? parsed.produtos : [];
+          console.log(`[vc] bloco ${idx} retornou ${prods.length} produtos`);
+          return prods;
+        }),
+      );
+      for (const prods of resultados) produtosRaw.push(...prods);
+    }
+    console.log("[vc] produtos parseados (somados dos blocos):", produtosRaw.length);
 
     if (!produtosRaw.length) {
       return jsonError("Nenhum produto extraído do PDF de Venda", 422);
@@ -111,7 +160,9 @@ export async function POST(request: Request) {
     }
     const agregados = Array.from(map.values());
     const totalLiquido = agregados.reduce((s, r) => s + r.valor_liquido, 0);
-    console.log("[vc] agregados:", agregados.length, "totalLiquido:", totalLiquido);
+    // Produtos repetidos entre blocos (tabela quebrada entre páginas) já foram
+    // SOMADOS pelo Map acima (chave grupo+produto).
+    console.log("[vc] total agregado:", agregados.length, "produtos · totalLiquido:", totalLiquido);
 
     // 3) Cria o período
     const label = labelRaw?.trim() || `${dataInicio} a ${dataFim}`;
