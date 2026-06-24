@@ -57,12 +57,17 @@ async function fileToBase64(file: File): Promise<string> {
   return Buffer.from(buf).toString("base64");
 }
 
-async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 32768) {
+async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTokens = 16384) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
+  // NÃO-STREAMING: messages.create() resolve assim que a resposta completa chega.
+  // O messages.stream()/finalMessage() depende do evento SSE message_stop e pode
+  // ficar pendurado até o maxDuration se esse evento não fechar (causa do timeout
+  // de 5min mesmo com o Claude tendo respondido 200 em ~7s).
   const client = new Anthropic({ apiKey });
-  const stream = client.messages.stream({
+  console.log("[vc] chamando Anthropic (create, não-streaming)");
+  const response = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: maxTokens,
     messages: [
@@ -75,7 +80,7 @@ async function parsePdf(pdfBase64: string, prompt: string, label: string, maxTok
       },
     ],
   } as any);
-  const response = await stream.finalMessage();
+  console.log("[vc] resposta Claude recebida, parseando — stop_reason:", response.stop_reason);
 
   if (response.stop_reason === "max_tokens") {
     throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
@@ -136,24 +141,22 @@ export async function POST(request: Request) {
     // 1) Extrai os produtos do PDF de Venda
     const vendaB64 = await fileToBase64(vendaFile);
     const parsed = await parsePdf(vendaB64, VENDA_PROMPT, "venda_consolidado");
-    const produtosRaw: any[] = parsed.produtos ?? [];
-    console.log("[vendas-consolidado/import] produtos extraídos:", produtosRaw.length);
+    const produtosRaw: any[] = Array.isArray(parsed.produtos) ? parsed.produtos : [];
+    console.log("[vc] produtos parseados:", produtosRaw.length);
 
     if (!produtosRaw.length) {
       return jsonError("Nenhum produto extraído do PDF de Venda", 422);
     }
 
-    // 2) Agrega por grupo+produto (defensivo: somar caso haja linhas repetidas)
+    // 2) Agrega por grupo+produto (for finito sobre o array parseado — sem loop infinito)
+    const num = (v: unknown) => { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; };
     const map = new Map<string, { grupo: string; produto: string; quantidade: number; valor_bruto: number; valor_desconto: number; valor_liquido: number }>();
     for (const p of produtosRaw) {
       const grupo   = String(p.grupo ?? "—");
       const produto = String(p.produto ?? "—");
       const key = `${grupo}::${produto}`;
       const ex = map.get(key);
-      const qtd      = Number(p.qtd ?? 0);
-      const bruto    = Number(p.bruto ?? 0);
-      const desconto = Number(p.desconto ?? 0);
-      const total    = Number(p.total ?? 0);
+      const qtd = num(p.qtd), bruto = num(p.bruto), desconto = num(p.desconto), total = num(p.total);
       if (ex) {
         ex.quantidade += qtd; ex.valor_bruto += bruto; ex.valor_desconto += desconto; ex.valor_liquido += total;
       } else {
@@ -162,17 +165,20 @@ export async function POST(request: Request) {
     }
     const agregados = Array.from(map.values());
     const totalLiquido = agregados.reduce((s, r) => s + r.valor_liquido, 0);
+    console.log("[vc] agregados:", agregados.length, "totalLiquido:", totalLiquido);
 
     // 3) Cria o período
     const label = labelRaw?.trim() || `${dataInicio} a ${dataFim}`;
+    console.log("[vc] inserindo periodo");
     const { data: periodo, error: pErr } = await supabase
       .from("vendas_consolidado_periodo")
       .insert({ unit_id: unitId, data_inicio: dataInicio, data_fim: dataFim, label })
-      .select()
+      .select("id")
       .single();
     if (pErr) throw new Error(`vendas_consolidado_periodo: ${pErr.message}`);
+    console.log("[vc] periodo inserido, id:", periodo.id);
 
-    // 4) Insere produtos com participação % calculada
+    // 4) Monta as linhas com participação % calculada (sempre numérica finita)
     const rows = agregados.map((r) => ({
       periodo_id:       periodo.id,
       grupo:            r.grupo,
@@ -183,14 +189,25 @@ export async function POST(request: Request) {
       valor_liquido:    r.valor_liquido,
       participacao_pct: totalLiquido > 0 ? (r.valor_liquido / totalLiquido) * 100 : 0,
     }));
-    const { error: prodErr } = await supabase.from("vendas_consolidado_produtos").insert(rows);
+
+    // Insere em lote, em chunks de 500 (cada chunk é um único insert com await)
+    console.log("[vc] inserindo", rows.length, "produtos em lote");
+    const CHUNK = 500;
+    let prodErr: { message: string } | null = null;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK);
+      const { error } = await supabase.from("vendas_consolidado_produtos").insert(slice);
+      if (error) { prodErr = error; break; }
+      console.log(`[vc] chunk inserido ${i + slice.length}/${rows.length}`);
+    }
     if (prodErr) {
       // rollback do período para não deixar período órfão sem produtos
       await supabase.from("vendas_consolidado_periodo").delete().eq("id", periodo.id);
       throw new Error(`vendas_consolidado_produtos: ${prodErr.message}`);
     }
 
-    console.log(`[vendas-consolidado/import] done — periodo_id: ${periodo.id}, produtos: ${rows.length}`);
+    console.log("[vc] produtos inseridos");
+    console.log("[vc] done — periodo_id:", periodo.id, "produtos:", rows.length);
     return jsonOk({ periodo_id: periodo.id, produtos: rows.length });
   } catch (e) {
     console.error("[vendas-consolidado/import] unhandled error:", e);
