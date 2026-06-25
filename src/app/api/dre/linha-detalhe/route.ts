@@ -27,10 +27,16 @@ export async function GET(req: Request) {
       .gte("ref_mes", `${ano}-01-01`).lte("ref_mes", `${ano}-12-31`);
     if (empresa) q = q.eq("empresa", empresa);
 
-    const [titRes, mapaRes, ovRes] = await Promise.all([
+    // Último mês com dados da unidade (qualquer linha, qualquer ano) — para a
+    // tela escolher um mês inicial que não esteja vazio.
+    let ultQ = supabase.from("titulos_a_pagar").select("ref_mes").order("ref_mes", { ascending: false }).limit(1);
+    if (empresa) ultQ = ultQ.eq("empresa", empresa);
+
+    const [titRes, mapaRes, ovRes, ultRes] = await Promise.all([
       q,
       supabase.from("mapa_conta_dre").select("descricao_c_gerencial, linha_dre, esperada_mensal"),
       supabase.from("titulo_override").select("titulo_id, linha_dre_corrigida"),
+      ultQ,
     ]);
     if (titRes.error) return jsonError(`titulos_a_pagar: ${titRes.error.message}`);
     if (mapaRes.error) return jsonError(`mapa_conta_dre: ${mapaRes.error.message}`);
@@ -73,7 +79,11 @@ export async function GET(req: Request) {
     const lista = Array.from(contas.values()).sort((a, b) => b.total - a.total);
     const total = lista.reduce((s, c) => s + c.total, 0);
 
-    return jsonOk({ linha, ano, empresa: empresa ?? null, meses, contas: lista, esperadas, total });
+    // Meses (deste ano) que têm QUALQUER título da unidade — para o mês inicial.
+    const meses_com_dados = Array.from(new Set((titRes.data ?? []).map((t) => t.ref_mes).filter(Boolean) as string[])).sort();
+    const ultimo_mes_unidade = (ultRes.data?.[0]?.ref_mes as string | null) ?? null;
+
+    return jsonOk({ linha, ano, empresa: empresa ?? null, meses, contas: lista, esperadas, total, meses_com_dados, ultimo_mes_unidade });
   } catch (e) {
     return jsonError(String(e));
   }

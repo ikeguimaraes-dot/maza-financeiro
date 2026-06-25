@@ -17,6 +17,7 @@ export async function GET(req: Request) {
     const conta = searchParams.get("conta");
     const empresa = resolveEmpresa(searchParams.get("unidade") ?? searchParams.get("empresa"));
     const ano = searchParams.get("ano");
+    const mes = searchParams.get("mes"); // "todos" | "1".."12" | null
     if (!conta) return jsonError("param 'conta' é obrigatório", 400);
 
     const supabase = getServiceClient();
@@ -26,7 +27,9 @@ export async function GET(req: Request) {
       .eq("descricao_c_gerencial", conta)
       .order("v_titulo", { ascending: false });
     if (empresa) q = q.eq("empresa", empresa);
-    if (ano) q = q.gte("ref_mes", `${ano}-01-01`).lte("ref_mes", `${ano}-12-31`);
+    // ref_mes é sempre o 1º dia do mês → filtro exato por mês.
+    if (mes && mes !== "todos" && ano) q = q.eq("ref_mes", `${ano}-${String(Number(mes)).padStart(2, "0")}-01`);
+    else if (ano) q = q.gte("ref_mes", `${ano}-01-01`).lte("ref_mes", `${ano}-12-31`);
 
     const titRes = await q;
     if (titRes.error) return jsonError(`titulos_a_pagar: ${titRes.error.message}`);

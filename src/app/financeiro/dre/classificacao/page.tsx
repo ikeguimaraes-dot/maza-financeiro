@@ -16,6 +16,7 @@ const fmt = (n: number) => BRL.format(Math.abs(n)); // v_titulo positivo = despe
 const fmtMes = (s: string | null) => { if (!s) return "—"; const [y, m] = s.split("-"); return `${m}/${y}`; };
 const fmtDia = (s: string | null) => { if (!s) return "—"; const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
 const selectStyle: React.CSSProperties = { padding: "7px 10px", borderRadius: 8, fontSize: 13, background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", cursor: "pointer" };
+const MESES_LONG = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
 type Conta = {
   descricao_c_gerencial: string;
@@ -41,24 +42,48 @@ export default function ClassificacaoPage() {
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Filtro de mês/ano (só afeta totais e drill-down; classificação é GLOBAL)
+  const [ano, setAno] = useState<number | null>(null);
+  const [mes, setMes] = useState<string | null>(null); // "todos" | "1".."12"
+  const [mesesDisp, setMesesDisp] = useState<string[]>([]);
   // Drill-down: contas expandidas + títulos carregados por conta
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [titulosPorConta, setTitulosPorConta] = useState<Record<string, Titulo[]>>({});
   const [loadingConta, setLoadingConta] = useState<Set<string>>(new Set());
 
-  async function load() {
+  async function load(a: number | null, m: string | null) {
     setLoading(true); setErro(null);
     try {
-      const r = await fetch(`${API_BASE}/api/dre/mapa`);
+      const params = new URLSearchParams();
+      if (a != null) params.set("ano", String(a));
+      if (m != null) params.set("mes", m);
+      const r = await fetch(`${API_BASE}/api/dre/mapa?${params}`);
       const j = await r.json();
       if (!r.ok) { setErro(j.error ?? `HTTP ${r.status}`); return; }
       setContas(j.contas ?? []);
       setLinhas(j.linhas ?? []);
+      setMesesDisp(j.meses_disponiveis ?? []);
       setDirty(new Set());
+      // Primeira carga: sincroniza os seletores com o mês mais recente COM dados.
+      if (a == null || m == null) {
+        setAno(j.ano_aplicado ?? new Date().getFullYear());
+        setMes(j.mes_aplicado != null ? String(j.mes_aplicado) : "todos");
+      }
     } catch (e) { setErro(String(e)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  // Refetch ao trocar mês/ano; troca de filtro recolhe e limpa o cache do drill.
+  useEffect(() => {
+    load(ano, mes);
+    setTitulosPorConta({});
+    setAbertas(new Set());
+  }, [ano, mes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const anosDisp = useMemo(() => {
+    const ys = Array.from(new Set(mesesDisp.map((m) => Number(m.slice(0, 4))))).sort((a, b) => b - a);
+    return ys.length ? ys : [new Date().getFullYear()];
+  }, [mesesDisp]);
+  const mesesDoAno = useMemo(() => mesesDisp.filter((m) => Number(m.slice(0, 4)) === ano).map((m) => Number(m.slice(5, 7))).sort((a, b) => a - b), [mesesDisp, ano]);
 
   function editar(desc: string, patch: Partial<Conta>) {
     setContas((prev) => prev.map((c) => c.descricao_c_gerencial === desc
@@ -79,7 +104,7 @@ export default function ClassificacaoPage() {
       const j = await r.json();
       if (!r.ok) { setMsg({ ok: false, text: j.error ?? "Falha ao salvar" }); return; }
       setMsg({ ok: true, text: `${j.salvos} conta(s) salva(s).` });
-      await load();
+      await load(ano, mes);
     } catch (e) { setMsg({ ok: false, text: String(e) }); }
     finally { setSalvando(false); }
   }
@@ -89,7 +114,10 @@ export default function ClassificacaoPage() {
     if (!titulosPorConta[desc]) {
       setLoadingConta((p) => new Set(p).add(desc));
       try {
-        const r = await fetch(`${API_BASE}/api/dre/titulos?conta=${encodeURIComponent(desc)}`);
+        const params = new URLSearchParams({ conta: desc });
+        if (ano != null) params.set("ano", String(ano));
+        if (mes != null && mes !== "todos") params.set("mes", mes);
+        const r = await fetch(`${API_BASE}/api/dre/titulos?${params}`);
         const j = await r.json();
         setTitulosPorConta((p) => ({ ...p, [desc]: j.titulos ?? [] }));
       } catch { /* ignore */ }
@@ -132,6 +160,13 @@ export default function ClassificacaoPage() {
           <p style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>De-para entre as contas gerenciais do Everest e as linhas da DRE. Regime de caixa.</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <select value={mes ?? "todos"} onChange={(e) => setMes(e.target.value)} style={selectStyle} title="O filtro de mês afeta só os totais e o drill-down — a classificação é global.">
+            <option value="todos">Todos os meses</option>
+            {mesesDoAno.map((m) => <option key={m} value={String(m)}>{MESES_LONG[m - 1]}</option>)}
+          </select>
+          <select value={ano ?? new Date().getFullYear()} onChange={(e) => { setAno(Number(e.target.value)); setMes("todos"); }} style={selectStyle}>
+            {anosDisp.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
           {aClassificar > 0 && (
             <span style={{ fontSize: 13, fontWeight: 700, color: C.amber, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 8, padding: "7px 12px" }}>
               {aClassificar} conta{aClassificar > 1 ? "s" : ""} a classificar

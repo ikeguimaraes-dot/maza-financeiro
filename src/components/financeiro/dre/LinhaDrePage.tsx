@@ -20,12 +20,14 @@ const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "O
 const MESES_LONG = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
 type Conta = { conta: string; esperada_mensal: boolean; meses: Record<string, number>; total: number };
-type Resp = { linha: string; ano: number; empresa: string | null; meses: string[]; contas: Conta[]; esperadas: string[]; total: number };
+type Resp = { linha: string; ano: number; empresa: string | null; meses: string[]; contas: Conta[]; esperadas: string[]; total: number; meses_com_dados: string[]; ultimo_mes_unidade: string | null };
 
 export function LinhaDrePage({ linha }: { linha: string }) {
   const { unit } = useUnit();
-  const [ano, setAno] = useState(2026);
-  const [mes, setMes] = useState(6);
+  const now = useMemo(() => new Date(), []);
+  const [ano, setAno] = useState(now.getFullYear());
+  const [mes, setMes] = useState(now.getMonth() + 1);
+  const [inic, setInic] = useState(false); // mês inicial já ajustado?
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -38,15 +40,32 @@ export function LinhaDrePage({ linha }: { linha: string }) {
         const params = new URLSearchParams({ linha, ano: String(ano) });
         if (unit?.id) params.set("unidade", unit.id);
         const r = await fetch(`${API_BASE}/api/dre/linha-detalhe?${params}`);
-        const j = await r.json();
+        const j = (await r.json()) as Resp & { error?: string };
         if (!vivo) return;
         if (!r.ok) { setErro(j.error ?? `HTTP ${r.status}`); return; }
         setData(j);
+        // Mês inicial (uma vez): mês corrente se tiver dados; senão o mais recente
+        // com dados da unidade — para não abrir numa tela vazia.
+        if (!inic) {
+          setInic(true);
+          const comDados = j.meses_com_dados ?? [];
+          const curRef = `${ano}-${String(mes).padStart(2, "0")}-01`;
+          if (comDados.includes(curRef)) {
+            /* mantém o mês corrente */
+          } else if (comDados.length) {
+            setMes(Number(comDados[comDados.length - 1]!.slice(5, 7))); // mais recente do ano (não refaz fetch)
+          } else if (j.ultimo_mes_unidade) {
+            const y = Number(j.ultimo_mes_unidade.slice(0, 4));
+            const m = Number(j.ultimo_mes_unidade.slice(5, 7));
+            setMes(m);
+            if (y !== ano) setAno(y); // refaz fetch p/ o ano com dados
+          }
+        }
       } catch (e) { if (vivo) setErro(String(e)); }
       finally { if (vivo) setLoading(false); }
     })();
     return () => { vivo = false; };
-  }, [linha, ano, unit?.id]);
+  }, [linha, ano, unit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refMes = (m: number) => `${ano}-${String(m).padStart(2, "0")}-01`;
   const mesRef = refMes(mes);
