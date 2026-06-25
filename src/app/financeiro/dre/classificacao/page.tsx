@@ -27,7 +27,8 @@ type Conta = {
   classificada: boolean;
 };
 type Titulo = {
-  id: string; fornecedor: string; documento: string | null; descricao_c_gerencial: string;
+  id: string; fornecedor: string; razao_fornecedor: string | null; fantasia_fornecedor: string | null;
+  documento: string | null; descricao_c_gerencial: string;
   v_titulo: number; ref_mes: string | null; d_vencimento: string | null;
   override_linha: string | null; override_obs: string | null;
 };
@@ -258,7 +259,20 @@ export default function ClassificacaoPage() {
                                   <tbody>
                                     {(titulosPorConta[desc] ?? []).map((t) => (
                                       <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                                        <td style={{ padding: "6px 10px", color: C.text2, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.fornecedor}</td>
+                                        <td style={{ padding: "6px 10px", maxWidth: 280 }}>
+                                          {(() => {
+                                            const razao = t.razao_fornecedor?.trim() || null;
+                                            const fantasia = t.fantasia_fornecedor?.trim() || null;
+                                            const principal = razao ?? fantasia ?? t.fornecedor ?? "—";
+                                            const secundario = razao && fantasia && razao !== fantasia ? fantasia : null;
+                                            return (
+                                              <>
+                                                <span style={{ color: C.text2, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={principal}>{principal}</span>
+                                                {secundario && <span style={{ color: C.text3, fontSize: 11, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={secundario}>({secundario})</span>}
+                                              </>
+                                            );
+                                          })()}
+                                        </td>
                                         <td style={{ padding: "6px 10px", color: C.text3 }}>{t.documento ?? "—"}</td>
                                         <td style={{ padding: "6px 10px", color: C.text3 }}>{fmtMes(t.ref_mes)}</td>
                                         <td style={{ padding: "6px 10px", color: C.text3 }}>{fmtDia(t.d_vencimento)}</td>

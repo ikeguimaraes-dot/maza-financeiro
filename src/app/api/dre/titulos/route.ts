@@ -49,7 +49,9 @@ export async function GET(req: Request) {
       const ov = ovMap.get(t.id as string);
       return {
         id: t.id,
-        fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor ?? "—",
+        razao_fornecedor: t.razao_fornecedor ?? null,
+        fantasia_fornecedor: t.fantasia_fornecedor ?? null,
+        fornecedor: t.razao_fornecedor ?? t.fantasia_fornecedor ?? "—",
         documento: t.documento ?? t.n_nota_fiscal ?? null,
         descricao_c_gerencial: t.descricao_c_gerencial,
         v_titulo: Number(t.v_titulo ?? 0),
