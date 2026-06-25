@@ -175,6 +175,7 @@ const NAV_GROUPS: NavGroup[] = [
         children: [
           { href: "/financeiro/dre/receita",              label: "Receita",           icon: TrendingUp },
           { href: "/financeiro/dre/receita/analise-vendas", label: "Análise de Vendas", icon: BarChart3 },
+          { href: "/financeiro/dre/classificacao",        label: "Classificação",     icon: ListChecks },
           { href: "/financeiro/dre/folha",                label: "Folha",             icon: Users },
           { href: "/financeiro/dre/cmv",                  label: "CMV",               icon: ShoppingCart },
           { href: "/financeiro/dre/ocupacao",             label: "Ocupação",          icon: Building2 },
