@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
 
@@ -13,6 +13,8 @@ const C = {
 };
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const fmt = (n: number) => BRL.format(Math.abs(n)); // v_titulo positivo = despesa positiva
+const fmtMes = (s: string | null) => { if (!s) return "—"; const [y, m] = s.split("-"); return `${m}/${y}`; };
+const fmtDia = (s: string | null) => { if (!s) return "—"; const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
 const selectStyle: React.CSSProperties = { padding: "7px 10px", borderRadius: 8, fontSize: 13, background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", cursor: "pointer" };
 
 type Conta = {
@@ -22,6 +24,11 @@ type Conta = {
   linha_dre: string | null;
   esperada_mensal: boolean;
   classificada: boolean;
+};
+type Titulo = {
+  id: string; fornecedor: string; documento: string | null; descricao_c_gerencial: string;
+  v_titulo: number; ref_mes: string | null; d_vencimento: string | null;
+  override_linha: string | null; override_obs: string | null;
 };
 
 export default function ClassificacaoPage() {
@@ -34,6 +41,10 @@ export default function ClassificacaoPage() {
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Drill-down: contas expandidas + títulos carregados por conta
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+  const [titulosPorConta, setTitulosPorConta] = useState<Record<string, Titulo[]>>({});
+  const [loadingConta, setLoadingConta] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true); setErro(null);
@@ -71,6 +82,31 @@ export default function ClassificacaoPage() {
       await load();
     } catch (e) { setMsg({ ok: false, text: String(e) }); }
     finally { setSalvando(false); }
+  }
+
+  async function toggleConta(desc: string) {
+    setAbertas((prev) => { const n = new Set(prev); if (n.has(desc)) n.delete(desc); else n.add(desc); return n; });
+    if (!titulosPorConta[desc]) {
+      setLoadingConta((p) => new Set(p).add(desc));
+      try {
+        const r = await fetch(`${API_BASE}/api/dre/titulos?conta=${encodeURIComponent(desc)}`);
+        const j = await r.json();
+        setTitulosPorConta((p) => ({ ...p, [desc]: j.titulos ?? [] }));
+      } catch { /* ignore */ }
+      finally { setLoadingConta((p) => { const n = new Set(p); n.delete(desc); return n; }); }
+    }
+  }
+
+  // Reclassificação pontual: linha vazia = remover override (volta ao mapa).
+  async function reclassificar(desc: string, tituloId: string, linha: string) {
+    setTitulosPorConta((p) => ({ ...p, [desc]: (p[desc] ?? []).map((t) => t.id === tituloId ? { ...t, override_linha: linha || null } : t) }));
+    try {
+      if (linha) {
+        await fetch(`${API_BASE}/api/dre/override`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ titulo_id: tituloId, linha_dre_corrigida: linha }) });
+      } else {
+        await fetch(`${API_BASE}/api/dre/override?titulo_id=${encodeURIComponent(tituloId)}`, { method: "DELETE" });
+      }
+    } catch { /* ignore — estado local já atualizado */ }
   }
 
   const aClassificar = useMemo(() => contas.filter((c) => !c.classificada).length, [contas]);
@@ -144,25 +180,71 @@ export default function ClassificacaoPage() {
               <tbody>
                 {filtradas.map((c) => {
                   const alerta = !c.classificada;
+                  const desc = c.descricao_c_gerencial;
+                  const aberta = abertas.has(desc);
                   return (
-                    <tr key={c.descricao_c_gerencial} style={{ borderBottom: `1px solid ${C.border}`, background: alerta ? "rgba(251,191,36,0.06)" : "transparent" }}>
-                      <td style={{ padding: "9px 14px", color: C.text }}>
-                        <span style={{ fontWeight: 500 }}>{c.descricao_c_gerencial}</span>
-                        {alerta && <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 700, color: C.amber, background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 5, padding: "1px 6px", letterSpacing: 0.5 }}>A CLASSIFICAR</span>}
-                      </td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.total)}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.text3 }}>{c.count}</td>
-                      <td style={{ padding: "9px 14px" }}>
-                        <select value={c.linha_dre ?? ""} onChange={(e) => editar(c.descricao_c_gerencial, { linha_dre: e.target.value || null })}
-                          style={{ ...selectStyle, minWidth: 180, borderColor: alerta ? "rgba(251,191,36,0.5)" : "var(--border)" }}>
-                          <option value="">— escolher —</option>
-                          {linhas.map((l) => <option key={l} value={l}>{l}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: "9px 14px" }}>
-                        <input type="checkbox" checked={c.esperada_mensal} onChange={(e) => editar(c.descricao_c_gerencial, { esperada_mensal: e.target.checked })} />
-                      </td>
-                    </tr>
+                    <Fragment key={desc}>
+                      <tr style={{ borderBottom: `1px solid ${C.border}`, background: alerta ? "rgba(251,191,36,0.06)" : "transparent" }}>
+                        <td onClick={() => toggleConta(desc)} style={{ padding: "9px 14px", color: C.text, cursor: "pointer" }}>
+                          <span style={{ display: "inline-block", width: 14, color: C.text3, transform: aberta ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▶</span>
+                          <span style={{ fontWeight: 500 }}>{desc}</span>
+                          {alerta && <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 700, color: C.amber, background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 5, padding: "1px 6px", letterSpacing: 0.5 }}>A CLASSIFICAR</span>}
+                        </td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.total)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.text3 }}>{c.count}</td>
+                        <td style={{ padding: "9px 14px" }}>
+                          <select value={c.linha_dre ?? ""} onChange={(e) => editar(desc, { linha_dre: e.target.value || null })}
+                            style={{ ...selectStyle, minWidth: 180, borderColor: alerta ? "rgba(251,191,36,0.5)" : "var(--border)" }}>
+                            <option value="">— escolher —</option>
+                            {linhas.map((l) => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: "9px 14px" }}>
+                          <input type="checkbox" checked={c.esperada_mensal} onChange={(e) => editar(desc, { esperada_mensal: e.target.checked })} />
+                        </td>
+                      </tr>
+                      {aberta && (
+                        <tr>
+                          <td colSpan={5} style={{ padding: 0, background: C.surface2, borderBottom: `1px solid ${C.border}` }}>
+                            <div style={{ padding: "6px 14px 14px 34px" }}>
+                              {loadingConta.has(desc) ? (
+                                <div style={{ padding: "12px 0", color: C.text3, fontSize: 12 }}>Carregando títulos…</div>
+                              ) : (titulosPorConta[desc] ?? []).length === 0 ? (
+                                <div style={{ padding: "12px 0", color: C.text3, fontSize: 12 }}>Sem títulos nesta conta.</div>
+                              ) : (
+                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                  <thead>
+                                    <tr>
+                                      {["Fornecedor", "Doc", "Competência", "Vencimento", "Valor", "Reclassificar p/ linha"].map((h, i) => (
+                                        <th key={h} style={{ padding: "6px 10px", fontSize: 10.5, fontWeight: 600, color: C.text3, textAlign: i === 4 ? "right" : "left", whiteSpace: "nowrap", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(titulosPorConta[desc] ?? []).map((t) => (
+                                      <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                        <td style={{ padding: "6px 10px", color: C.text2, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.fornecedor}</td>
+                                        <td style={{ padding: "6px 10px", color: C.text3 }}>{t.documento ?? "—"}</td>
+                                        <td style={{ padding: "6px 10px", color: C.text3 }}>{fmtMes(t.ref_mes)}</td>
+                                        <td style={{ padding: "6px 10px", color: C.text3 }}>{fmtDia(t.d_vencimento)}</td>
+                                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(t.v_titulo)}</td>
+                                        <td style={{ padding: "6px 10px" }}>
+                                          <select value={t.override_linha ?? ""} onChange={(e) => reclassificar(desc, t.id, e.target.value)}
+                                            style={{ ...selectStyle, padding: "5px 8px", fontSize: 12, minWidth: 170, borderColor: t.override_linha ? "rgba(52,211,153,0.5)" : "var(--border)", color: t.override_linha ? C.receita : "var(--text)" }}>
+                                            <option value="">Conta (padrão{c.linha_dre ? `: ${c.linha_dre}` : ""})</option>
+                                            {linhas.map((l) => <option key={l} value={l}>{l}</option>)}
+                                          </select>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
                 {filtradas.length === 0 && (

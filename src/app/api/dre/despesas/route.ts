@@ -23,19 +23,24 @@ export async function GET(req: Request) {
 
     let q = supabase
       .from("titulos_a_pagar")
-      .select("descricao_c_gerencial, v_titulo, ref_mes, empresa");
+      .select("id, descricao_c_gerencial, v_titulo, ref_mes, empresa");
     if (empresa) q = q.eq("empresa", empresa);
     if (ano) q = q.gte("ref_mes", `${ano}-01-01`).lte("ref_mes", `${ano}-12-31`);
 
-    const [titRes, mapaRes] = await Promise.all([
+    const [titRes, mapaRes, ovRes] = await Promise.all([
       q,
       supabase.from("mapa_conta_dre").select("descricao_c_gerencial, linha_dre, esperada_mensal"),
+      supabase.from("titulo_override").select("titulo_id, linha_dre_corrigida"),
     ]);
     if (titRes.error) return jsonError(`titulos_a_pagar: ${titRes.error.message}`);
     if (mapaRes.error) return jsonError(`mapa_conta_dre: ${mapaRes.error.message}`);
+    if (ovRes.error) return jsonError(`titulo_override: ${ovRes.error.message}`);
 
     const mapa = new Map<string, string | null>();
     for (const m of mapaRes.data ?? []) mapa.set(m.descricao_c_gerencial, m.linha_dre ?? null);
+    // Precedência: override do título > mapa da conta.
+    const override = new Map<string, string | null>();
+    for (const o of ovRes.data ?? []) override.set(o.titulo_id, o.linha_dre_corrigida ?? null);
 
     // Agrupa por linha_dre → { total, meses: { ref_mes: valor } }
     const linhas: Record<string, { total: number; meses: Record<string, number> }> = {};
@@ -46,7 +51,8 @@ export async function GET(req: Request) {
       const desc = t.descricao_c_gerencial ?? "(sem conta)";
       const valor = Number(t.v_titulo ?? 0); // positivo = despesa
       const mes = (t.ref_mes as string | null) ?? null;
-      const linha = mapa.get(desc) ?? null;
+      const ov = override.get(t.id as string);
+      const linha = (ov !== undefined ? ov : mapa.get(desc)) ?? null;
 
       if (!linha) {
         const ex = naoMap.get(desc) ?? { total: 0, count: 0 };
