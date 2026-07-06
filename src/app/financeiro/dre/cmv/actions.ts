@@ -255,9 +255,12 @@ export async function getCurrentUnitId(): Promise<string | null> {
 }
 
 // ── Análise: evolução de preço unitário por produto ─────────────────────────────
-// Preço unitário do mês = Σ v_total_embalagem ÷ Σ q_embalagem (média ponderada de
-// múltiplas compras). Só entram produtos presentes em >= 2 meses (com um mês só
-// não há evolução). preco_unit = null quando o mês não tem quantidade (nunca zero).
+// Preço unitário do mês = AVG(v_custo_compra) — preço de compra JÁ normalizado pelo
+// sistema na unidade base do produto (R$/kg, R$/L, R$/un). Não usamos
+// Σv_total_embalagem ÷ Σq_embalagem porque a embalagem muda entre meses (caixa 10kg
+// vs pacote 1kg dá preço unitário diferente com custo igual). Só entram produtos em
+// >= 2 meses. preco_unit = null quando nenhum registro do mês tem v_custo_compra
+// válido (null/zero são ignorados, nunca viram zero).
 
 export type AnaliseMesPonto = {
   mes: number
@@ -286,14 +289,15 @@ export async function getAnaliseProdutos(
     const db = supabase as any
     let q = db
       .from("produtos_relatorio")
-      .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,mes_lancamento,ano_lancamento")
+      .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,v_custo_compra,mes_lancamento,ano_lancamento")
       .eq("calcula_cmv", true)
       .limit(100000)
     if (unitId) q = q.eq("unit_id", unitId)
     const { data } = await q
     if (!data || data.length === 0) return []
 
-    type MesAcc = { mes: number; ano: number; qtd: number; valor: number }
+    // custoSum/custoN = base do AVG(v_custo_compra) do mês; qtd/valor só p/ exibição.
+    type MesAcc = { mes: number; ano: number; qtd: number; valor: number; custoSum: number; custoN: number }
     type Acc = {
       item_codigo: string
       item_descricao: string | null
@@ -324,13 +328,18 @@ export async function getAnaliseProdutos(
       const mk = `${r.ano_lancamento}-${r.mes_lancamento}`
       let m = a.meses.get(mk)
       if (!m) {
-        m = { mes: Number(r.mes_lancamento), ano: Number(r.ano_lancamento), qtd: 0, valor: 0 }
+        m = { mes: Number(r.mes_lancamento), ano: Number(r.ano_lancamento), qtd: 0, valor: 0, custoSum: 0, custoN: 0 }
         a.meses.set(mk, m)
       }
       const qtd = r.q_embalagem != null ? Number(r.q_embalagem) : 0
       const val = r.v_total_embalagem != null ? Number(r.v_total_embalagem) : 0
       m.qtd   += isFinite(qtd) ? qtd : 0
       m.valor += isFinite(val) ? Math.abs(val) : 0
+      // AVG(v_custo_compra): ignora null e zero (não entram na média do mês).
+      if (r.v_custo_compra != null) {
+        const cc = Number(r.v_custo_compra)
+        if (isFinite(cc) && cc !== 0) { m.custoSum += cc; m.custoN++ }
+      }
     }
 
     const produtos: AnaliseProduto[] = []
@@ -343,7 +352,7 @@ export async function getAnaliseProdutos(
           ano: m.ano,
           qtd: m.qtd,
           valor: m.valor,
-          preco_unit: m.qtd > 0 ? m.valor / m.qtd : null,
+          preco_unit: m.custoN > 0 ? m.custoSum / m.custoN : null,
         }))
       produtos.push({
         item_codigo: a.item_codigo,
