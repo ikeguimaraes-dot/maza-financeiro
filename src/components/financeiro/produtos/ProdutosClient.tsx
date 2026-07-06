@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation"
 import type { ProdutoRow } from "@/app/financeiro/dre/cmv/page"
 import { ImportModal } from "./ImportModal"
 import { RankingTab } from "./RankingTab"
+import { AnaliseTab } from "./AnaliseTab"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -49,7 +50,7 @@ const PAGE_SIZE = 50
 // ── Main component ─────────────────────────────────────────────────────────────
 export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "" }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv">("tabela")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">("tabela")
   const [showImport, setShowImport] = useState(false)
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
@@ -212,8 +213,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
-        {(["tabela", "ranking", "cmv"] as const).map(t => {
-          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV" }
+        {(["tabela", "ranking", "cmv", "analise"] as const).map(t => {
+          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise" }
           const active = tab === t
           return (
             <button key={t} onClick={() => setTab(t)} style={{
@@ -415,6 +416,11 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
       {/* ── Ranking tab ── */}
       {hasData && tab === "ranking" && (
         <RankingTab unitId={unitId} mes={mes} ano={ano} />
+      )}
+
+      {/* ── Análise tab (evolução de preço por produto, todos os meses) ── */}
+      {hasData && tab === "analise" && (
+        <AnaliseTab unitId={unitId} />
       )}
 
       {/* ── CMV tab ── */}

@@ -253,3 +253,109 @@ export async function getCurrentUnitId(): Promise<string | null> {
   const unit = await getCurrentUnit()
   return unit?.id ?? null
 }
+
+// ── Análise: evolução de preço unitário por produto ─────────────────────────────
+// Preço unitário do mês = Σ v_total_embalagem ÷ Σ q_embalagem (média ponderada de
+// múltiplas compras). Só entram produtos presentes em >= 2 meses (com um mês só
+// não há evolução). preco_unit = null quando o mês não tem quantidade (nunca zero).
+
+export type AnaliseMesPonto = {
+  mes: number
+  ano: number
+  qtd: number
+  valor: number
+  preco_unit: number | null
+}
+
+export type AnaliseProduto = {
+  item_codigo: string
+  item_descricao: string | null
+  unidade_medida: string | null
+  desc_gerencial: string | null
+  gasto_total: number
+  meses: AnaliseMesPonto[]
+}
+
+export async function getAnaliseProdutos(
+  unitId: string | null
+): Promise<AnaliseProduto[]> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    let q = db
+      .from("produtos_relatorio")
+      .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,mes_lancamento,ano_lancamento")
+      .eq("calcula_cmv", true)
+      .limit(100000)
+    if (unitId) q = q.eq("unit_id", unitId)
+    const { data } = await q
+    if (!data || data.length === 0) return []
+
+    type MesAcc = { mes: number; ano: number; qtd: number; valor: number }
+    type Acc = {
+      item_codigo: string
+      item_descricao: string | null
+      unidade_medida: string | null
+      desc_gerencial: string | null
+      meses: Map<string, MesAcc>
+    }
+
+    const map = new Map<string, Acc>()
+    for (const r of data) {
+      const cod = r.item_codigo
+      if (!cod) continue // sem código não dá para rastrear entre meses
+      let a = map.get(cod)
+      if (!a) {
+        a = {
+          item_codigo: cod,
+          item_descricao: r.item_descricao ?? null,
+          unidade_medida: r.unidade_medida ?? null,
+          desc_gerencial: r.desc_gerencial ?? null,
+          meses: new Map(),
+        }
+        map.set(cod, a)
+      }
+      if (!a.item_descricao && r.item_descricao) a.item_descricao = r.item_descricao
+      if (!a.unidade_medida && r.unidade_medida) a.unidade_medida = r.unidade_medida
+      if (!a.desc_gerencial && r.desc_gerencial) a.desc_gerencial = r.desc_gerencial
+
+      const mk = `${r.ano_lancamento}-${r.mes_lancamento}`
+      let m = a.meses.get(mk)
+      if (!m) {
+        m = { mes: Number(r.mes_lancamento), ano: Number(r.ano_lancamento), qtd: 0, valor: 0 }
+        a.meses.set(mk, m)
+      }
+      const qtd = r.q_embalagem != null ? Number(r.q_embalagem) : 0
+      const val = r.v_total_embalagem != null ? Number(r.v_total_embalagem) : 0
+      m.qtd   += isFinite(qtd) ? qtd : 0
+      m.valor += isFinite(val) ? Math.abs(val) : 0
+    }
+
+    const produtos: AnaliseProduto[] = []
+    for (const a of map.values()) {
+      if (a.meses.size < 2) continue // >1 mês para haver evolução
+      const meses: AnaliseMesPonto[] = [...a.meses.values()]
+        .sort((x, y) => (x.ano !== y.ano ? x.ano - y.ano : x.mes - y.mes))
+        .map(m => ({
+          mes: m.mes,
+          ano: m.ano,
+          qtd: m.qtd,
+          valor: m.valor,
+          preco_unit: m.qtd > 0 ? m.valor / m.qtd : null,
+        }))
+      produtos.push({
+        item_codigo: a.item_codigo,
+        item_descricao: a.item_descricao,
+        unidade_medida: a.unidade_medida,
+        desc_gerencial: a.desc_gerencial,
+        gasto_total: meses.reduce((s, m) => s + m.valor, 0),
+        meses,
+      })
+    }
+    return produtos
+  } catch {
+    return []
+  }
+}
