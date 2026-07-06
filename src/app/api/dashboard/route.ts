@@ -44,6 +44,9 @@ type MonthAgg = {
   ticketMediaDiaria: number | null;
   gorjeta: number | null;
   gorjetaPorDia: Array<{ data: string; valor: number }>;
+  serieFaturamento: Array<{ data: string; valor: number }>;
+  mixPorForma: Map<string, number>;
+  topGrupos: Array<{ grupo: string; valor: number }>;
   temTitulos: boolean;
   cmv: number | null;
   despesaTotal: number | null;
@@ -79,6 +82,9 @@ async function loadMonth(
   let ticketMediaDiaria: number | null = null;
   let gorjeta: number | null = null;
   let gorjetaPorDia: Array<{ data: string; valor: number }> = [];
+  let serieFaturamento: Array<{ data: string; valor: number }> = [];
+  const mixPorForma = new Map<string, number>();
+  let topGrupos: Array<{ grupo: string; valor: number }> = [];
   const datasComWorkday = new Set<string>();
 
   if (temWorkdays) {
@@ -96,9 +102,9 @@ async function loadMonth(
     const dataDoWorkday = new Map(workdays.map((w) => [w.id, w.data]));
     const pagRes = await db
       .from("lorean_pagamentos")
-      .select("workday_id_fk, valor_recebido")
+      .select("workday_id_fk, forma, valor_recebido")
       .in("workday_id_fk", ids);
-    const pags = (pagRes.data ?? []) as Array<{ workday_id_fk: string; valor_recebido: number | null }>;
+    const pags = (pagRes.data ?? []) as Array<{ workday_id_fk: string; forma: string | null; valor_recebido: number | null }>;
     faturamento = pags.reduce((s, p) => s + num(p.valor_recebido), 0);
 
     // Melhor dia = maior soma de valor_recebido por dia.
@@ -110,9 +116,33 @@ async function loadMonth(
     for (const [data, valor] of porDia) {
       if (!melhorDia || valor > melhorDia.valor) melhorDia = { data, valor };
     }
+    // Série diária de faturamento (mesma base do melhor dia), ordenada por data.
+    serieFaturamento = Array.from(porDia, ([data, valor]) => ({ data, valor }))
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    // Mix de pagamentos: soma valor_recebido por forma no mês.
+    for (const p of pags) {
+      const forma = p.forma ?? "(sem forma)";
+      mixPorForma.set(forma, (mixPorForma.get(forma) ?? 0) + num(p.valor_recebido));
+    }
 
     const tms = workdays.map((w) => w.ticket_medio).filter((t): t is number => t != null);
     ticketMediaDiaria = tms.length ? tms.reduce((s, t) => s + t, 0) / tms.length : null;
+
+    // Top grupos: soma bruto por grupo no mês, top 5.
+    const grpRes = await db
+      .from("lorean_grupos")
+      .select("workday_id_fk, grupo, bruto")
+      .in("workday_id_fk", ids);
+    const grupos = (grpRes.data ?? []) as Array<{ workday_id_fk: string; grupo: string | null; bruto: number | null }>;
+    const porGrupo = new Map<string, number>();
+    for (const g of grupos) {
+      const grupo = g.grupo ?? "(sem grupo)";
+      porGrupo.set(grupo, (porGrupo.get(grupo) ?? 0) + num(g.bruto));
+    }
+    topGrupos = Array.from(porGrupo, ([grupo, valor]) => ({ grupo, valor }))
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 5);
   }
 
   // ── Títulos (CMV / despesa total / maior conta) ──
@@ -155,7 +185,7 @@ async function loadMonth(
 
   return {
     temWorkdays, faturamento, clientes, melhorDia, ticketMediaDiaria,
-    gorjeta, gorjetaPorDia,
+    gorjeta, gorjetaPorDia, serieFaturamento, mixPorForma, topGrupos,
     temTitulos, cmv, despesaTotal, maiorConta, totaisPorConta,
     datasComWorkday, contasComTitulo,
   };
@@ -252,6 +282,27 @@ export async function GET(req: Request) {
       }
     }
 
+    // ── Mix de pagamentos: formas com <5% do total viram "Outros" (máx 5 + Outros) ──
+    // pct = fração sobre o total (front multiplica por 100). Vazio → sem_dados.
+    let mix_pagamentos: { itens: Array<{ forma: string; valor: number; pct: number | null }>; sem_dados: boolean };
+    if (cur.mixPorForma.size === 0) {
+      mix_pagamentos = { itens: [], sem_dados: true };
+    } else {
+      const total = Array.from(cur.mixPorForma.values()).reduce((s, v) => s + v, 0);
+      const ordenadas = Array.from(cur.mixPorForma, ([forma, valor]) => ({ forma, valor }))
+        .sort((a, b) => b.valor - a.valor);
+      const principais: Array<{ forma: string; valor: number }> = [];
+      let outros = 0;
+      for (const item of ordenadas) {
+        const pct = total > 0 ? item.valor / total : 0;
+        if (principais.length < 5 && pct >= 0.05) principais.push(item);
+        else outros += item.valor;
+      }
+      const itens = principais.map((i) => ({ forma: i.forma, valor: i.valor, pct: total > 0 ? i.valor / total : null }));
+      if (outros > 0) itens.push({ forma: "Outros", valor: outros, pct: total > 0 ? outros / total : null });
+      mix_pagamentos = { itens, sem_dados: false };
+    }
+
     // ── cmv_pct = cmv ÷ faturamento (fração; front multiplica por 100) ──
     const cmvPctCalc = (m: MonthAgg): number | null =>
       m.cmv != null && m.faturamento != null && m.faturamento > 0 ? m.cmv / m.faturamento : null;
@@ -317,6 +368,15 @@ export async function GET(req: Request) {
             ? cur.gorjeta / cur.faturamento
             : null,
         serie_diaria: cur.gorjetaPorDia,
+      },
+      serie_diaria_faturamento: {
+        itens: cur.serieFaturamento,
+        sem_dados: cur.serieFaturamento.length === 0,
+      },
+      mix_pagamentos,
+      top_grupos: {
+        itens: cur.topGrupos,
+        sem_dados: cur.topGrupos.length === 0,
       },
       produto_mais_vendido,
       funcionario_top,
