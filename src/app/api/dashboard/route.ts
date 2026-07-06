@@ -42,6 +42,8 @@ type MonthAgg = {
   clientes: number | null;
   melhorDia: { data: string; valor: number } | null;
   ticketMediaDiaria: number | null;
+  gorjeta: number | null;
+  gorjetaPorDia: Array<{ data: string; valor: number }>;
   temTitulos: boolean;
   cmv: number | null;
   despesaTotal: number | null;
@@ -64,22 +66,31 @@ async function loadMonth(
   // ── Lorean (faturamento/clientes/melhor dia/ticket) ──
   const wdRes = await db
     .from("lorean_workdays")
-    .select("id, data, clientes, ticket_medio")
+    .select("id, data, clientes, ticket_medio, gorjeta")
     .eq("unit_id", unitId)
     .gte("data", start)
     .lt("data", nextStart);
-  const workdays = (wdRes.data ?? []) as Array<{ id: string; data: string; clientes: number | null; ticket_medio: number | null }>;
+  const workdays = (wdRes.data ?? []) as Array<{ id: string; data: string; clientes: number | null; ticket_medio: number | null; gorjeta: number | null }>;
   const temWorkdays = workdays.length > 0;
 
   let faturamento: number | null = null;
   let clientes: number | null = null;
   let melhorDia: { data: string; valor: number } | null = null;
   let ticketMediaDiaria: number | null = null;
+  let gorjeta: number | null = null;
+  let gorjetaPorDia: Array<{ data: string; valor: number }> = [];
   const datasComWorkday = new Set<string>();
 
   if (temWorkdays) {
     for (const w of workdays) datasComWorkday.add(w.data);
     clientes = workdays.reduce((s, w) => s + num(w.clientes), 0);
+    gorjeta = workdays.reduce((s, w) => s + num(w.gorjeta), 0);
+
+    // Série diária de gorjeta: soma por dia (um dia pode ter vários turnos).
+    const gorjPorDia = new Map<string, number>();
+    for (const w of workdays) gorjPorDia.set(w.data, (gorjPorDia.get(w.data) ?? 0) + num(w.gorjeta));
+    gorjetaPorDia = Array.from(gorjPorDia, ([data, valor]) => ({ data, valor }))
+      .sort((a, b) => a.data.localeCompare(b.data));
 
     const ids = workdays.map((w) => w.id);
     const dataDoWorkday = new Map(workdays.map((w) => [w.id, w.data]));
@@ -144,6 +155,7 @@ async function loadMonth(
 
   return {
     temWorkdays, faturamento, clientes, melhorDia, ticketMediaDiaria,
+    gorjeta, gorjetaPorDia,
     temTitulos, cmv, despesaTotal, maiorConta, totaisPorConta,
     datasComWorkday, contasComTitulo,
   };
@@ -298,6 +310,14 @@ export async function GET(req: Request) {
         divergente,
       },
       clientes_mes: ind(cur.clientes, prev.clientes),
+      gorjeta_mes: {
+        ...ind(cur.gorjeta, prev.gorjeta),
+        pct_sobre_faturamento:
+          cur.gorjeta != null && cur.faturamento != null && cur.faturamento > 0
+            ? cur.gorjeta / cur.faturamento
+            : null,
+        serie_diaria: cur.gorjetaPorDia,
+      },
       produto_mais_vendido,
       funcionario_top,
       cmv_mes: {
