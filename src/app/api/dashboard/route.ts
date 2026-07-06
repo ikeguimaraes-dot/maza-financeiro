@@ -219,6 +219,27 @@ export async function GET(req: Request) {
       }
     }
 
+    // ── Funcionário top (maior bruto vendido no período mais recente) ──
+    let funcionario_top: {
+      funcionario: string | null; valor: number | null;
+      periodo_label: string | null; sem_dados: boolean;
+    } = { funcionario: null, valor: null, periodo_label: null, sem_dados: true };
+    if (periodo) {
+      const funcRes = await db
+        .from("vendas_consolidado_funcionarios")
+        .select("funcionario, bruto")
+        .eq("periodo_id", periodo.id)
+        .order("bruto", { ascending: false })
+        .limit(1);
+      const f = funcRes.data?.[0] as { funcionario: string; bruto: number | null } | undefined;
+      if (f) {
+        funcionario_top = {
+          funcionario: f.funcionario, valor: num(f.bruto),
+          periodo_label: periodo.label, sem_dados: false,
+        };
+      }
+    }
+
     // ── cmv_pct = cmv ÷ faturamento (fração; front multiplica por 100) ──
     const cmvPctCalc = (m: MonthAgg): number | null =>
       m.cmv != null && m.faturamento != null && m.faturamento > 0 ? m.cmv / m.faturamento : null;
@@ -278,6 +299,7 @@ export async function GET(req: Request) {
       },
       clientes_mes: ind(cur.clientes, prev.clientes),
       produto_mais_vendido,
+      funcionario_top,
       cmv_mes: {
         ...ind(cur.cmv, prev.cmv),
         cmv_pct: cmvPctCalc(cur),
