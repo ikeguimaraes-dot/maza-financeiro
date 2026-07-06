@@ -213,7 +213,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
-        {(["tabela", "ranking", "cmv", "analise"] as const).map(t => {
+        {(["analise", "cmv", "ranking", "tabela"] as const).map(t => {
           const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise" }
           const active = tab === t
           return (
