@@ -18,6 +18,9 @@ export async function GET(req: Request) {
   const mes = searchParams.get("mes")
   const ano = searchParams.get("ano")
 
+  console.log('[folha] unit_id:', unit_id)
+  console.log('[folha] mes:', mes, 'ano:', ano)
+
   if (!unit_id) {
     return Response.json({ error: "unit_id obrigatório" }, { status: 400, headers: CORS })
   }
@@ -44,6 +47,8 @@ export async function GET(req: Request) {
     competencia = ultima?.competencia ?? `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`
   }
 
+  console.log('[folha] competencia buscada:', competencia)
+
   const { data: folha, error: errFolha } = await supabase
     .from("dre_folha")
     .select("id, nome, funcao, divisao, tipo, admissao, salario, custo_total, is_vaga, competencia")
@@ -56,6 +61,8 @@ export async function GET(req: Request) {
   if (errFolha) {
     return Response.json({ error: errFolha.message }, { status: 500, headers: CORS })
   }
+
+  console.log('[folha] rows returned:', folha?.length ?? 0)
 
   const { data: vagas } = await supabase
     .from("dre_folha")
