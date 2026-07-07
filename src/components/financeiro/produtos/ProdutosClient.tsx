@@ -50,7 +50,7 @@ const PAGE_SIZE = 50
 // ── Main component ─────────────────────────────────────────────────────────────
 export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "" }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">("tabela")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">("analise")
   const [showImport, setShowImport] = useState(false)
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
