@@ -146,6 +146,22 @@ export default function FolhaPage() {
   const [sortColab, setSortColab] = useState<"nome" | "custo" | "divisao">("divisao")
   const [uploading, setUploading] = useState(false)
 
+  // Default inteligente: ao trocar de unidade, busca a competência mais recente
+  // COM dados e ajusta os seletores — evita abrir num mês sem folha (ex.: mês
+  // corrente ainda não importado) e renderizar vazio.
+  useEffect(() => {
+    fetch(`${API_BASE}/api/folha/meses-disponiveis?unit_id=${unitId}`)
+      .then((r) => r.json())
+      .then((d: { competencias?: string[] }) => {
+        const comps = d.competencias ?? []
+        if (comps.length > 0) {
+          const [a, m] = comps[0]!.split("-").map(Number)
+          if (a && m) { setAno(a); setMes(m) }
+        }
+      })
+      .catch(() => {})
+  }, [unitId])
+
   useEffect(() => {
     setLoading(true)
     setError(null)
