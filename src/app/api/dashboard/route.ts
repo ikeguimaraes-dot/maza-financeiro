@@ -16,9 +16,11 @@ export const maxDuration = 60;
 // Monta TODOS os números do KPH Dashboard numa chamada só. Cada indicador
 // numérico vem como { valor, valor_mes_anterior, delta_pct, sem_dados } — dado
 // AUSENTE nunca vira zero, vira null + sem_dados:true (o front pinta de vermelho).
-// Faturamento = SUM(lorean_pagamentos.valor_recebido) dos workdays (NUNCA o
-// campo receita_bruta). Linha DRE resolvida com precedência override > mapa,
-// reusando o helper compartilhado das rotas /api/dre/*.
+// Faturamento = SUM(lorean_pagamentos.valor_fechado) dos workdays — o que foi
+// vendido/consumido (NUNCA o campo receita_bruta do workday, nem valor_recebido:
+// esse é só o que entrou no caixa e diverge de valor_fechado quando há devedor).
+// Linha DRE resolvida com precedência override > mapa, reusando o helper
+// compartilhado das rotas /api/dre/*.
 
 type SupabaseClient = ReturnType<typeof getServiceClient>;
 type Resolver = ReturnType<typeof buildLinhaResolver>;
@@ -102,16 +104,16 @@ async function loadMonth(
     const dataDoWorkday = new Map(workdays.map((w) => [w.id, w.data]));
     const pagRes = await db
       .from("lorean_pagamentos")
-      .select("workday_id_fk, forma, valor_recebido")
+      .select("workday_id_fk, forma, valor_fechado")
       .in("workday_id_fk", ids);
-    const pags = (pagRes.data ?? []) as Array<{ workday_id_fk: string; forma: string | null; valor_recebido: number | null }>;
-    faturamento = pags.reduce((s, p) => s + num(p.valor_recebido), 0);
+    const pags = (pagRes.data ?? []) as Array<{ workday_id_fk: string; forma: string | null; valor_fechado: number | null }>;
+    faturamento = pags.reduce((s, p) => s + num(p.valor_fechado), 0);
 
-    // Melhor dia = maior soma de valor_recebido por dia.
+    // Melhor dia = maior soma de valor_fechado por dia.
     const porDia = new Map<string, number>();
     for (const p of pags) {
       const d = dataDoWorkday.get(p.workday_id_fk);
-      if (d) porDia.set(d, (porDia.get(d) ?? 0) + num(p.valor_recebido));
+      if (d) porDia.set(d, (porDia.get(d) ?? 0) + num(p.valor_fechado));
     }
     for (const [data, valor] of porDia) {
       if (!melhorDia || valor > melhorDia.valor) melhorDia = { data, valor };
@@ -120,10 +122,10 @@ async function loadMonth(
     serieFaturamento = Array.from(porDia, ([data, valor]) => ({ data, valor }))
       .sort((a, b) => a.data.localeCompare(b.data));
 
-    // Mix de pagamentos: soma valor_recebido por forma no mês.
+    // Mix de pagamentos: soma valor_fechado por forma no mês.
     for (const p of pags) {
       const forma = p.forma ?? "(sem forma)";
-      mixPorForma.set(forma, (mixPorForma.get(forma) ?? 0) + num(p.valor_recebido));
+      mixPorForma.set(forma, (mixPorForma.get(forma) ?? 0) + num(p.valor_fechado));
     }
 
     const tms = workdays.map((w) => w.ticket_medio).filter((t): t is number => t != null);

@@ -55,7 +55,7 @@ export async function GET(request: Request) {
   }
 
   const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes, prodRes, descDetRes, cancelRes, cancelDetRes] = await Promise.all([
-    db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_recebido").in("workday_id_fk", ids),
+    db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_fechado, valor_recebido").in("workday_id_fk", ids),
     db.from("lorean_descontos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
     db.from("lorean_ambientes").select("workday_id_fk, ambiente, produto, clientes").in("workday_id_fk", ids),
     db.from("lorean_turnos").select("workday_id_fk, turno, produto, clientes, gorjeta, consumo").in("workday_id_fk", ids),
@@ -74,17 +74,27 @@ export async function GET(request: Request) {
     db.from("lorean_cancelamentos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
   ]);
 
-  // Soma valor_recebido por workday para calcular receita_bruta_real
-  const receitaByWorkday = new Map<string, number>();
+  // Receita bruta da DRE = SUM(valor_fechado) — o que foi vendido/consumido.
+  // valor_recebido = o que efetivamente entrou no caixa; some devedor, os dois
+  // divergem (valor_fechado > valor_recebido). Expõe os dois + o devedor real.
+  const fechadoByWorkday  = new Map<string, number>();
+  const recebidoByWorkday = new Map<string, number>();
   for (const p of (pagRes.data ?? [])) {
     const wdId = (p as any).workday_id_fk as string;
-    receitaByWorkday.set(wdId, (receitaByWorkday.get(wdId) ?? 0) + ((p as any).valor_recebido ?? 0));
+    fechadoByWorkday.set(wdId,  (fechadoByWorkday.get(wdId)  ?? 0) + ((p as any).valor_fechado  ?? 0));
+    recebidoByWorkday.set(wdId, (recebidoByWorkday.get(wdId) ?? 0) + ((p as any).valor_recebido ?? 0));
   }
 
-  const workdaysEnriched = (workdays ?? []).map((w: any) => ({
-    ...w,
-    receita_bruta_real: receitaByWorkday.get(w.id) ?? 0,
-  }));
+  const workdaysEnriched = (workdays ?? []).map((w: any) => {
+    const fechado  = fechadoByWorkday.get(w.id)  ?? 0;
+    const recebido = recebidoByWorkday.get(w.id) ?? 0;
+    return {
+      ...w,
+      receita_bruta_real: fechado,
+      recebido_real: recebido,
+      devedor_real: fechado - recebido,
+    };
+  });
 
   // Agrupa lorean_turnos por workday
   const turnosByWorkday = new Map<string, any[]>();
@@ -122,6 +132,9 @@ export async function GET(request: Request) {
         turno: turnoLabel,
         receita_bruta: t.consumo,
         receita_bruta_real: t.consumo,
+        // Sem split fechado/recebido no nível de turno (lorean_turnos só tem consumo).
+        recebido_real: null,
+        devedor_real: null,
         gorjeta: t.gorjeta,
         clientes: t.clientes,
         ticket_medio: t.clientes > 0 ? t.consumo / t.clientes : null,

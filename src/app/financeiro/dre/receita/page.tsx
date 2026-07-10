@@ -37,7 +37,9 @@ type Workday = {
   id: string;
   data: string;
   turno: string | null;
-  receita_bruta_real: number;
+  receita_bruta_real: number; // SUM(valor_fechado) — o que foi vendido/consumido (receita da DRE)
+  recebido_real: number | null; // SUM(valor_recebido) — o que entrou no caixa; null quando não aplicável (split por turno)
+  devedor_real: number | null;  // receita_bruta_real - recebido_real
   desconto: number | null;
   gorjeta: number | null;
   custo: number | null;
@@ -51,6 +53,8 @@ type DayGroup = {
   date: string;
   rows: Workday[];
   totalReceita: number;
+  totalRecebido: number;
+  totalDevedor: number;
   totalGorjeta: number;
   totalClientes: number;
   desconto: number;
@@ -249,6 +253,8 @@ export default function ReceitaPage() {
 
   // ── Aggregations ───────────────────────────────────────────────────────────
   const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real, 0);
+  const totalRecebido = workdays.reduce((s, w) => s + (w.recebido_real ?? 0), 0);
+  const totalDevedor  = totalBruto - totalRecebido;
   const totalDesconto = workdays.reduce((s, w) => s + (w.desconto ?? 0), 0);
   const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta  ?? 0), 0);
   const totalLiquida  = totalBruto - totalDesconto;
@@ -287,10 +293,12 @@ export default function ReceitaPage() {
     for (const w of workdays) { if (!map.has(w.data)) map.set(w.data, []); map.get(w.data)!.push(w); }
     return Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a)).map(([date, rows]) => {
       const totalReceita  = rows.reduce((s, r) => s + r.receita_bruta_real, 0);
+      const totalRecebido = rows.reduce((s, r) => s + (r.recebido_real ?? 0), 0);
       const totalGorjeta  = rows.reduce((s, r) => s + (r.gorjeta ?? 0), 0);
       const totalClientes = rows.reduce((s, r) => s + (r.clientes ?? 0), 0);
       const first = rows[0]!;
-      return { date, rows, totalReceita, totalGorjeta, totalClientes,
+      return { date, rows, totalReceita, totalRecebido, totalDevedor: totalReceita - totalRecebido,
+        totalGorjeta, totalClientes,
         desconto: first.desconto ?? 0, cmv_pct: first.cmv_pct ?? null,
         ticketMedio: totalClientes > 0 ? totalReceita / totalClientes : null };
     });
@@ -437,6 +445,11 @@ export default function ReceitaPage() {
             <KpiCardAnimated label="Receita Bruta"   rawValue={totalBruto}    format={fmt} sparkData={sparkReceita}
               sub={atingMeta != null ? `${atingMeta.toFixed(1)}% da meta` : undefined}
               alert={atingMeta != null && atingMeta < 90} ok={atingMeta != null && atingMeta >= 100} />
+            <KpiCardAnimated label="Recebido"        rawValue={totalRecebido} format={fmt} sparkData={sparkReceita}
+              sub={totalBruto > 0 ? pct((totalRecebido / totalBruto) * 100) + " do bruto" : undefined} />
+            <KpiCardAnimated label="Devedor"         rawValue={totalDevedor}  format={fmt} sparkData={sparkReceita}
+              sub={totalBruto > 0 && totalDevedor > 0 ? pct((totalDevedor / totalBruto) * 100) + " pendente" : undefined}
+              alert={totalDevedor > 0} />
             <KpiCardAnimated label="Desconto"        rawValue={totalDesconto} format={fmt} sparkData={sparkReceita}
               sub={totalBruto > 0 ? pct((totalDesconto / totalBruto) * 100) + " da bruta" : undefined}
               alert={totalBruto > 0 && totalDesconto / totalBruto > 0.08} />
@@ -482,7 +495,7 @@ export default function ReceitaPage() {
                 <thead>
                   <tr style={{ background: C.surface2 }}>
                     <th style={{ width: 36, padding: "8px 0 8px 12px", borderBottom: `1px solid ${C.border}` }} />
-                    {["Data / Dia", "Bruto", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
+                    {["Data / Dia", "Bruto", "Devedor", "Meta", "Ating.%", "Desconto", "Gorjeta", "Clientes", "Ticket", "CMV%"].map((h) => (
                       <th key={h} style={{
                         padding: "8px 12px", textAlign: h === "Data / Dia" ? "left" : "right",
                         fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase",
@@ -533,6 +546,10 @@ export default function ReceitaPage() {
                             {g.date.split("-").reverse().join("/")} <span style={{ color: C.text3, fontWeight: 400, marginLeft: 4 }}>{DIAS_PT[dt.getDay()]}</span>
                           </td>
                           <td style={{ padding: "10px 12px", textAlign: "right", color: C.text2, fontWeight: 600 }}>{fmt(g.totalReceita)}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: g.totalDevedor > 0 ? 700 : 400,
+                            color: g.totalDevedor > 0 ? C.alerta : C.text3 }}>
+                            {g.totalDevedor > 0 ? fmt(g.totalDevedor) : "—"}
+                          </td>
                           <td style={{ padding: "6px 12px", textAlign: "right" }}>
                             <input type="number" min="0" step="100" value={inputVal}
                               onChange={(e) => {
@@ -567,7 +584,7 @@ export default function ReceitaPage() {
                         {/* Expansion row */}
                         {hasMultiple && (
                           <tr key={`${g.date}-exp`}>
-                            <td colSpan={10} style={{ padding: 0, border: "none" }}>
+                            <td colSpan={11} style={{ padding: 0, border: "none" }}>
                               <div style={{
                                 maxHeight: isExpanded ? `${g.rows.length * 52}px` : "0",
                                 opacity: isExpanded ? 1 : 0,
@@ -613,6 +630,9 @@ export default function ReceitaPage() {
                   <tr style={{ background: C.surface2, fontWeight: 700, borderTop: `1px solid ${C.border}` }}>
                     <td colSpan={2} style={{ padding: "10px 12px", color: C.text, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 }}>TOTAL</td>
                     <td style={{ padding: "10px 12px", textAlign: "right", color: C.text }}>{fmt(totalBruto)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", color: totalDevedor > 0 ? C.alerta : C.text3 }}>
+                      {totalDevedor > 0 ? fmt(totalDevedor) : "—"}
+                    </td>
                     <td style={{ padding: "10px 12px", textAlign: "right", color: C.text3 }}>{metaReceita ? fmt(metaReceita) : "—"}</td>
                     <td style={{ padding: "10px 12px", textAlign: "right", color: atingMeta == null ? C.text3 : atingMeta >= 100 ? C.receita : atingMeta >= 70 ? C.meta : C.alerta }}>
                       {atingMeta != null ? `${atingMeta.toFixed(0)}%` : "—"}
