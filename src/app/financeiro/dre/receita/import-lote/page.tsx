@@ -180,23 +180,9 @@ type XlsxTipo = "movimento" | "venda";
 type ParsedXlsxFile = {
   file: File;
   key: string;
-  data: string | null;        // YYYY-MM-DD extraído do nome — na prática só o Movimento tem
-  workdayHint: string | null; // número entre parênteses, ex: "(212 [...])" ou "(212)" → "212"
-  tipo: XlsxTipo | null;      // detectado pelo nome — mesma lógica da API (detectTipo)
+  data: string | null;   // YYYY-MM-DD extraído do nome — Venda normalmente não tem
+  tipo: XlsxTipo | null; // detectado pelo nome — mesma lógica da API (detectTipo)
   loreanCode: string | null;
-};
-
-// Um pacote = um workday. "completo" (Movimento+Venda) e "parcial" (só Movimento) são
-// processáveis — o servidor sabe importar Movimento sozinho. "alerta" (só Venda)
-// NUNCA é processado: Venda depende de um Movimento já existente pro workday.
-type PacoteStatusXlsx = "completo" | "parcial" | "alerta";
-
-type PacoteXlsx = {
-  workdayKey: string;   // chave de agrupamento (workday do nome do arquivo)
-  data: string | null;  // pra exibição — vem do Movimento; Venda sozinha não carrega data no nome
-  movimento: ParsedXlsxFile | null;
-  venda: ParsedXlsxFile | null;
-  status: PacoteStatusXlsx;
 };
 
 type XlsxStatus = { state: ProcessState; mensagem?: string; resumo?: Record<string, unknown> };
@@ -204,7 +190,6 @@ type XlsxStatus = { state: ProcessState; mensagem?: string; resumo?: Record<stri
 function parseXlsxFilename(file: File): ParsedXlsxFile {
   const name = file.name;
   const dateMatch = name.match(/\[(\d{2})\.(\d{2})\.(\d{2})\]/);
-  const wdMatch = name.match(/\((\d+)/);
   const codeMatch = name.match(/LOREAN\s*\[(\d+)\]/i);
   const lower = name.toLowerCase();
   const tipo: XlsxTipo | null =
@@ -214,30 +199,29 @@ function parseXlsxFilename(file: File): ParsedXlsxFile {
     file,
     key: `${name}::${file.size}`,
     data: dateMatch ? `20${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null,
-    workdayHint: wdMatch ? wdMatch[1]! : null,
     tipo,
     loreanCode: codeMatch ? codeMatch[1]! : null,
   };
 }
 
-// Movimento + Venda do mesmo dia num único POST — o servidor garante que
-// Movimento processa antes de Venda, então a ordem aqui não importa.
-async function enviarPacoteXlsx(
-  arquivos: File[], unitId: string,
+// 1 arquivo por chamada. Se for uma Venda cujo Movimento ainda não foi
+// importado, a API responde com erro ("Workday não encontrado") — esperado
+// e aceitável: o arquivo fica marcado como erro no relatório, sem travar o lote.
+async function enviarArquivoXlsx(
+  file: File, unitId: string,
 ): Promise<{ resumo?: Record<string, unknown> }> {
   const fd = new FormData();
   fd.append("unit_id", unitId);
-  for (const f of arquivos) fd.append("arquivos", f);
+  fd.append("arquivos", file);
   const res = await fetch(`${API_BASE}/api/lorean/import-xlsx`, { method: "POST", body: fd });
   let json: { processados: number; erros: string[]; detalhes: Array<{ arquivo: string; tipo: string | null; sucesso: boolean; erro?: string; resumo?: Record<string, unknown> }> };
   try { json = await res.json(); }
   catch (e) { throw new Error(`resposta inválida: ${String(e)}`); }
-  if (!res.ok) throw new Error(json.erros?.[0] ?? `HTTP ${res.status}`);
-  const falhas = json.detalhes.filter((d) => !d.sucesso);
-  if (falhas.length > 0) throw new Error(falhas.map((d) => `${d.arquivo}: ${d.erro}`).join(" | "));
-  // resumo do Movimento (mais informativo) se presente, senão o da Venda
-  const movDetalhe = json.detalhes.find((d) => d.tipo === "movimento") ?? json.detalhes[0];
-  return { resumo: movDetalhe?.resumo };
+  const d = json.detalhes?.[0];
+  if (!res.ok || !d || !d.sucesso) {
+    throw new Error(d?.erro ?? json.erros?.[0] ?? `HTTP ${res.status}`);
+  }
+  return { resumo: d.resumo };
 }
 
 function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string; unitLabel: string }) {
@@ -245,7 +229,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
   const [ignoredMsg, setIgnoredMsg] = useState<string | null>(null);
   const [fase, setFase] = useState<Fase>("selecao");
   const [progressLabel, setProgressLabel] = useState("");
-  const [status, setStatus] = useState<Record<string, XlsxStatus>>({}); // keyed por data (YYYY-MM-DD)
+  const [status, setStatus] = useState<Record<string, XlsxStatus>>({}); // keyed por file.key
 
   function addFiles(list: FileList) {
     const arr = Array.from(list);
@@ -267,60 +251,33 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
     setFiles([]); setIgnoredMsg(null); setFase("selecao"); setStatus({}); setProgressLabel("");
   }
 
-  const parsedFiles = useMemo(() => files.map(parseXlsxFilename), [files]);
-
-  // workdayHint é a chave real de agrupamento (Venda não carrega data no nome —
-  // só "(212).xlsx", sem "[DD.MM.YY]"). Sem tipo NEM workdayHint não dá pra agrupar.
-  const semTipoOuChave = useMemo(
-    () => parsedFiles.filter((f) => !f.tipo || !f.workdayHint),
-    [parsedFiles],
+  // Cada arquivo é uma linha independente — sem agrupar por dia/workday.
+  const parsed = useMemo(
+    () => files.map(parseXlsxFilename).sort((a, b) => (a.data ?? "").localeCompare(b.data ?? "")),
+    [files],
   );
+  const reconhecidos = parsed.filter((f) => f.tipo != null);
+  const naoReconhecidos = parsed.filter((f) => f.tipo == null);
 
   const codigosDetectados = useMemo(
-    () => [...new Set(parsedFiles.map((f) => f.loreanCode).filter((c): c is string => !!c))],
-    [parsedFiles],
+    () => [...new Set(parsed.map((f) => f.loreanCode).filter((c): c is string => !!c))],
+    [parsed],
   );
 
-  // Agrupa por workday (não por data — Venda sozinha não expõe data no nome).
-  // A data de exibição do pacote vem de QUALQUER um dos dois arquivos que a tiver.
-  const pacotes: PacoteXlsx[] = useMemo(() => {
-    const map = new Map<string, { movimento: ParsedXlsxFile | null; venda: ParsedXlsxFile | null; data: string | null }>();
-    for (const f of parsedFiles) {
-      if (!f.tipo || !f.workdayHint) continue;
-      if (!map.has(f.workdayHint)) map.set(f.workdayHint, { movimento: null, venda: null, data: null });
-      const b = map.get(f.workdayHint)!;
-      if (f.tipo === "movimento") b.movimento = f; else b.venda = f;
-      if (f.data) b.data = f.data;
-    }
-    return Array.from(map.entries())
-      .map(([workdayKey, b]) => ({
-        workdayKey, data: b.data, movimento: b.movimento, venda: b.venda,
-        status: (b.movimento && b.venda ? "completo" : b.movimento ? "parcial" : "alerta") as PacoteStatusXlsx,
-      }))
-      .sort((a, b) => (a.data ?? "").localeCompare(b.data ?? "") || a.workdayKey.localeCompare(b.workdayKey));
-  }, [parsedFiles]);
-
-  // Processável = tem Movimento (com ou sem Venda). "Alerta" (só Venda) fica de
-  // fora — precisa do Movimento importado primeiro.
-  const processaveis = pacotes.filter((p) => p.status === "completo" || p.status === "parcial");
-  const alertas = pacotes.filter((p) => p.status === "alerta");
-
   async function iniciarImportacao() {
-    if (!selectedUnitId || processaveis.length === 0) return;
+    if (!selectedUnitId || reconhecidos.length === 0) return;
     setFase("processando");
     setStatus({});
-    for (let i = 0; i < processaveis.length; i++) {
-      const p = processaveis[i]!;
-      const arquivos = [p.movimento!.file, ...(p.venda ? [p.venda.file] : [])];
-      const label = p.data ? fmtDateBR(p.data) : `Workday ${p.workdayKey}`;
-      setProgressLabel(`Processando ${i + 1}/${processaveis.length} — ${unitLabel} ${label}…`);
-      setStatus((prev) => ({ ...prev, [p.workdayKey]: { state: "processando" } }));
+    for (let i = 0; i < reconhecidos.length; i++) {
+      const f = reconhecidos[i]!;
+      setProgressLabel(`Processando ${i + 1}/${reconhecidos.length} — ${unitLabel} ${f.file.name}…`);
+      setStatus((prev) => ({ ...prev, [f.key]: { state: "processando" } }));
       try {
-        const res = await enviarPacoteXlsx(arquivos, selectedUnitId);
-        setStatus((prev) => ({ ...prev, [p.workdayKey]: { state: "sucesso", resumo: res.resumo } }));
+        const res = await enviarArquivoXlsx(f.file, selectedUnitId);
+        setStatus((prev) => ({ ...prev, [f.key]: { state: "sucesso", resumo: res.resumo } }));
       } catch (e) {
-        setStatus((prev) => ({ ...prev, [p.workdayKey]: { state: "erro", mensagem: String(e instanceof Error ? e.message : e) } }));
-        // não interrompe — segue pro próximo dia
+        setStatus((prev) => ({ ...prev, [f.key]: { state: "erro", mensagem: String(e instanceof Error ? e.message : e) } }));
+        // não interrompe — segue pro próximo arquivo (ex: Venda antes do Movimento — reimporta depois)
       }
     }
     setProgressLabel("");
@@ -329,24 +286,25 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
 
   const totalSucesso = Object.values(status).filter((s) => s.state === "sucesso").length;
   const totalErro = Object.values(status).filter((s) => s.state === "erro").length;
-  const errosLista = processaveis.filter((p) => status[p.workdayKey]?.state === "erro");
-  const progressoPct = processaveis.length > 0
-    ? (Object.values(status).filter((s) => s.state === "sucesso" || s.state === "erro").length / processaveis.length) * 100
+  const errosLista = reconhecidos.filter((f) => status[f.key]?.state === "erro");
+  const progressoPct = reconhecidos.length > 0
+    ? (Object.values(status).filter((s) => s.state === "sucesso" || s.state === "erro").length / reconhecidos.length) * 100
     : 0;
   const processando = fase === "processando";
 
   function baixarRelatorio() {
-    const header = ["Data", "Workday", "Movimento", "Venda", "Status", "Mensagem"];
-    const rows = pacotes.map((p) => {
-      const st = status[p.workdayKey];
+    const header = ["Arquivo", "Tipo", "Data", "Status", "Mensagem"];
+    const rows = parsed.map((f) => {
+      const st = status[f.key];
       const statusLabel =
         st?.state === "sucesso" ? "Sucesso" :
         st?.state === "erro" ? "Erro" :
         st?.state === "processando" ? "Processando" :
-        p.status === "completo" ? "Não processado" :
-        p.status === "parcial" ? "Não processado (só Movimento)" :
-        "Alerta — só Venda, sem Movimento";
-      return [p.data ? fmtDateBR(p.data) : "—", p.workdayKey, p.movimento ? "Sim" : "Não", p.venda ? "Sim" : "Não", statusLabel, st?.mensagem ?? ""];
+        f.tipo ? "Não processado" : "Tipo não reconhecido (pulado)";
+      return [
+        f.file.name, f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : "—",
+        f.data ? fmtDateBR(f.data) : "—", statusLabel, st?.mensagem ?? "",
+      ];
     });
     baixarCsv(`import-lote-xlsx-${unitLabel.replace(/\s+/g, "_")}-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
   }
@@ -356,7 +314,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
       {fase === "selecao" && (
         <Dropzone
           label="Arraste os arquivos Excel (.xlsx) aqui"
-          sub="Movimento + Venda do Lorean em formato Excel — sem limite de quantidade, sem chamar IA"
+          sub="Movimento e Venda do Lorean, separados ou misturados, em qualquer ordem — sem chamar IA"
           accept=".xlsx"
           onFiles={addFiles}
         />
@@ -369,10 +327,8 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Chip label={`${files.length} arquivo${files.length !== 1 ? "s" : ""}`} />
-              <Chip label={`${pacotes.length} dia${pacotes.length !== 1 ? "s" : ""}`} />
-              <Chip label={`${processaveis.length} processável${processaveis.length !== 1 ? "eis" : ""}`} color={C.receita} />
-              {alertas.length > 0 && <Chip label={`${alertas.length} só Venda (alerta)`} color={C.alerta} />}
-              {semTipoOuChave.length > 0 && <Chip label={`${semTipoOuChave.length} não reconhecido(s)`} color={C.alerta} />}
+              <Chip label={`${reconhecidos.length} pronto${reconhecidos.length !== 1 ? "s" : ""}`} color={C.receita} />
+              {naoReconhecidos.length > 0 && <Chip label={`${naoReconhecidos.length} não reconhecido(s)`} color={C.alerta} />}
             </div>
             {fase === "selecao" && (
               <button onClick={limparSelecao} style={{
@@ -394,12 +350,20 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
             </div>
           )}
 
-          {semTipoOuChave.length > 0 && (
+          <div style={{
+            padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 12,
+            background: "rgba(96,165,250,0.08)", color: C.text2, border: "1px solid rgba(96,165,250,0.2)",
+          }}>
+            ℹ Cada arquivo é importado independentemente. Se uma Venda vier antes do Movimento do mesmo dia,
+            ela falha com "Workday não encontrado" — reimporte só ela depois de importar o Movimento correspondente.
+          </div>
+
+          {naoReconhecidos.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
-                Arquivos sem tipo ou workday reconhecível no nome (esperado "Movimento"/"Venda" + "(&lt;workday&gt;...)") — não serão processados
+                Arquivos sem tipo reconhecível no nome (esperado "Movimento" ou "Venda") — não serão processados
               </p>
-              {semTipoOuChave.map((f) => (
+              {naoReconhecidos.map((f) => (
                 <p key={f.key} style={{ fontSize: 12, color: C.text3, margin: "2px 0" }}>{f.file.name}</p>
               ))}
             </div>
@@ -409,9 +373,9 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10 }}>
               <thead>
                 <tr style={{ background: C.surface2 }}>
-                  {["Data", "Movimento", "Venda", "Status"].map((h, i) => (
+                  {["Arquivo", "Tipo", "Data", "Status"].map((h, i) => (
                     <th key={h} style={{
-                      padding: "8px 12px", textAlign: i === 0 ? "left" : "right",
+                      padding: "8px 12px", textAlign: i === 0 ? "left" : i === 3 ? "right" : "left",
                       fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase",
                       color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap",
                     }}>{h}</th>
@@ -419,24 +383,21 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
                 </tr>
               </thead>
               <tbody>
-                {pacotes.map((p) => {
-                  const live = status[p.workdayKey];
+                {parsed.map((f) => {
+                  const live = status[f.key];
                   const cell =
                     live?.state === "processando" ? { label: "⏳ processando", color: C.meta } :
                     live?.state === "sucesso"     ? { label: "✓ sucesso", color: C.receita } :
                     live?.state === "erro"        ? { label: "✗ erro", color: C.alerta } :
-                    p.status === "completo"       ? { label: "pronto", color: C.receita } :
-                    p.status === "parcial"        ? { label: "incompleto (só Movimento)", color: C.meta } :
-                                                     { label: "alerta — falta Movimento", color: C.alerta };
-                  const titleTxt = live?.mensagem
-                    ?? [p.movimento?.file.name, p.venda?.file.name].filter(Boolean).join(" · ");
+                    f.tipo                        ? { label: "pronto", color: C.receita } :
+                                                     { label: "não reconhecido", color: C.alerta };
                   return (
-                    <tr key={p.workdayKey} style={{ borderTop: `1px solid ${C.border}` }} title={titleTxt}>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {p.data ? fmtDateBR(p.data) : `Workday ${p.workdayKey}`}
+                    <tr key={f.key} style={{ borderTop: `1px solid ${C.border}` }} title={live?.mensagem}>
+                      <td style={{ padding: "8px 12px", color: C.text2, maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file.name}</td>
+                      <td style={{ padding: "8px 12px", color: C.text2, whiteSpace: "nowrap" }}>
+                        {f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : "—"}
                       </td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", color: p.movimento ? C.receita : C.alerta }}>{p.movimento ? "✓" : "✗"}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", color: p.venda ? C.receita : C.text3 }}>{p.venda ? "✓" : "✗"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text2, whiteSpace: "nowrap" }}>{f.data ? fmtDateBR(f.data) : "—"}</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: cell.color }}>{cell.label}</td>
                     </tr>
                   );
@@ -448,15 +409,15 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
           {fase === "selecao" && (
             <button
               onClick={iniciarImportacao}
-              disabled={processaveis.length === 0 || !selectedUnitId}
+              disabled={reconhecidos.length === 0 || !selectedUnitId}
               style={{
                 padding: "10px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                background: processaveis.length === 0 ? C.surface3 : C.brand,
-                color: processaveis.length === 0 ? C.text3 : "#fff",
-                border: "none", cursor: processaveis.length === 0 ? "not-allowed" : "pointer",
+                background: reconhecidos.length === 0 ? C.surface3 : C.brand,
+                color: reconhecidos.length === 0 ? C.text3 : "#fff",
+                border: "none", cursor: reconhecidos.length === 0 ? "not-allowed" : "pointer",
               }}
             >
-              Importar tudo {processaveis.length > 0 ? `(${processaveis.length} dia${processaveis.length !== 1 ? "s" : ""})` : ""}
+              Importar tudo {reconhecidos.length > 0 ? `(${reconhecidos.length} arquivo${reconhecidos.length !== 1 ? "s" : ""})` : ""}
             </button>
           )}
 
@@ -470,16 +431,16 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
           {fase === "concluido" && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 20px" }}>
               <p style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 10px" }}>
-                Concluído — {totalSucesso} dia{totalSucesso !== 1 ? "s" : ""} importado{totalSucesso !== 1 ? "s" : ""} com sucesso
+                Concluído — {totalSucesso} arquivo{totalSucesso !== 1 ? "s" : ""} importado{totalSucesso !== 1 ? "s" : ""} com sucesso
                 {totalErro > 0 && `, ${totalErro} com erro`}
               </p>
 
               {errosLista.length > 0 && (
                 <div style={{ marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 6px" }}>Dias com erro:</p>
-                  {errosLista.map((p) => (
-                    <p key={p.workdayKey} style={{ fontSize: 12, color: C.text2, margin: "3px 0" }}>
-                      <strong>{p.data ? fmtDateBR(p.data) : `Workday ${p.workdayKey}`}</strong> — {status[p.workdayKey]?.mensagem}
+                  <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 6px" }}>Arquivos com erro:</p>
+                  {errosLista.map((f) => (
+                    <p key={f.key} style={{ fontSize: 12, color: C.text2, margin: "3px 0" }}>
+                      <strong>{f.file.name}</strong> — {status[f.key]?.mensagem}
                     </p>
                   ))}
                 </div>
