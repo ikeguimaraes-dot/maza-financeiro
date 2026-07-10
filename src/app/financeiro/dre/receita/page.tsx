@@ -37,7 +37,7 @@ type Workday = {
   id: string;
   data: string;
   turno: string | null;
-  receita_bruta_real: number; // SUM(valor_fechado) — o que foi vendido/consumido (receita da DRE)
+  receita_bruta_real: number; // PREVISTO — o que foi vendido/consumido (receita da DRE)
   recebido_real: number | null; // SUM(valor_recebido) — o que entrou no caixa; null quando não aplicável (split por turno)
   devedor_real: number | null;  // receita_bruta_real - recebido_real
   desconto: number | null;

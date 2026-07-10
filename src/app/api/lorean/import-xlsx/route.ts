@@ -93,6 +93,19 @@ function extractAcesso(rows: string[][]): number | null {
   return null;
 }
 
+// PREVISTO = receita do dia (o que foi vendido: convite + produto + gorjeta ±
+// pendência antiga de dia anterior). É a linha "=  R$ X,XX" logo depois do bloco
+// Convite/Produto/Gorjeta/Pendência/Diferença Real — não é o mesmo que FECHADO
+// (o que foi de fato reconciliado no caixa) nem RECEBIDO (o que entrou via
+// pagamento); os três só coincidem quando não há devedor nem pendência antiga.
+function extractPrevisto(rows: string[][]): number | null {
+  for (const row of rows) {
+    const text = row.join(" ").trim();
+    if (text.startsWith("=")) return parseNumBR(text);
+  }
+  return null;
+}
+
 // Pagamento / Ambiente / Turno / Horário: linhas de dado começam com um ordinal
 // "0Nº" — às vezes fundido ao nome no mesmo token ("01º Dinheiro"), às vezes
 // separado ("01º" + "Salao"). Para de ler no 1º token sem ordinal (nova seção,
@@ -191,7 +204,8 @@ type ParsedMovimento = {
   workday_id: number | null;
   data: string | null;
   clientes: number | null;
-  receita_bruta: number | null; // SUM(valor_recebido) dos pagamentos
+  receita_bruta: number | null; // PREVISTO — receita do dia (o que foi vendido)
+  devedor: number | null;       // campo DEVEDOR do resumo
   bruto: number | null;         // campo BRUTO do resumo — informativo, sem coluna própria
   gorjeta: number | null;
   desconto: number | null;
@@ -224,14 +238,17 @@ function parseMovimento(buffer: Buffer, filename: string): ParsedMovimento {
   const desconto = extractLabelValue(flatText, "DESCONTO");
   const custo    = extractLabelValue(flatText, "CUSTO");
   const lucro    = extractLabelValue(flatText, "LUCRO");
+  const devedor  = extractLabelValue(flatText, "DEVEDOR:?");
+
+  // Receita bruta = PREVISTO, não a soma dos pagamentos — PREVISTO já contabiliza
+  // pendência antiga (devedor de dia anterior que caiu nesse caixa), que uma soma
+  // de pagamentos do dia nunca capturaria.
+  const receita_bruta = extractPrevisto(rows);
 
   // "Pagamento" (não "Método", que é a versão agrupada) — exige os dois tokens
   // no cabeçalho pra não confundir com a outra tabela.
   const pagIdx = findHeaderRowIndex(rows, (t) => t.includes("PAGAMENTO") && t.includes("RECEBIDO"));
   const pagamentos = extractOrdinalRows(rows, pagIdx).map(toPagamentoRow);
-  const receita_bruta = pagamentos.length
-    ? pagamentos.reduce((s, p) => s + (p.valor_recebido ?? 0), 0)
-    : null;
 
   // "Ambiente" tem prioridade sobre "Módulo" — são seções distintas no relatório,
   // mas o schema de destino só tem uma; ambiente é a mais próxima semanticamente.
@@ -245,7 +262,7 @@ function parseMovimento(buffer: Buffer, filename: string): ParsedMovimento {
   const horIdx = findHeaderRowIndex(rows, (t) => t.includes("HORARIO"));
   const horarios = extractOrdinalRows(rows, horIdx).map(toHorarioRow).filter((h): h is HorarioRow => h != null);
 
-  return { workday_id, data, clientes, receita_bruta, bruto, gorjeta, desconto, custo, lucro, pagamentos, ambientes, turnos, horarios };
+  return { workday_id, data, clientes, receita_bruta, devedor, bruto, gorjeta, desconto, custo, lucro, pagamentos, ambientes, turnos, horarios };
 }
 
 type ParsedVenda = {
@@ -296,6 +313,8 @@ async function insertMovimento(
         receita_liquida: receitaLiquida,
         custo: parsed.custo,
         lucro: parsed.lucro,
+        previsto: parsed.receita_bruta, // mesmo valor — receita_bruta É o previsto
+        devedor: parsed.devedor,
         clientes: parsed.clientes,
       },
       { onConflict: "unit_id,workday_id" },
@@ -466,7 +485,7 @@ export async function POST(request: Request) {
           detalhes.push({
             arquivo: arquivo.name, tipo, workday_id: parsed.workday_id, data: parsed.data, sucesso: true,
             resumo: {
-              clientes: parsed.clientes, receita_bruta: parsed.receita_bruta, bruto: parsed.bruto,
+              clientes: parsed.clientes, receita_bruta: parsed.receita_bruta, devedor: parsed.devedor, bruto: parsed.bruto,
               gorjeta: parsed.gorjeta, desconto: parsed.desconto, custo: parsed.custo, lucro: parsed.lucro,
               pagamentos: parsed.pagamentos.length, ambientes: parsed.ambientes.length,
               turnos: parsed.turnos.length, horarios: parsed.horarios.length,

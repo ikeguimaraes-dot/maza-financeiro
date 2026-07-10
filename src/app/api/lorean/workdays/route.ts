@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 
   const { data: workdays, error: wErr } = await db
     .from("lorean_workdays")
-    .select("id, data, turno, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio")
+    .select("id, data, turno, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio, previsto, devedor")
     .eq("unit_id", unit_id)
     .gte("data", start)
     .lte("data", end)
@@ -74,25 +74,26 @@ export async function GET(request: Request) {
     db.from("lorean_cancelamentos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
   ]);
 
-  // Receita bruta da DRE = SUM(valor_fechado) — o que foi vendido/consumido.
-  // valor_recebido = o que efetivamente entrou no caixa; some devedor, os dois
-  // divergem (valor_fechado > valor_recebido). Expõe os dois + o devedor real.
-  const fechadoByWorkday  = new Map<string, number>();
+  // Receita bruta da DRE = lorean_workdays.receita_bruta = PREVISTO (o que foi
+  // vendido: convite+produto+gorjeta±pendência antiga) — já gravado corretamente
+  // no import, não recalculado aqui. valor_recebido segue somado à parte (o que
+  // de fato entrou no caixa); devedor_real = previsto - recebido, agora mais
+  // completo que uma comparação puramente fechado-vs-recebido, porque previsto já
+  // contabiliza pendência antiga que uma soma de pagamentos do dia nunca capturaria.
   const recebidoByWorkday = new Map<string, number>();
   for (const p of (pagRes.data ?? [])) {
     const wdId = (p as any).workday_id_fk as string;
-    fechadoByWorkday.set(wdId,  (fechadoByWorkday.get(wdId)  ?? 0) + ((p as any).valor_fechado  ?? 0));
     recebidoByWorkday.set(wdId, (recebidoByWorkday.get(wdId) ?? 0) + ((p as any).valor_recebido ?? 0));
   }
 
   const workdaysEnriched = (workdays ?? []).map((w: any) => {
-    const fechado  = fechadoByWorkday.get(w.id)  ?? 0;
+    const receitaBruta = w.receita_bruta ?? 0;
     const recebido = recebidoByWorkday.get(w.id) ?? 0;
     return {
       ...w,
-      receita_bruta_real: fechado,
+      receita_bruta_real: receitaBruta,
       recebido_real: recebido,
-      devedor_real: fechado - recebido,
+      devedor_real: receitaBruta - recebido,
     };
   });
 
