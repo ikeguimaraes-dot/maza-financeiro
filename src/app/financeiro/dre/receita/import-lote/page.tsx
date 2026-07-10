@@ -22,9 +22,442 @@ const C = {
   brand:    "var(--brand, #C4622D)",
 } as const;
 
-// ── Parsing de nome de arquivo ───────────────────────────────────────────────
-// Regex idêntica à extractDateFromFilename de /api/lorean/import — garante que
-// o agrupamento client-side bate com a data que a API vai gravar no banco.
+const fmtDateBR = (iso: string) => iso.split("-").reverse().join("/");
+
+function csvEscape(v: string): string {
+  if (/[;"\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function baixarCsv(filename: string, header: string[], rows: string[][]) {
+  const csv = [header, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+type Fase = "selecao" | "processando" | "concluido";
+
+// ── Página ────────────────────────────────────────────────────────────────────
+// Dois formatos de import em lote do histórico Lorean: PDF (via Anthropic, mesma
+// rota do import diário) e XLSX (parsing por regex, sem chamar IA — mais rápido
+// e mais barato quando a planilha está disponível).
+export default function ImportLotePage() {
+  const { unit, units } = useUnit();
+  const [selectedUnitId, setSelectedUnitId] = useState<string>(unit?.id ?? units[0]?.id ?? "");
+  const [formato, setFormato] = useState<"pdf" | "xlsx">("xlsx");
+
+  const unitLabel = units.find((u) => u.id === selectedUnitId)?.name ?? "—";
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <Link href="/financeiro/dre/receita" style={{
+        fontSize: 11, color: C.text3, textDecoration: "none", fontWeight: 600,
+        letterSpacing: 0.6, textTransform: "uppercase",
+      }}>
+        ← Receita
+      </Link>
+
+      <header style={{ margin: "10px 0 24px" }}>
+        <h1 style={{ fontSize: 26, fontWeight: 700, color: C.text, letterSpacing: -0.5, margin: "0 0 4px" }}>
+          Importar em Lote
+        </h1>
+        <p style={{ fontSize: 13, color: C.text3, margin: 0 }}>
+          Importa histórico de múltiplos dias do Lorean de uma vez.
+        </p>
+      </header>
+
+      {/* ── Unidade + formato ── */}
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
+            Unidade
+          </label>
+          <select
+            value={selectedUnitId}
+            onChange={(e) => setSelectedUnitId(e.target.value)}
+            style={{
+              padding: "8px 12px", borderRadius: 8, fontSize: 13, fontWeight: 500,
+              background: C.surface2, border: `1px solid ${C.border}`, color: C.text,
+              cursor: "pointer", minWidth: 240,
+            }}
+          >
+            {units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
+            Formato
+          </label>
+          <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            {([["xlsx", "Excel (sem IA)"], ["pdf", "PDF"]] as const).map(([v, label]) => (
+              <button key={v} onClick={() => setFormato(v)} style={{
+                padding: "8px 16px", fontSize: 12, fontWeight: formato === v ? 700 : 500,
+                background: formato === v ? C.brand : C.surface2,
+                color: formato === v ? "#fff" : C.text3,
+                border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {formato === "xlsx"
+        ? <ImportLoteXlsx selectedUnitId={selectedUnitId} unitLabel={unitLabel} />
+        : <ImportLotePdf selectedUnitId={selectedUnitId} unitLabel={unitLabel} />}
+    </div>
+  );
+}
+
+// ── Sub-components compartilhados ────────────────────────────────────────────
+function Chip({ label, color }: { label: string; color?: string }) {
+  return (
+    <span style={{
+      padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+      background: C.surface3, color: color ?? C.text2, border: `1px solid ${C.border}`,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div style={{ height: 8, background: C.surface3, borderRadius: 4, overflow: "hidden" }}>
+      <div style={{
+        height: "100%", width: `${pct}%`, background: C.brand,
+        borderRadius: 4, transition: "width 300ms ease-out",
+      }} />
+    </div>
+  );
+}
+
+function Dropzone({ label, sub, accept, onFiles }: {
+  label: string; sub: string; accept: string; onFiles: (list: FileList) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const inputId = `dropzone-${accept.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); }}
+      onClick={() => document.getElementById(inputId)?.click()}
+      style={{
+        border: `2px dashed ${dragOver ? C.brand : C.border}`, borderRadius: 14,
+        padding: "48px 24px", textAlign: "center", cursor: "pointer",
+        background: dragOver ? "rgba(196,98,45,0.08)" : C.surface,
+        transition: "border-color 150ms ease, background 150ms ease",
+        marginBottom: 16,
+      }}
+    >
+      <p style={{ fontSize: 15, fontWeight: 600, color: C.text, margin: "0 0 6px" }}>{label}</p>
+      <p style={{ fontSize: 12, color: C.text3, margin: 0 }}>{sub}</p>
+      <input
+        id={inputId} type="file" accept={accept} multiple
+        style={{ display: "none" }}
+        onChange={(e) => { if (e.target.files) onFiles(e.target.files); e.target.value = ""; }}
+      />
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── XLSX: import direto, sem IA, via /api/lorean/import-xlsx ──────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+type ProcessState = "pendente" | "processando" | "sucesso" | "erro";
+
+type ArquivoResumo = {
+  clientes: number | null; receita_bruta: number | null; bruto: number | null;
+  gorjeta: number | null; desconto: number | null; custo: number | null; lucro: number | null;
+  pagamentos: number; ambientes: number; turnos: number; horarios: number;
+};
+
+type ParsedXlsxFile = {
+  file: File;
+  key: string;
+  data: string | null;       // YYYY-MM-DD extraído do nome — mesma regex da API
+  workdayHint: string | null; // número entre parênteses no nome, ex: "(212 [...])" → "212" — só preview
+  loreanCode: string | null;
+};
+
+type XlsxStatus = { state: ProcessState; mensagem?: string; resumo?: ArquivoResumo };
+
+function parseXlsxFilename(file: File): ParsedXlsxFile {
+  const name = file.name;
+  const dateMatch = name.match(/\[(\d{2})\.(\d{2})\.(\d{2})\]/);
+  const wdMatch = name.match(/\((\d+)/);
+  const codeMatch = name.match(/LOREAN\s*\[(\d+)\]/i);
+  return {
+    file,
+    key: `${name}::${file.size}`,
+    data: dateMatch ? `20${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null,
+    workdayHint: wdMatch ? wdMatch[1]! : null,
+    loreanCode: codeMatch ? codeMatch[1]! : null,
+  };
+}
+
+async function enviarArquivoXlsx(file: File, unitId: string): Promise<{ workday_id: number | null; data: string | null; resumo?: ArquivoResumo }> {
+  const fd = new FormData();
+  fd.append("arquivos", file);
+  fd.append("unit_id", unitId);
+  const res = await fetch(`${API_BASE}/api/lorean/import-xlsx`, { method: "POST", body: fd });
+  let json: { processados: number; erros: string[]; detalhes: Array<{ arquivo: string; workday_id: number | null; data: string | null; sucesso: boolean; erro?: string; resumo?: ArquivoResumo }> };
+  try { json = await res.json(); }
+  catch (e) { throw new Error(`resposta inválida: ${String(e)}`); }
+  const d = json.detalhes?.[0];
+  if (!res.ok || !d || !d.sucesso) {
+    throw new Error(d?.erro ?? json.erros?.[0] ?? `HTTP ${res.status}`);
+  }
+  return { workday_id: d.workday_id, data: d.data, resumo: d.resumo };
+}
+
+function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string; unitLabel: string }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [ignoredMsg, setIgnoredMsg] = useState<string | null>(null);
+  const [fase, setFase] = useState<Fase>("selecao");
+  const [progressLabel, setProgressLabel] = useState("");
+  const [status, setStatus] = useState<Record<string, XlsxStatus>>({});
+
+  function addFiles(list: FileList) {
+    const arr = Array.from(list);
+    const xlsxs = arr.filter((f) => f.name.toLowerCase().endsWith(".xlsx"));
+    const ignored = arr.length - xlsxs.length;
+    setFiles((prev) => {
+      const seen = new Set(prev.map((f) => `${f.name}::${f.size}`));
+      const merged = [...prev];
+      for (const f of xlsxs) {
+        const k = `${f.name}::${f.size}`;
+        if (!seen.has(k)) { seen.add(k); merged.push(f); }
+      }
+      return merged;
+    });
+    setIgnoredMsg(ignored > 0 ? `${ignored} arquivo(s) ignorado(s) (não são .xlsx)` : null);
+  }
+
+  function limparSelecao() {
+    setFiles([]); setIgnoredMsg(null); setFase("selecao"); setStatus({}); setProgressLabel("");
+  }
+
+  const parsed = useMemo(
+    () => files.map(parseXlsxFilename).sort((a, b) => (a.data ?? "").localeCompare(b.data ?? "")),
+    [files],
+  );
+  const prontos = parsed.filter((f) => f.data != null);
+  const semData = parsed.filter((f) => f.data == null);
+
+  const codigosDetectados = useMemo(
+    () => [...new Set(parsed.map((f) => f.loreanCode).filter((c): c is string => !!c))],
+    [parsed],
+  );
+
+  async function iniciarImportacao() {
+    if (!selectedUnitId || prontos.length === 0) return;
+    setFase("processando");
+    setStatus({});
+    for (let i = 0; i < prontos.length; i++) {
+      const f = prontos[i]!;
+      setProgressLabel(`Processando ${i + 1}/${prontos.length} — ${unitLabel} ${f.file.name}…`);
+      setStatus((prev) => ({ ...prev, [f.key]: { state: "processando" } }));
+      try {
+        const res = await enviarArquivoXlsx(f.file, selectedUnitId);
+        setStatus((prev) => ({ ...prev, [f.key]: { state: "sucesso", resumo: res.resumo } }));
+      } catch (e) {
+        setStatus((prev) => ({ ...prev, [f.key]: { state: "erro", mensagem: String(e instanceof Error ? e.message : e) } }));
+        // não interrompe — segue pro próximo arquivo
+      }
+    }
+    setProgressLabel("");
+    setFase("concluido");
+  }
+
+  const totalSucesso = Object.values(status).filter((s) => s.state === "sucesso").length;
+  const totalErro = Object.values(status).filter((s) => s.state === "erro").length;
+  const errosLista = prontos.filter((f) => status[f.key]?.state === "erro");
+  const progressoPct = prontos.length > 0
+    ? (Object.values(status).filter((s) => s.state === "sucesso" || s.state === "erro").length / prontos.length) * 100
+    : 0;
+  const processando = fase === "processando";
+
+  function baixarRelatorio() {
+    const header = ["Data", "Workday", "Arquivo", "Status", "Clientes", "Receita Bruta", "Gorjeta", "Mensagem"];
+    const rows = parsed.map((f) => {
+      const st = status[f.key];
+      const statusLabel =
+        st?.state === "sucesso" ? "Sucesso" :
+        st?.state === "erro" ? "Erro" :
+        st?.state === "processando" ? "Processando" :
+        f.data ? "Não processado" : "Sem data no nome (pulado)";
+      return [
+        f.data ? fmtDateBR(f.data) : "—", f.workdayHint ?? "—", f.file.name, statusLabel,
+        String(st?.resumo?.clientes ?? ""), String(st?.resumo?.receita_bruta ?? ""), String(st?.resumo?.gorjeta ?? ""),
+        st?.mensagem ?? "",
+      ];
+    });
+    baixarCsv(`import-lote-xlsx-${unitLabel.replace(/\s+/g, "_")}-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
+
+  return (
+    <>
+      {fase === "selecao" && (
+        <Dropzone
+          label="Arraste os arquivos Excel (.xlsx) aqui"
+          sub="Movimento do Lorean em formato Excel — sem limite de quantidade, sem chamar IA"
+          accept=".xlsx"
+          onFiles={addFiles}
+        />
+      )}
+
+      {ignoredMsg && <p style={{ fontSize: 12, color: C.meta, marginTop: -8, marginBottom: 16 }}>⚠ {ignoredMsg}</p>}
+
+      {files.length > 0 && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Chip label={`${files.length} arquivo${files.length !== 1 ? "s" : ""}`} />
+              <Chip label={`${prontos.length} pronto${prontos.length !== 1 ? "s" : ""}`} color={C.receita} />
+              {semData.length > 0 && <Chip label={`${semData.length} sem data no nome`} color={C.alerta} />}
+            </div>
+            {fase === "selecao" && (
+              <button onClick={limparSelecao} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                background: "transparent", color: C.text3, border: `1px solid ${C.border}`, cursor: "pointer",
+              }}>
+                Limpar seleção
+              </button>
+            )}
+          </div>
+
+          {codigosDetectados.length > 1 && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 12,
+              background: "rgba(251,191,36,0.08)", color: C.meta, border: "1px solid rgba(251,191,36,0.25)",
+            }}>
+              ⚠ Códigos Lorean distintos detectados nos arquivos: {codigosDetectados.map((c) => `[${c}]`).join(", ")}
+              {" "}— confira se todos os arquivos são realmente da unidade selecionada ({unitLabel}).
+            </div>
+          )}
+
+          {semData.length > 0 && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
+                Arquivos sem data reconhecível no nome (esperado "[DD.MM.YY]") — não serão processados
+              </p>
+              {semData.map((f) => (
+                <p key={f.key} style={{ fontSize: 12, color: C.text3, margin: "2px 0" }}>{f.file.name}</p>
+              ))}
+            </div>
+          )}
+
+          <div style={{ overflowX: "auto", marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+              <thead>
+                <tr style={{ background: C.surface2 }}>
+                  {["Data", "Workday", "Arquivo", "Status"].map((h, i) => (
+                    <th key={h} style={{
+                      padding: "8px 12px", textAlign: i < 2 ? "left" : i === 2 ? "left" : "right",
+                      fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase",
+                      color: C.text3, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.map((f) => {
+                  const live = status[f.key];
+                  const cell =
+                    live?.state === "processando" ? { label: "⏳ processando", color: C.meta } :
+                    live?.state === "sucesso"     ? { label: "✓ sucesso", color: C.receita } :
+                    live?.state === "erro"        ? { label: "✗ erro", color: C.alerta } :
+                    f.data                        ? { label: "pronto", color: C.receita } :
+                                                     { label: "sem data", color: C.alerta };
+                  return (
+                    <tr key={f.key} style={{ borderTop: `1px solid ${C.border}` }} title={live?.mensagem}>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{f.data ? fmtDateBR(f.data) : "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text2, whiteSpace: "nowrap" }}>{f.workdayHint ?? "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text2, maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file.name}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: cell.color }}>{cell.label}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {fase === "selecao" && (
+            <button
+              onClick={iniciarImportacao}
+              disabled={prontos.length === 0 || !selectedUnitId}
+              style={{
+                padding: "10px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: prontos.length === 0 ? C.surface3 : C.brand,
+                color: prontos.length === 0 ? C.text3 : "#fff",
+                border: "none", cursor: prontos.length === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              Importar tudo {prontos.length > 0 ? `(${prontos.length} arquivo${prontos.length !== 1 ? "s" : ""})` : ""}
+            </button>
+          )}
+
+          {processando && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 13, color: C.text2, marginBottom: 8 }}>⏳ {progressLabel}</p>
+              <ProgressBar pct={progressoPct} />
+            </div>
+          )}
+
+          {fase === "concluido" && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 20px" }}>
+              <p style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 10px" }}>
+                Concluído — {totalSucesso} arquivo{totalSucesso !== 1 ? "s" : ""} importado{totalSucesso !== 1 ? "s" : ""} com sucesso
+                {totalErro > 0 && `, ${totalErro} com erro`}
+              </p>
+
+              {errosLista.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 6px" }}>Arquivos com erro:</p>
+                  {errosLista.map((f) => (
+                    <p key={f.key} style={{ fontSize: 12, color: C.text2, margin: "3px 0" }}>
+                      <strong>{f.file.name}</strong> — {status[f.key]?.mensagem}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={baixarRelatorio} style={{
+                  padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  background: C.surface3, color: C.text, border: `1px solid ${C.border}`, cursor: "pointer",
+                }}>
+                  Baixar relatório (CSV)
+                </button>
+                <button onClick={limparSelecao} style={{
+                  padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  background: C.brand, color: "#fff", border: "none", cursor: "pointer",
+                }}>
+                  Nova importação
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── PDF: import via Anthropic, mesma rota do import diário ────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
 type Tipo = "movimento" | "venda" | "caixa";
 
 type ParsedFile = {
@@ -35,6 +468,8 @@ type ParsedFile = {
   tipo: Tipo | null;
 };
 
+// Regex idêntica à extractDateFromFilename de /api/lorean/import — garante que
+// o agrupamento client-side bate com a data que a API vai gravar no banco.
 function parseFilename(file: File): ParsedFile {
   const name = file.name;
   const codeMatch = name.match(/LOREAN\s*\[(\d+)\]/i);
@@ -62,55 +497,34 @@ type Pacote = {
   status: "pronto" | "incompleto";
 };
 
-type ProcessState = "pendente" | "processando" | "sucesso" | "erro";
 type PacoteStatus = { state: ProcessState; mensagem?: string };
-type Fase = "selecao" | "processando" | "concluido";
 
-const fmtDateBR = (iso: string) => iso.split("-").reverse().join("/");
-
-function csvEscape(v: string): string {
-  if (/[;"\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
-
-// ── Chamada individual à API (1 PDF por request, mesmo contrato do import diário) ──
+// Chamada individual à API (1 PDF por request, mesmo contrato do import diário).
 async function enviarArquivo(
   file: File, tipo: Tipo, unitId: string, workdayId: string | null,
 ): Promise<string | null> {
   const fd = new FormData();
-  fd.append("tipo", tipo);
-  fd.append("arquivo", file);
-  fd.append("unit_id", unitId);
+  fd.append("tipo", tipo); fd.append("arquivo", file); fd.append("unit_id", unitId);
   if (workdayId) fd.append("workday_id", workdayId);
   const res = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd });
   let json: { success: boolean; workday_id?: string | null; errors?: string[] };
   try { json = await res.json(); }
   catch (e) { throw new Error(`resposta inválida: ${String(e)}`); }
   if (!res.ok || !json.success) {
-    const msg = json.errors?.length ? json.errors.join(" | ") : `HTTP ${res.status}`;
-    throw new Error(msg);
+    throw new Error(json.errors?.length ? json.errors.join(" | ") : `HTTP ${res.status}`);
   }
   return json.workday_id ?? null;
 }
 
-// ── Página ────────────────────────────────────────────────────────────────────
-export default function ImportLotePage() {
-  const { unit, units } = useUnit();
-
-  const [selectedUnitId, setSelectedUnitId] = useState<string>(unit?.id ?? units[0]?.id ?? "");
+function ImportLotePdf({ selectedUnitId, unitLabel }: { selectedUnitId: string; unitLabel: string }) {
   const [files, setFiles] = useState<File[]>([]);
-  const [dragOver, setDragOver] = useState(false);
   const [ignoredMsg, setIgnoredMsg] = useState<string | null>(null);
   const [caixaAssignments, setCaixaAssignments] = useState<Record<string, string>>({});
-
   const [fase, setFase] = useState<Fase>("selecao");
   const [progressLabel, setProgressLabel] = useState("");
   const [pacoteStatus, setPacoteStatus] = useState<Record<string, PacoteStatus>>({});
 
-  const unitLabel = units.find((u) => u.id === selectedUnitId)?.name ?? "—";
-
-  // ── Seleção de arquivos ──────────────────────────────────────────────────
-  function addFiles(list: FileList | File[]) {
+  function addFiles(list: FileList) {
     const arr = Array.from(list);
     const pdfs = arr.filter((f) => f.name.toLowerCase().endsWith(".pdf"));
     const ignored = arr.length - pdfs.length;
@@ -131,16 +545,12 @@ export default function ImportLotePage() {
     setFase("selecao"); setPacoteStatus({}); setProgressLabel("");
   }
 
-  // ── Agrupamento por data ──────────────────────────────────────────────────
   const parsedFiles = useMemo(() => files.map(parseFilename), [files]);
-
   const semTipo = useMemo(() => parsedFiles.filter((f) => !f.tipo), [parsedFiles]);
-
   const caixasSemData = useMemo(
     () => parsedFiles.filter((f) => f.tipo === "caixa" && !f.data && !caixaAssignments[f.key]),
     [parsedFiles, caixaAssignments],
   );
-
   const codigosDetectados = useMemo(
     () => [...new Set(parsedFiles.map((f) => f.loreanCode).filter((c): c is string => !!c))],
     [parsedFiles],
@@ -173,7 +583,6 @@ export default function ImportLotePage() {
   const prontos = pacotes.filter((p) => p.status === "pronto");
   const incompletos = pacotes.filter((p) => p.status === "incompleto");
 
-  // ── Processamento sequencial ─────────────────────────────────────────────
   async function iniciarImportacao() {
     if (!selectedUnitId || prontos.length === 0) return;
     setFase("processando");
@@ -196,7 +605,6 @@ export default function ImportLotePage() {
     setFase("concluido");
   }
 
-  // ── Relatório final ───────────────────────────────────────────────────────
   const totalProcessados = Object.keys(pacoteStatus).length;
   const totalSucesso = Object.values(pacoteStatus).filter((s) => s.state === "sucesso").length;
   const totalErro = Object.values(pacoteStatus).filter((s) => s.state === "erro").length;
@@ -204,6 +612,7 @@ export default function ImportLotePage() {
   const progressoPct = prontos.length > 0
     ? (Object.values(pacoteStatus).filter((s) => s.state === "sucesso" || s.state === "erro").length / prontos.length) * 100
     : 0;
+  const processando = fase === "processando";
 
   function baixarRelatorio() {
     const header = ["Data", "Unidade", "Status", "Movimento", "Venda", "Caixas", "Mensagem"];
@@ -220,91 +629,24 @@ export default function ImportLotePage() {
         String(p.caixas.length), st?.mensagem ?? "",
       ];
     });
-    const csv = [header, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `import-lote-${unitLabel.replace(/\s+/g, "_")}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    baixarCsv(`import-lote-pdf-${unitLabel.replace(/\s+/g, "_")}-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
   }
 
-  const processando = fase === "processando";
-
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <Link href="/financeiro/dre/receita" style={{
-        fontSize: 11, color: C.text3, textDecoration: "none", fontWeight: 600,
-        letterSpacing: 0.6, textTransform: "uppercase",
-      }}>
-        ← Receita
-      </Link>
-
-      <header style={{ margin: "10px 0 24px" }}>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color: C.text, letterSpacing: -0.5, margin: "0 0 4px" }}>
-          Importar em Lote
-        </h1>
-        <p style={{ fontSize: 13, color: C.text3, margin: 0 }}>
-          Importa histórico de múltiplos dias do Lorean (Movimento + Venda + Caixas) de uma vez.
-        </p>
-      </header>
-
-      {/* ── Seletor de unidade ── */}
-      <div style={{ marginBottom: 20 }}>
-        <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text3, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
-          Unidade
-        </label>
-        <select
-          value={selectedUnitId}
-          onChange={(e) => setSelectedUnitId(e.target.value)}
-          disabled={processando}
-          style={{
-            padding: "8px 12px", borderRadius: 8, fontSize: 13, fontWeight: 500,
-            background: C.surface2, border: `1px solid ${C.border}`, color: C.text,
-            cursor: processando ? "not-allowed" : "pointer", minWidth: 240,
-          }}
-        >
-          {units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-        </select>
-      </div>
-
-      {/* ── Dropzone ── */}
+    <>
       {fase === "selecao" && (
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-          onClick={() => document.getElementById("import-lote-input")?.click()}
-          style={{
-            border: `2px dashed ${dragOver ? C.brand : C.border}`, borderRadius: 14,
-            padding: "48px 24px", textAlign: "center", cursor: "pointer",
-            background: dragOver ? "rgba(196,98,45,0.08)" : C.surface,
-            transition: "border-color 150ms ease, background 150ms ease",
-            marginBottom: 16,
-          }}
-        >
-          <p style={{ fontSize: 15, fontWeight: 600, color: C.text, margin: "0 0 6px" }}>
-            Arraste os PDFs aqui
-          </p>
-          <p style={{ fontSize: 12, color: C.text3, margin: 0 }}>
-            ou clique para selecionar — Movimento, Venda e Caixa, sem limite de quantidade
-          </p>
-          <input
-            id="import-lote-input" type="file" accept=".pdf" multiple
-            style={{ display: "none" }}
-            onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
-          />
-        </div>
+        <Dropzone
+          label="Arraste os PDFs aqui"
+          sub="ou clique para selecionar — Movimento, Venda e Caixa, sem limite de quantidade"
+          accept=".pdf"
+          onFiles={addFiles}
+        />
       )}
 
-      {ignoredMsg && (
-        <p style={{ fontSize: 12, color: C.meta, marginTop: -8, marginBottom: 16 }}>⚠ {ignoredMsg}</p>
-      )}
+      {ignoredMsg && <p style={{ fontSize: 12, color: C.meta, marginTop: -8, marginBottom: 16 }}>⚠ {ignoredMsg}</p>}
 
       {files.length > 0 && (
         <>
-          {/* ── Resumo + limpar ── */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Chip label={`${files.length} arquivo${files.length !== 1 ? "s" : ""}`} />
@@ -324,7 +666,6 @@ export default function ImportLotePage() {
             )}
           </div>
 
-          {/* ── Aviso de códigos mistos ── */}
           {codigosDetectados.length > 1 && (
             <div style={{
               padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 12,
@@ -335,7 +676,6 @@ export default function ImportLotePage() {
             </div>
           )}
 
-          {/* ── Arquivos não reconhecidos ── */}
           {semTipo.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
@@ -347,7 +687,6 @@ export default function ImportLotePage() {
             </div>
           )}
 
-          {/* ── Caixas sem data identificada — atribuição manual ── */}
           {caixasSemData.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.meta, margin: "0 0 8px" }}>
@@ -371,7 +710,6 @@ export default function ImportLotePage() {
             </div>
           )}
 
-          {/* ── Preview / status table ── */}
           <div style={{ overflowX: "auto", marginBottom: 20 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10 }}>
               <thead>
@@ -409,7 +747,6 @@ export default function ImportLotePage() {
             </table>
           </div>
 
-          {/* ── Iniciar importação / progresso ── */}
           {fase === "selecao" && (
             <button
               onClick={iniciarImportacao}
@@ -428,16 +765,10 @@ export default function ImportLotePage() {
           {processando && (
             <div style={{ marginBottom: 20 }}>
               <p style={{ fontSize: 13, color: C.text2, marginBottom: 8 }}>⏳ {progressLabel}</p>
-              <div style={{ height: 8, background: C.surface3, borderRadius: 4, overflow: "hidden" }}>
-                <div style={{
-                  height: "100%", width: `${progressoPct}%`, background: C.brand,
-                  borderRadius: 4, transition: "width 300ms ease-out",
-                }} />
-              </div>
+              <ProgressBar pct={progressoPct} />
             </div>
           )}
 
-          {/* ── Relatório final ── */}
           {fase === "concluido" && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 20px" }}>
               <p style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 10px" }}>
@@ -475,18 +806,6 @@ export default function ImportLotePage() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-// ── Sub-components ───────────────────────────────────────────────────────────
-function Chip({ label, color }: { label: string; color?: string }) {
-  return (
-    <span style={{
-      padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-      background: C.surface3, color: color ?? C.text2, border: `1px solid ${C.border}`,
-    }}>
-      {label}
-    </span>
+    </>
   );
 }
