@@ -143,9 +143,18 @@ function toHorarioRow(r: { nome: string; nums: number[] }): HorarioRow | null {
 
 type GrupoRow = { grupo: string; qtde: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; consumo: number | null };
 
-// Cada grupo (Venda) tem: linha de cabeçalho "<Nome>  Qtde  Garrafa  CMV  Bruto
-// Desconto  Gorjeta  Total", N linhas de produto, e uma linha de totais cujo
-// primeiro token é um número puro (sem "º") — é dela que tiramos os valores.
+// Cada grupo (Venda) tem: linha de cabeçalho "<Nome>  Qtde  Garrafa  CMV  <Bruto
+// ou Média>  Desconto  Gorjeta  Total", N linhas de produto, e uma linha de
+// totais cujo primeiro token é um número puro (sem "º").
+//
+// A coluna de preço unitário varia por unidade — algumas usam "Bruto" (somável),
+// outras "Média" (preço médio, NÃO somável — a linha de totais simplesmente não
+// soma essa coluna). Por isso a linha de totais tem 3 ou 4 valores numéricos, mas
+// os 3 ÚLTIMOS são sempre, nessa ordem, [desconto, gorjeta, consumo] — validado
+// contra 2 unidades reais (Madonna: bruto vem 1º de 4; Match: sem bruto, só 3).
+// bruto é DERIVADO (consumo + desconto - gorjeta, a mesma identidade contábil que
+// o próprio relatório usa: total pago = bruto - desconto + gorjeta) em vez de lido
+// direto — funciona nos dois layouts sem precisar detectar qual coluna existe.
 function extractVendaGrupos(rows: string[][]): GrupoRow[] {
   const grupos: GrupoRow[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -154,15 +163,20 @@ function extractVendaGrupos(rows: string[][]): GrupoRow[] {
     if (!m) continue;
     const grupo = m[1]!.trim();
     if (!grupo) continue;
-    for (let j = i + 1; j < rows.length && j < i + 25; j++) {
+    // Sem limite de distância — grupos grandes (20+ produtos) têm a linha de
+    // totais muitas linhas depois do cabeçalho. Para no próximo cabeçalho "Qtde".
+    for (let j = i + 1; j < rows.length; j++) {
       const tokens = tokenizeRow(rows[j]!);
       if (tokens.length === 0) continue;
       if (/^\d+$/.test(tokens[0]!)) {
         const nums = tokens.slice(1).map(parseNumBR).filter((n): n is number => n != null);
-        grupos.push({
-          grupo, qtde: parseInt(tokens[0]!, 10),
-          bruto: nums[0] ?? null, desconto: nums[1] ?? null, gorjeta: nums[2] ?? null, consumo: nums[3] ?? null,
-        });
+        const n = nums.length;
+        const desconto = n >= 3 ? nums[n - 3]! : null;
+        const gorjeta  = n >= 2 ? nums[n - 2]! : null;
+        const consumo  = n >= 1 ? nums[n - 1]! : null;
+        const bruto = consumo != null && desconto != null && gorjeta != null
+          ? consumo + desconto - gorjeta : null;
+        grupos.push({ grupo, qtde: parseInt(tokens[0]!, 10), bruto, desconto, gorjeta, consumo });
         break;
       }
       if (/Qtde\b/i.test(rows[j]!.join(" "))) break; // achou outro cabeçalho antes da linha de totais — desiste deste grupo
