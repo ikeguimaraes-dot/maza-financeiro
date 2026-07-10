@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AreaChart, Area,
@@ -379,6 +380,13 @@ export default function ReceitaPage() {
           }}>
             {showImport ? "Fechar" : "Importar PDFs"}
           </button>
+          <Link href="/financeiro/dre/receita/import-lote" style={{
+            padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: C.surface3, color: C.text2, border: `1px solid ${C.border}`,
+            textDecoration: "none", display: "inline-block",
+          }}>
+            Importar em lote
+          </Link>
         </div>
       </header>
 
