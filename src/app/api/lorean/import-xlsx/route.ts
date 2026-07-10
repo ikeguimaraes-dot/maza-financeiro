@@ -57,75 +57,123 @@ function findHeaderRowIndex(rows: string[][], matches: (upperJoined: string) => 
   return -1;
 }
 
-// Marcadores de início de outras seções conhecidas do relatório — usados como
-// condição de parada ao varrer uma tabela, já que o layout não tem fim explícito.
-const SECTION_STOP_WORDS = [
-  "PAGAMENTO", "METODO", "AMBIENTE", "MODULO", "TURNO", "HORARIO",
-  "USUARIO", "DESCONTO", "CANCELAMENTO", "GRUPO", "TOTAL",
-];
-
-function extractRowsAfter<T>(
-  rows: string[][], headerIdx: number, rowParser: (cells: string[]) => T | null, maxRows = 60,
-): T[] {
-  if (headerIdx === -1) return [];
-  const out: T[] = [];
-  for (let i = headerIdx + 1; i < rows.length && out.length < maxRows; i++) {
-    const row = rows[i]!;
-    if (isBlankRow(row)) break;
-    const firstCell = stripAccents(String(row.find((c) => String(c).trim()) ?? "")).toUpperCase();
-    if (SECTION_STOP_WORDS.some((w) => firstCell.startsWith(w))) break;
-    const parsed = rowParser(row);
-    if (parsed) out.push(parsed);
-  }
-  return out;
-}
-
 function extractLabelValue(text: string, label: string): number | null {
   const re = new RegExp(`${label}\\s*R?\\$?\\s*([\\d.,]+)`, "i");
   const m = text.match(re);
   return m ? parseNumBR(m[1]) : null;
 }
 
-// ── Row parsers ───────────────────────────────────────────────────────────────
+// O relatório mistura 2 layouts pro MESMO tipo de dado: às vezes os valores estão
+// em células separadas, às vezes crus numa única célula com múltiplos espaços
+// como separador de coluna. Achatar a linha inteira (join " ") e cortar em blocos
+// de 2+ espaços normaliza os dois casos pro mesmo formato de tokens.
+function tokenizeRow(row: string[]): string[] {
+  return row.join(" ").split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+}
+
+// clientes (ACESSO): o resumo do dia vem como 2 linhas dentro da MESMA célula —
+// uma linha de valores, uma linha de labels logo abaixo, pareadas por posição
+// (ex: "012 ... \nACESSO ...").
+function extractAcesso(rows: string[][]): number | null {
+  for (const row of rows) {
+    const cellText = String(row.find((c) => c && c.trim()) ?? "");
+    if (!cellText.includes("\n")) continue;
+    const lines = cellText.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
+    const labels = lines[1]!.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+    const idx = labels.findIndex((l) => stripAccents(l).toUpperCase() === "ACESSO");
+    if (idx === -1) continue;
+    const values = lines[0]!.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+    const v = values[idx];
+    if (v != null) {
+      const n = parseInt(v, 10);
+      if (!isNaN(n)) return n;
+    }
+  }
+  return null;
+}
+
+// Pagamento / Ambiente / Turno / Horário: linhas de dado começam com um ordinal
+// "0Nº" — às vezes fundido ao nome no mesmo token ("01º Dinheiro"), às vezes
+// separado ("01º" + "Salao"). Para de ler no 1º token sem ordinal (nova seção,
+// linha de totais, ou a linha "espelho" com só números que o relatório repete).
+function extractOrdinalRows(rows: string[][], headerIdx: number, maxRows = 60): Array<{ nome: string; nums: number[] }> {
+  if (headerIdx === -1) return [];
+  const out: Array<{ nome: string; nums: number[] }> = [];
+  for (let i = headerIdx + 1; i < rows.length && out.length < maxRows; i++) {
+    const row = rows[i]!;
+    if (isBlankRow(row)) break;
+    let tokens = tokenizeRow(row);
+    if (tokens.length === 0) break;
+    const ordMatch = tokens[0]!.match(/^(\d{1,3})º\s*(.*)$/);
+    if (!ordMatch) break;
+    const rest = ordMatch[2]!.trim();
+    tokens = rest ? [rest, ...tokens.slice(1)] : tokens.slice(1);
+    const nome = tokens.find((t) => /[A-Za-zÀ-ÿ]/.test(t) && !/^R\$/i.test(t));
+    if (!nome) continue;
+    const nums = tokens.filter((t) => t !== nome).map(parseNumBR).filter((n): n is number => n != null);
+    out.push({ nome, nums });
+  }
+  return out;
+}
+
+// ── Row parsers específicos (nums já vêm de extractOrdinalRows) ────────────────
 
 type PagamentoRow = { forma: string; valor_fechado: number | null; valor_recebido: number | null; diferenca: number | null };
 
-function parsePagamentoRow(cells: string[]): PagamentoRow | null {
-  const nonEmpty = cells.map((c) => String(c ?? "").trim()).filter(Boolean);
-  if (!nonEmpty.length) return null;
-  const forma = nonEmpty.find((c) => parseNumBR(c) == null || /[A-Za-zÀ-ÿ]/.test(c));
-  if (!forma) return null;
-  const nums = nonEmpty.filter((c) => c !== forma).map(parseNumBR).filter((n): n is number => n != null);
-  return { forma, valor_fechado: nums[0] ?? null, valor_recebido: nums[1] ?? null, diferenca: nums[2] ?? null };
+function toPagamentoRow(r: { nome: string; nums: number[] }): PagamentoRow {
+  return { forma: r.nome, valor_fechado: r.nums[0] ?? null, valor_recebido: r.nums[1] ?? null, diferenca: r.nums[2] ?? null };
 }
 
 type NomeQuadRow = { nome: string; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
 
-// Ambiente e Turno têm o mesmo formato: nome + 4 números (clientes, gorjeta, produto, consumo).
-function parseNomeQuadRow(cells: string[]): NomeQuadRow | null {
-  const nonEmpty = cells.map((c) => String(c ?? "").trim()).filter(Boolean);
-  if (!nonEmpty.length) return null;
-  const nome = nonEmpty.find((c) => parseNumBR(c) == null);
-  if (!nome) return null;
-  const nums = nonEmpty.filter((c) => c !== nome).map(parseNumBR).filter((n): n is number => n != null);
-  return { nome, clientes: nums[0] ?? null, gorjeta: nums[1] ?? null, produto: nums[2] ?? null, consumo: nums[3] ?? null };
+// Colunas reais: Nome | Qtde | Gorjeta | Convite | Produto | Consumo — pula Convite
+// (não faz parte do schema de destino, index 2 é descartado de propósito).
+function toNomeQuadRow(r: { nome: string; nums: number[] }): NomeQuadRow {
+  return { nome: r.nome, clientes: r.nums[0] ?? null, gorjeta: r.nums[1] ?? null, produto: r.nums[3] ?? null, consumo: r.nums[4] ?? null };
 }
 
 type HorarioRow = { hora: number; clientes: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
 
-function parseHorarioRow(cells: string[]): HorarioRow | null {
-  const nonEmpty = cells.map((c) => String(c ?? "").trim()).filter(Boolean);
-  if (!nonEmpty.length) return null;
-  const horaCell = nonEmpty.find((c) => /^\d{1,2}\s*h\b/i.test(c)) ?? nonEmpty[0]!;
-  const hora = parseInt(horaCell, 10);
+function toHorarioRow(r: { nome: string; nums: number[] }): HorarioRow | null {
+  const hora = parseInt(r.nome, 10);
   if (isNaN(hora)) return null;
-  const nums = nonEmpty.filter((c) => c !== horaCell).map(parseNumBR).filter((n): n is number => n != null);
-  return { hora, clientes: nums[0] ?? null, gorjeta: nums[1] ?? null, produto: nums[2] ?? null, consumo: nums[3] ?? null };
+  return { hora, clientes: r.nums[0] ?? null, gorjeta: r.nums[1] ?? null, produto: r.nums[3] ?? null, consumo: r.nums[4] ?? null };
 }
 
-// ── Parsing do arquivo ───────────────────────────────────────────────────────
+type GrupoRow = { grupo: string; qtde: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; consumo: number | null };
 
-type ParsedWorkday = {
+// Cada grupo (Venda) tem: linha de cabeçalho "<Nome>  Qtde  Garrafa  CMV  Bruto
+// Desconto  Gorjeta  Total", N linhas de produto, e uma linha de totais cujo
+// primeiro token é um número puro (sem "º") — é dela que tiramos os valores.
+function extractVendaGrupos(rows: string[][]): GrupoRow[] {
+  const grupos: GrupoRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const rowText = rows[i]!.join(" ");
+    const m = rowText.match(/^\s*(.+?)\s+Qtde\b/i);
+    if (!m) continue;
+    const grupo = m[1]!.trim();
+    if (!grupo) continue;
+    for (let j = i + 1; j < rows.length && j < i + 25; j++) {
+      const tokens = tokenizeRow(rows[j]!);
+      if (tokens.length === 0) continue;
+      if (/^\d+$/.test(tokens[0]!)) {
+        const nums = tokens.slice(1).map(parseNumBR).filter((n): n is number => n != null);
+        grupos.push({
+          grupo, qtde: parseInt(tokens[0]!, 10),
+          bruto: nums[0] ?? null, desconto: nums[1] ?? null, gorjeta: nums[2] ?? null, consumo: nums[3] ?? null,
+        });
+        break;
+      }
+      if (/Qtde\b/i.test(rows[j]!.join(" "))) break; // achou outro cabeçalho antes da linha de totais — desiste deste grupo
+    }
+  }
+  return grupos;
+}
+
+// ── Parsing dos arquivos ─────────────────────────────────────────────────────
+
+type ParsedMovimento = {
   workday_id: number | null;
   data: string | null;
   clientes: number | null;
@@ -141,20 +189,21 @@ type ParsedWorkday = {
   horarios: HorarioRow[];
 };
 
-function parseXlsxWorkday(buffer: Buffer, filename: string): ParsedWorkday {
+function sheetRows(buffer: Buffer): string[][] {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]!];
   if (!sheet) throw new Error("planilha sem sheets");
-  const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: "" });
+  return XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: "" });
+}
+
+function parseMovimento(buffer: Buffer, filename: string): ParsedMovimento {
+  const rows = sheetRows(buffer);
   const flatText = rows.map((r) => (r ?? []).join(" ")).join("\n");
 
   const workdayIdMatch = flatText.match(/Workday:?\s*(\d+)/i);
   const workday_id = workdayIdMatch ? parseInt(workdayIdMatch[1]!, 10) : null;
-
   const data = extractDateFromFilename(filename);
-
-  const clientesMatch = flatText.match(/(\d+)\s*ACESSO/i);
-  const clientes = clientesMatch ? parseInt(clientesMatch[1]!, 10) : null;
+  const clientes = extractAcesso(rows);
 
   const bruto    = extractLabelValue(flatText, "BRUTO");
   const gorjeta  = extractLabelValue(flatText, "GORJETA");
@@ -163,23 +212,42 @@ function parseXlsxWorkday(buffer: Buffer, filename: string): ParsedWorkday {
   const lucro    = extractLabelValue(flatText, "LUCRO");
 
   // "Pagamento" (não "Método", que é a versão agrupada) — exige os dois tokens
-  // no cabeçalho pra não confundir com outra tabela.
+  // no cabeçalho pra não confundir com a outra tabela.
   const pagIdx = findHeaderRowIndex(rows, (t) => t.includes("PAGAMENTO") && t.includes("RECEBIDO"));
-  const pagamentos = extractRowsAfter(rows, pagIdx, parsePagamentoRow);
+  const pagamentos = extractOrdinalRows(rows, pagIdx).map(toPagamentoRow);
   const receita_bruta = pagamentos.length
     ? pagamentos.reduce((s, p) => s + (p.valor_recebido ?? 0), 0)
     : null;
 
-  const ambIdx = findHeaderRowIndex(rows, (t) => t.includes("AMBIENTE") || t.includes("MODULO"));
-  const ambientes = extractRowsAfter(rows, ambIdx, parseNomeQuadRow);
+  // "Ambiente" tem prioridade sobre "Módulo" — são seções distintas no relatório,
+  // mas o schema de destino só tem uma; ambiente é a mais próxima semanticamente.
+  let ambIdx = findHeaderRowIndex(rows, (t) => t.includes("AMBIENTE"));
+  if (ambIdx === -1) ambIdx = findHeaderRowIndex(rows, (t) => t.includes("MODULO"));
+  const ambientes = extractOrdinalRows(rows, ambIdx).map(toNomeQuadRow);
 
   const turIdx = findHeaderRowIndex(rows, (t) => t.includes("TURNO"));
-  const turnos = extractRowsAfter(rows, turIdx, parseNomeQuadRow);
+  const turnos = extractOrdinalRows(rows, turIdx).map(toNomeQuadRow);
 
   const horIdx = findHeaderRowIndex(rows, (t) => t.includes("HORARIO"));
-  const horarios = extractRowsAfter(rows, horIdx, parseHorarioRow);
+  const horarios = extractOrdinalRows(rows, horIdx).map(toHorarioRow).filter((h): h is HorarioRow => h != null);
 
   return { workday_id, data, clientes, receita_bruta, bruto, gorjeta, desconto, custo, lucro, pagamentos, ambientes, turnos, horarios };
+}
+
+type ParsedVenda = {
+  workday_id: number | null;
+  data: string | null;
+  grupos: GrupoRow[];
+};
+
+function parseVenda(buffer: Buffer, filename: string): ParsedVenda {
+  const rows = sheetRows(buffer);
+  const flatText = rows.map((r) => (r ?? []).join(" ")).join("\n");
+  const workdayIdMatch = flatText.match(/Workday:?\s*(\d+)/i);
+  const workday_id = workdayIdMatch ? parseInt(workdayIdMatch[1]!, 10) : null;
+  const data = extractDateFromFilename(filename);
+  const grupos = extractVendaGrupos(rows);
+  return { workday_id, data, grupos };
 }
 
 // ── DB ────────────────────────────────────────────────────────────────────────
@@ -191,8 +259,8 @@ function getServiceClient() {
   return createClient(url, key);
 }
 
-async function insertWorkdayXlsx(
-  supabase: ReturnType<typeof getServiceClient>, parsed: ParsedWorkday, unitId: string,
+async function insertMovimento(
+  supabase: ReturnType<typeof getServiceClient>, parsed: ParsedMovimento, unitId: string,
 ): Promise<string> {
   if (parsed.workday_id == null) throw new Error("workday_id não encontrado no arquivo (esperado 'Workday: <n>')");
   if (!parsed.data) throw new Error("data não encontrada no nome do arquivo (esperado [DD.MM.YY])");
@@ -289,20 +357,48 @@ async function insertWorkdayXlsx(
   return wd.id;
 }
 
-// ── Route handler — aceita 1..N arquivos por chamada (arquivos[]) ──────────────
+async function insertVenda(
+  supabase: ReturnType<typeof getServiceClient>, parsed: ParsedVenda, unitId: string,
+): Promise<void> {
+  if (parsed.workday_id == null) throw new Error("workday_id não encontrado no arquivo (esperado 'Workday: <n>')");
+
+  const { data: wd } = await supabase
+    .from("lorean_workdays")
+    .select("id")
+    .eq("unit_id", unitId)
+    .eq("workday_id", parsed.workday_id)
+    .maybeSingle();
+  if (!wd) throw new Error(`Workday não encontrado para workday_id=${parsed.workday_id} — importe o Movimento primeiro`);
+
+  await supabase.from("lorean_grupos").delete().eq("workday_id_fk", wd.id);
+  if (parsed.grupos.length) {
+    const { error } = await supabase.from("lorean_grupos").insert(
+      parsed.grupos.map((g) => ({ grupo: g.grupo, bruto: g.bruto, desconto: g.desconto, gorjeta: g.gorjeta, consumo: g.consumo, workday_id_fk: wd.id })),
+    );
+    if (error) throw new Error(`lorean_grupos: ${error.message}`);
+  }
+}
+
+// ── Route handler — aceita Movimento e Venda misturados num único upload ───────
+// Tipo detectado pelo nome do arquivo; Movimento processa antes de Venda (Venda
+// depende do workday já existir) independente da ordem em que vieram no FormData.
 
 type Detalhe = {
   arquivo: string;
+  tipo: "movimento" | "venda" | null;
   workday_id: number | null;
   data: string | null;
   sucesso: boolean;
   erro?: string;
-  resumo?: {
-    clientes: number | null; receita_bruta: number | null; bruto: number | null;
-    gorjeta: number | null; desconto: number | null; custo: number | null; lucro: number | null;
-    pagamentos: number; ambientes: number; turnos: number; horarios: number;
-  };
+  resumo?: Record<string, unknown>;
 };
+
+function detectTipo(filename: string): "movimento" | "venda" | null {
+  const lower = filename.toLowerCase();
+  if (lower.includes("movimento")) return "movimento";
+  if (lower.includes("venda")) return "venda";
+  return null;
+}
 
 export async function POST(request: Request) {
   try {
@@ -331,26 +427,54 @@ export async function POST(request: Request) {
       return Response.json({ processados: 0, erros: [`supabase: ${String(e)}`], detalhes: [] }, { status: 500, headers: CORS });
     }
 
+    // Movimento primeiro (Venda precisa do workday já existir).
+    const ordenados = [...arquivos].sort((a, b) => {
+      const ta = detectTipo(a.name), tb = detectTipo(b.name);
+      if (ta === tb) return 0;
+      return ta === "movimento" ? -1 : tb === "movimento" ? 1 : 0;
+    });
+
     const detalhes: Detalhe[] = [];
     const erros: string[] = [];
 
-    for (const arquivo of arquivos) {
+    for (const arquivo of ordenados) {
+      const tipo = detectTipo(arquivo.name);
+      if (!tipo) {
+        detalhes.push({ arquivo: arquivo.name, tipo: null, workday_id: null, data: null, sucesso: false, erro: "tipo não reconhecido no nome do arquivo (esperado 'Movimento' ou 'Venda')" });
+        erros.push(`${arquivo.name}: tipo não reconhecido`);
+        continue;
+      }
       try {
         const buffer = Buffer.from(await arquivo.arrayBuffer());
-        const parsed = parseXlsxWorkday(buffer, arquivo.name);
-        await insertWorkdayXlsx(supabase, parsed, unitId);
-        detalhes.push({
-          arquivo: arquivo.name, workday_id: parsed.workday_id, data: parsed.data, sucesso: true,
-          resumo: {
-            clientes: parsed.clientes, receita_bruta: parsed.receita_bruta, bruto: parsed.bruto,
-            gorjeta: parsed.gorjeta, desconto: parsed.desconto, custo: parsed.custo, lucro: parsed.lucro,
-            pagamentos: parsed.pagamentos.length, ambientes: parsed.ambientes.length,
-            turnos: parsed.turnos.length, horarios: parsed.horarios.length,
-          },
-        });
+        if (tipo === "movimento") {
+          const parsed = parseMovimento(buffer, arquivo.name);
+          await insertMovimento(supabase, parsed, unitId);
+          detalhes.push({
+            arquivo: arquivo.name, tipo, workday_id: parsed.workday_id, data: parsed.data, sucesso: true,
+            resumo: {
+              clientes: parsed.clientes, receita_bruta: parsed.receita_bruta, bruto: parsed.bruto,
+              gorjeta: parsed.gorjeta, desconto: parsed.desconto, custo: parsed.custo, lucro: parsed.lucro,
+              pagamentos: parsed.pagamentos.length, ambientes: parsed.ambientes.length,
+              turnos: parsed.turnos.length, horarios: parsed.horarios.length,
+            },
+          });
+        } else {
+          const parsed = parseVenda(buffer, arquivo.name);
+          await insertVenda(supabase, parsed, unitId);
+          detalhes.push({
+            arquivo: arquivo.name, tipo, workday_id: parsed.workday_id, data: parsed.data, sucesso: true,
+            resumo: {
+              grupos: parsed.grupos.length,
+              bruto_total: parsed.grupos.reduce((s, g) => s + (g.bruto ?? 0), 0),
+              desconto_total: parsed.grupos.reduce((s, g) => s + (g.desconto ?? 0), 0),
+              gorjeta_total: parsed.grupos.reduce((s, g) => s + (g.gorjeta ?? 0), 0),
+              consumo_total: parsed.grupos.reduce((s, g) => s + (g.consumo ?? 0), 0),
+            },
+          });
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        detalhes.push({ arquivo: arquivo.name, workday_id: null, data: null, sucesso: false, erro: msg });
+        detalhes.push({ arquivo: arquivo.name, tipo, workday_id: null, data: null, sucesso: false, erro: msg });
         erros.push(`${arquivo.name}: ${msg}`);
         // não interrompe o lote — segue pro próximo arquivo
       }
