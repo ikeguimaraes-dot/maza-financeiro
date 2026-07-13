@@ -37,9 +37,11 @@ type Workday = {
   id: string;
   data: string;
   turno: string | null;
-  receita_bruta_real: number; // PREVISTO — o que foi vendido/consumido (receita da DRE)
+  receita_bruta_real: number; // PREVISTO no workday inteiro; consumo do turno quando a linha vem de um split almoço/jantar
   recebido_real: number | null; // SUM(valor_recebido) — o que entrou no caixa; null quando não aplicável (split por turno)
-  devedor_real: number | null;  // receita_bruta_real - recebido_real
+  devedor_real: number | null;  // receita_bruta_real - recebido_real; null no split (não há fechado/recebido por turno)
+  previsto: number | null; // campo bruto do dia inteiro (mesmo valor nas 2 linhas de um split) — fonte de verdade do total do dia
+  devedor: number | null;  // devedor do dia inteiro (idem) — usar este, não devedor_real, pro total do dia
   desconto: number | null;
   gorjeta: number | null;
   custo: number | null;
@@ -93,6 +95,25 @@ function aggByKey<T>(rows: T[], keyFn: (r: T) => string, valFn: (r: T) => number
   const map = new Map<string, number>();
   for (const r of rows) { const k = keyFn(r); map.set(k, (map.get(k) ?? 0) + valFn(r)); }
   return Array.from(map.entries()).map(([key, total]) => ({ key, total })).sort((a, b) => b.total - a.total);
+}
+
+// Um workday "dia_inteiro" vira 2 linhas na API (id "uuid::almoco" / "uuid::jantar"),
+// cada uma com receita_bruta_real = consumo DO TURNO — mas previsto/devedor são do
+// workday INTEIRO e vêm repetidos nas 2 linhas. Somar receita_bruta_real das 2 linhas
+// direto dá o total errado (perde a pendência antiga embutida no previsto). Aqui
+// deduplicamos por workday original antes de somar: cada workday entra 1x, usando
+// previsto quando existe (senão cai pra soma dos turnos daquele mesmo workday).
+function dedupByOrigWorkday(rows: Workday[]): Array<{ receita: number; devedor: number }> {
+  const map = new Map<string, { previsto: number | null; devedor: number | null; somaTurnos: number }>();
+  for (const r of rows) {
+    const origId = r.id.includes("::") ? r.id.split("::")[0]! : r.id;
+    if (!map.has(origId)) map.set(origId, { previsto: r.previsto, devedor: r.devedor, somaTurnos: 0 });
+    map.get(origId)!.somaTurnos += r.receita_bruta_real;
+  }
+  return Array.from(map.values()).map((v) => ({
+    receita: v.previsto ?? v.somaTurnos,
+    devedor: v.devedor ?? 0,
+  }));
 }
 
 // ── Count-up hook ─────────────────────────────────────────────────────────────
@@ -252,9 +273,10 @@ export default function ReceitaPage() {
   }
 
   // ── Aggregations ───────────────────────────────────────────────────────────
-  const totalBruto    = workdays.reduce((s, w) => s + w.receita_bruta_real, 0);
+  const workdaysDeduped = dedupByOrigWorkday(workdays);
+  const totalBruto    = workdaysDeduped.reduce((s, w) => s + w.receita, 0);
   const totalRecebido = workdays.reduce((s, w) => s + (w.recebido_real ?? 0), 0);
-  const totalDevedor  = totalBruto - totalRecebido;
+  const totalDevedor  = workdaysDeduped.reduce((s, w) => s + w.devedor, 0);
   const totalDesconto = workdays.reduce((s, w) => s + (w.desconto ?? 0), 0);
   const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta  ?? 0), 0);
   const totalLiquida  = totalBruto - totalDesconto;
@@ -270,9 +292,6 @@ export default function ReceitaPage() {
     const ds = new Date(data + "T12:00:00").getDay();
     return metaByDiaSemana.get(ds) ?? null;
   };
-
-  const receitaByData = new Map<string, number>();
-  for (const w of workdays) receitaByData.set(w.data, (receitaByData.get(w.data) ?? 0) + w.receita_bruta_real);
 
   const pagAgg  = aggByKey(pagamentos, (p) => p.forma,    (p) => p.valor_recebido ?? 0);
   const descAgg = aggByKey(descontos,  (d) => d.motivo,   (d) => d.consumo ?? 0);
@@ -292,17 +311,23 @@ export default function ReceitaPage() {
     const map = new Map<string, Workday[]>();
     for (const w of workdays) { if (!map.has(w.data)) map.set(w.data, []); map.get(w.data)!.push(w); }
     return Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a)).map(([date, rows]) => {
-      const totalReceita  = rows.reduce((s, r) => s + r.receita_bruta_real, 0);
-      const totalRecebido = rows.reduce((s, r) => s + (r.recebido_real ?? 0), 0);
-      const totalGorjeta  = rows.reduce((s, r) => s + (r.gorjeta ?? 0), 0);
-      const totalClientes = rows.reduce((s, r) => s + (r.clientes ?? 0), 0);
+      const deduped        = dedupByOrigWorkday(rows);
+      const totalReceita   = deduped.reduce((s, w) => s + w.receita, 0);
+      const totalDevedorDia = deduped.reduce((s, w) => s + w.devedor, 0);
+      const totalRecebido  = rows.reduce((s, r) => s + (r.recebido_real ?? 0), 0);
+      const totalGorjeta   = rows.reduce((s, r) => s + (r.gorjeta ?? 0), 0);
+      const totalClientes  = rows.reduce((s, r) => s + (r.clientes ?? 0), 0);
       const first = rows[0]!;
-      return { date, rows, totalReceita, totalRecebido, totalDevedor: totalReceita - totalRecebido,
+      return { date, rows, totalReceita, totalRecebido, totalDevedor: totalDevedorDia,
         totalGorjeta, totalClientes,
         desconto: first.desconto ?? 0, cmv_pct: first.cmv_pct ?? null,
         ticketMedio: totalClientes > 0 ? totalReceita / totalClientes : null };
     });
   })();
+
+  // Reaproveita o total já deduplicado de cada dayGroup (não soma turnos direto —
+  // mesmo motivo do totalBruto/dayGroups acima).
+  const receitaByData = new Map<string, number>(dayGroups.map((g) => [g.date, g.totalReceita]));
 
   // ── Day detail ─────────────────────────────────────────────────────────────
   const availableDates = [...new Set(workdays.map((w) => w.data))].sort((a, b) => b.localeCompare(a));
