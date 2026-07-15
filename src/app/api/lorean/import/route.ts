@@ -3,6 +3,24 @@ import { createClient } from "@supabase/supabase-js";
 // Extração do PDF de Venda compartilhada com /api/vendas-consolidado/import
 import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EQUIVALÊNCIA COM /api/lorean/import-xlsx — leia antes de mexer em qualquer
+// dos dois parsers.
+//
+// Esta rota (PDF, via Claude) é a referência que o cron diário usa — validada
+// em produção pra todas as unidades (Meet/Madonna/Match), com o MESMO prompt
+// pra qualquer uma (zero lógica condicional por unidade). import-xlsx/route.ts
+// é o equivalente sem IA pra quem tem o Excel — os dois devem gravar o MESMO
+// resultado em lorean_workdays/lorean_pagamentos/lorean_ambientes/
+// lorean_turnos/lorean_horarios/lorean_grupos pro mesmo workday_id. Mudou um
+// campo aqui? Confere se o parser XLSX extrai a mesma coisa.
+//
+// GAP CONHECIDO: a prova de equivalência direta (mesmo workday, campo a
+// campo) está bloqueada por falta de crédito na conta Anthropic — ver
+// comentário equivalente no topo de import-xlsx/route.ts pra lista de campos
+// ainda não cross-validados.
+// ═══════════════════════════════════════════════════════════════════════════
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;

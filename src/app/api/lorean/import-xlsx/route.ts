@@ -1,6 +1,40 @@
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EQUIVALÊNCIA COM /api/lorean/import (PDF) — leia antes de mexer em qualquer
+// dos dois parsers.
+//
+// PDF e XLSX são o MESMO relatório do Lorean em formatos diferentes. O cron
+// diário usa PDF (via Claude, WORKDAY_PROMPT/VENDA_PROMPT em
+// src/app/api/lorean/import/route.ts). Esta rota é o equivalente pra quem tem
+// o Excel em mãos — sem chamar IA, por regex. Os dois devem gravar o MESMO
+// resultado em lorean_workdays/lorean_pagamentos/lorean_ambientes/
+// lorean_turnos/lorean_horarios/lorean_grupos pro mesmo workday_id.
+//
+// Nenhum dos dois parsers tem lógica condicional por unidade (Meet/Madonna/
+// Match) — o relatório é idêntico pra qualquer uma; qualquer variação de
+// layout encontrada num arquivo real deve virar lógica ÚNICA que lida com
+// os dois casos (ver comentário de extractVendaGrupos abaixo pra um exemplo),
+// nunca um `if (unidade === X)`.
+//
+// Campos já validados batendo entre os dois formatos (cross-check: soma dos
+// grupos = resumo do Movimento, nos arquivos reais disponíveis em planilhas/):
+// receita_bruta (PREVISTO), devedor, clientes, gorjeta, desconto, custo,
+// lucro, pagamentos (forma/fechado/recebido/diferença), ambientes, turnos,
+// horários, grupos (bruto/desconto/gorjeta/consumo).
+//
+// GAP CONHECIDO — campos que o PDF extrai via WORKDAY_PROMPT e este parser
+// XLSX ainda NÃO lê (ficam null/ausentes no banco quando importado por XLSX):
+// abertura_at, fechamento_at, cmv_pct, ticket_medio, ticket_real,
+// permanencia_media, descontos, descontos_detalhe, cancelamentos_detalhe,
+// usuarios. Isso não foi comparado/corrigido nesta tarefa — a prova de
+// equivalência direta PDF-vs-XLSX (mesmo workday, campo a campo) ficou
+// bloqueada por falta de crédito na conta Anthropic; retomar quando houver
+// crédito, usando o par de arquivos reais do Match (workday 468) em
+// planilhas/ como caso de teste.
+// ═══════════════════════════════════════════════════════════════════════════
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -160,14 +194,19 @@ type GrupoRow = { grupo: string; qtde: number | null; bruto: number | null; desc
 // ou Média>  Desconto  Gorjeta  Total", N linhas de produto, e uma linha de
 // totais cujo primeiro token é um número puro (sem "º").
 //
-// A coluna de preço unitário varia por unidade — algumas usam "Bruto" (somável),
-// outras "Média" (preço médio, NÃO somável — a linha de totais simplesmente não
-// soma essa coluna). Por isso a linha de totais tem 3 ou 4 valores numéricos, mas
-// os 3 ÚLTIMOS são sempre, nessa ordem, [desconto, gorjeta, consumo] — validado
-// contra 2 unidades reais (Madonna: bruto vem 1º de 4; Match: sem bruto, só 3).
-// bruto é DERIVADO (consumo + desconto - gorjeta, a mesma identidade contábil que
-// o próprio relatório usa: total pago = bruto - desconto + gorjeta) em vez de lido
-// direto — funciona nos dois layouts sem precisar detectar qual coluna existe.
+// IMPORTANTE — isto NÃO é lógica por unidade, é a MESMA função rodando pra
+// qualquer arquivo. O relatório do Lorean, em exportações diferentes, pode
+// imprimir essa coluna de preço unitário como "Bruto" (somável, aparece na linha
+// de totais) ou como "Média" (preço médio — NÃO somável, a linha de totais
+// simplesmente não soma essa coluna). Por isso a linha de totais tem 3 ou 4
+// valores numéricos, mas os 3 ÚLTIMOS são sempre, nessa ordem, [desconto,
+// gorjeta, consumo] — verificado em todos os arquivos reais disponíveis no
+// momento desta escrita (2 exportações distintas, 4 vs 3 valores). bruto é
+// DERIVADO (consumo + desconto - gorjeta, a mesma identidade contábil que o
+// próprio relatório usa: total pago = bruto - desconto + gorjeta) em vez de
+// lido direto — funciona nos dois casos sem precisar detectar qual coluna
+// existe nem qual arquivo é. Qualquer novo caso real que quebre essa leitura
+// deve ser corrigido AQUI, na mesma função — nunca com um `if` de unidade.
 function extractVendaGrupos(rows: string[][]): GrupoRow[] {
   const grupos: GrupoRow[] = [];
   for (let i = 0; i < rows.length; i++) {
