@@ -335,6 +335,92 @@ function extractVendaGrupos(rows: string[][]): GrupoRow[] {
   return grupos;
 }
 
+type ProdutoRow = {
+  grupo: string; produto: string; qtd: number | null; cmv_pct: number | null;
+  bruto: number | null; desconto: number | null; gorjeta: number | null; total: number | null;
+};
+
+// Tokenizador dedicado pras linhas de PRODUTO individual dentro de um grupo de
+// Venda (ex: "Lasagna La Donna  008  00%  R$1.192,00  R$0,00  R$154,96
+// R$1.346,96"). Diferente de tokenizeRow (que junta a linha inteira com espaço
+// único e só depois corta em 2+ espaços — o que gruda 2 valores quando eles
+// caem em células ADJACENTES sem nenhuma célula vazia entre elas, ex:
+// "R$ 0,00" + "R$ 0,00" em células vizinhas viram um token só "R$ 0,00 R$
+// 0,00"), aqui cada célula não-vazia vira token(s) por si só — primeiro corta
+// CADA célula individualmente (cobre o caso raro em que uma linha inteira vem
+// crua numa célula única, com padding largo entre colunas), sem juntar
+// células vizinhas antes. Resolve os dois formatos reais (valores em células
+// separadas vs. linha inteira crua numa célula) sem string mágica por unidade.
+function tokenizeProdutoRow(row: string[]): string[] {
+  const out: string[] = [];
+  for (const cell of row) {
+    const s = String(cell ?? "").trim();
+    if (!s) continue;
+    for (const part of s.split(/\s{2,}/)) {
+      const p = part.trim();
+      if (p) out.push(p);
+    }
+  }
+  return out;
+}
+
+// Uma linha de produto é: nome, qtde, [garrafa — só existe pra doses/bebidas
+// dosadas, ignorado, sem coluna própria no schema], CMV%, Bruto/Média,
+// Desconto, Gorjeta, Total. Localiza o token "NN%" (CMV) como âncora: tudo
+// ANTES dele até o primeiro token numérico é o nome, esse primeiro numérico é
+// a qtde (ignora um 2º numérico entre qtde e CMV — é a coluna Garrafa);
+// os 4 valores em R$ logo DEPOIS do CMV são, nessa ordem, bruto, desconto,
+// gorjeta, total. Item cancelado (linha vira "Cancelado" em vez de valor em
+// TODAS as colunas de preço, sem CMV%) não tem "NN%" pra ancorar — cai no
+// `cmvIdx === -1` e é descartado (consumo real da linha é zero mesmo).
+function parseProdutoLine(tokens: string[]): Omit<ProdutoRow, "grupo"> | null {
+  const cmvIdx = tokens.findIndex((t) => /^\d{1,3}%$/.test(t));
+  if (cmvIdx < 1) return null;
+  const valores = tokens.slice(cmvIdx + 1).filter((t) => /^R\$/i.test(t)).slice(0, 4).map(parseNumBR);
+  if (valores.length < 4) return null;
+  const [bruto, desconto, gorjeta, total] = valores as [number | null, number | null, number | null, number | null];
+  const antes = tokens.slice(0, cmvIdx);
+  const qtdIdx = antes.findIndex((t) => /^[\d.,]+$/.test(t));
+  if (qtdIdx === -1) return null;
+  const produto = antes.slice(0, qtdIdx).join(" ").trim();
+  if (!produto) return null;
+  return { produto, qtd: parseNumBR(antes[qtdIdx]!), cmv_pct: parsePctBR(tokens[cmvIdx]), bruto, desconto, gorjeta, total };
+}
+
+// Mesma varredura de cabeçalhos de grupo que extractVendaGrupos (linha
+// "<Nome>  Qtde  ..."), mas coletando cada linha de PRODUTO individual entre o
+// cabeçalho e a linha de totais, em vez de só o total do grupo. Fonte dos
+// produtos individuais é o arquivo de VENDA — mesmo arquivo que já fornece os
+// grupos, e mesma fonte que o parser de PDF usa (VENDA_PROMPT em
+// vendaExtract.ts: "Extraia TODOS os produtos vendidos ... deste relatório
+// Lorean de Venda"), não o Movimento.
+// Item cancelado NÃO entra (sem CMV%/valores reais pra ancorar — ver
+// parseProdutoLine). Validado nos 2 arquivos reais: a soma de `total` bate
+// EXATO (diferença 0.00) com o consumo agregado de cada grupo em todos os
+// grupos, mesmo quando a QTDE do grupo conta itens cancelados que o parser
+// não lista individualmente (ex: Match/468 grupo "Pratos": qtde=10 no grupo,
+// mas só 4 produtos aqui — os 6 que faltam são 2 itens cancelados de qtde 5+1
+// cada, sem consumo real).
+function extractVendaProdutos(rows: string[][]): ProdutoRow[] {
+  const produtos: ProdutoRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const rowText = rows[i]!.join(" ");
+    const m = rowText.match(/^\s*(.+?)\s+Qtde\b/i);
+    if (!m) continue;
+    const grupo = m[1]!.trim();
+    if (!grupo) continue;
+    for (let j = i + 1; j < rows.length; j++) {
+      const tokens = tokenizeProdutoRow(rows[j]!);
+      if (tokens.length === 0) continue;
+      if (/^\d+$/.test(tokens[0]!)) break; // linha de totais do grupo
+      if (/Qtde\b/i.test(rows[j]!.join(" "))) break; // achou outro cabeçalho antes da linha de totais — desiste
+      const parsed = parseProdutoLine(tokens);
+      if (parsed) produtos.push({ grupo, ...parsed });
+    }
+  }
+  return produtos;
+}
+
 // ── Parsing dos arquivos ─────────────────────────────────────────────────────
 
 type ParsedMovimento = {
@@ -453,6 +539,7 @@ type ParsedVenda = {
   workday_id: number | null;
   data: string | null;
   grupos: GrupoRow[];
+  produtos: ProdutoRow[];
 };
 
 function parseVenda(buffer: Buffer, filename: string): ParsedVenda {
@@ -462,7 +549,8 @@ function parseVenda(buffer: Buffer, filename: string): ParsedVenda {
   const workday_id = workdayIdMatch ? parseInt(workdayIdMatch[1]!, 10) : null;
   const data = extractDateFromFilename(filename);
   const grupos = extractVendaGrupos(rows);
-  return { workday_id, data, grupos };
+  const produtos = extractVendaProdutos(rows);
+  return { workday_id, data, grupos, produtos };
 }
 
 // ── DB ────────────────────────────────────────────────────────────────────────
@@ -627,6 +715,18 @@ async function insertVenda(
     );
     if (error) throw new Error(`lorean_grupos: ${error.message}`);
   }
+
+  await supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wd.id);
+  if (parsed.produtos.length) {
+    const { error } = await supabase.from("lorean_produtos_dia").insert(
+      parsed.produtos.map((p) => ({
+        grupo: p.grupo, produto: p.produto, qtd: p.qtd, cmv_pct: p.cmv_pct,
+        bruto: p.bruto, desconto: p.desconto, gorjeta: p.gorjeta, total: p.total,
+        workday_id_fk: wd.id,
+      })),
+    );
+    if (error) throw new Error(`lorean_produtos_dia: ${error.message}`);
+  }
 }
 
 // ── Route handler — aceita Movimento e Venda misturados num único upload ───────
@@ -723,6 +823,8 @@ export async function POST(request: Request) {
               desconto_total: parsed.grupos.reduce((s, g) => s + (g.desconto ?? 0), 0),
               gorjeta_total: parsed.grupos.reduce((s, g) => s + (g.gorjeta ?? 0), 0),
               consumo_total: parsed.grupos.reduce((s, g) => s + (g.consumo ?? 0), 0),
+              produtos: parsed.produtos.length,
+              produtos_total: parsed.produtos.reduce((s, p) => s + (p.total ?? 0), 0),
             },
           });
         }
