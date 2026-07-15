@@ -472,7 +472,7 @@ export default function ReceitaPage() {
               alert={atingMeta != null && atingMeta < 90} ok={atingMeta != null && atingMeta >= 100} />
             <KpiCardAnimated label="Recebido"        rawValue={totalRecebido} format={fmt} sparkData={sparkReceita}
               sub={totalBruto > 0 ? pct((totalRecebido / totalBruto) * 100) + " do bruto" : undefined} />
-            <KpiCardAnimated label="Devedor"         rawValue={totalDevedor}  format={fmt} sparkData={sparkReceita}
+            <KpiCardAnimated label="Pendência / Ajuste" rawValue={totalDevedor} format={fmt} sparkData={sparkReceita}
               sub={totalBruto > 0 && totalDevedor > 0 ? pct((totalDevedor / totalBruto) * 100) + " pendente" : undefined}
               alert={totalDevedor > 0} />
             <KpiCardAnimated label="Desconto"        rawValue={totalDesconto} format={fmt} sparkData={sparkReceita}
