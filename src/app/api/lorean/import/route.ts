@@ -321,9 +321,6 @@ export async function POST(request: Request) {
     const arquivo = formData.get("arquivo") as File | null;
     const unitId = formData.get("unit_id") as string | null;
     const workdayUuid = formData.get("workday_id") as string | null; // Supabase UUID from Movimento step
-    // TEMP — prova de equivalência PDF vs XLSX (remover depois): pula os inserts,
-    // devolve o JSON puro do parsePdf pra comparar com o parser XLSX sem gravar nada.
-    const dryRun = formData.get("dry_run") === "1";
 
     console.log("[lorean/import] tipo:", tipo, "unit_id:", unitId, "workday_id:", workdayUuid, "file:", arquivo?.name, arquivo?.size);
 
@@ -346,8 +343,6 @@ export async function POST(request: Request) {
 
     let workday_id: string | null = workdayUuid;
 
-    let dryRunParsed: unknown = null;
-
     if (tipo === "movimento") {
       const parsed = await parsePdf(b64, WORKDAY_PROMPT, "movimento", 64000);
       const dateOverride = extractDateFromFilename(arquivo.name);
@@ -369,34 +364,24 @@ export async function POST(request: Request) {
         horarios: parsed.horarios?.length ?? 0,
         usuarios: parsed.usuarios?.length ?? 0,
       });
-      if (dryRun) { dryRunParsed = parsed; }
-      else {
-        workday_id = await insertWorkday(supabase, parsed, unitId);
-        console.log("[lorean/import] Movimento done, workday_id:", workday_id);
-      }
+      workday_id = await insertWorkday(supabase, parsed, unitId);
+      console.log("[lorean/import] Movimento done, workday_id:", workday_id);
     }
 
     else if (tipo === "venda" || tipo === "venda_produtos") {
       const parsed = await parsePdf(b64, VENDA_PROMPT, "venda", 32768);
-      if (dryRun) { dryRunParsed = parsed; }
-      else {
-        await insertVenda(supabase, parsed, unitId, workdayUuid, arquivo.name);
-        console.log(`[lorean/import] Venda produtos done: ${parsed.produtos?.length ?? 0} produtos`);
-      }
+      await insertVenda(supabase, parsed, unitId, workdayUuid, arquivo.name);
+      console.log(`[lorean/import] Venda produtos done: ${parsed.produtos?.length ?? 0} produtos`);
     }
 
     else if (tipo === "caixa") {
       const parsed = await parsePdf(b64, CAIXA_PROMPT, "caixa");
       const dateOverride = extractDateFromFilename(arquivo.name);
       if (dateOverride) parsed.data = dateOverride;
-      if (dryRun) { dryRunParsed = parsed; }
-      else {
-        await insertCaixa(supabase, parsed, unitId, workdayUuid);
-        console.log("[lorean/import] Caixa done");
-      }
+      await insertCaixa(supabase, parsed, unitId, workdayUuid);
+      console.log("[lorean/import] Caixa done");
     }
 
-    if (dryRun) return Response.json({ success: true, dry_run: true, parsed: dryRunParsed }, { headers: CORS });
     return Response.json({ success: true, workday_id, errors: [] }, { headers: CORS });
   } catch (e) {
     console.error("[lorean/import] unhandled error:", e);
