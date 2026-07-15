@@ -21,18 +21,27 @@ import * as XLSX from "xlsx";
 // Campos já validados batendo entre os dois formatos (cross-check: soma dos
 // grupos = resumo do Movimento, nos arquivos reais disponíveis em planilhas/):
 // receita_bruta (PREVISTO), devedor, clientes, gorjeta, desconto, custo,
-// lucro, pagamentos (forma/fechado/recebido/diferença), ambientes, turnos,
-// horários, grupos (bruto/desconto/gorjeta/consumo).
+// lucro, cmv_pct, ticket_medio, ticket_real, permanencia_media, pagamentos
+// (forma/fechado/recebido/diferença), ambientes, turnos, horários, grupos
+// (bruto/desconto/gorjeta/consumo), descontos (agregado por motivo),
+// descontos_detalhe, cancelamentos_detalhe, usuarios (vendas por operador).
 //
-// GAP CONHECIDO — campos que o PDF extrai via WORKDAY_PROMPT e este parser
-// XLSX ainda NÃO lê (ficam null/ausentes no banco quando importado por XLSX):
-// abertura_at, fechamento_at, cmv_pct, ticket_medio, ticket_real,
-// permanencia_media, descontos, descontos_detalhe, cancelamentos_detalhe,
-// usuarios. Isso não foi comparado/corrigido nesta tarefa — a prova de
-// equivalência direta PDF-vs-XLSX (mesmo workday, campo a campo) ficou
-// bloqueada por falta de crédito na conta Anthropic; retomar quando houver
-// crédito, usando o par de arquivos reais do Match (workday 468) em
-// planilhas/ como caso de teste.
+// GAP CONHECIDO — únicos campos que o PDF extrai via WORKDAY_PROMPT e este
+// parser XLSX genuinamente NÃO tem como ler (ficam null no banco quando
+// importado por XLSX): abertura_at, fechamento_at. Confirmado por busca
+// exaustiva (inclusive pelas palavras literais "abertura"/"fechamento"/
+// "abriu"/"fechou") nos 2 arquivos reais disponíveis — esse timestamp não
+// existe em lugar nenhum da exportação XLSX. NÃO fabricar/aproximar esse
+// valor a partir de outros dados; a classificação de turno (almoco/jantar)
+// usa os nomes da seção "Turno" do próprio arquivo, que já resolve isso sem
+// precisar de abertura_at.
+//
+// A prova de equivalência DIRETA PDF-vs-XLSX (mesmo workday, campo a campo)
+// ficou bloqueada por falta de crédito na conta Anthropic; retomar quando
+// houver crédito, usando o par de arquivos reais do Match (workday 468) em
+// planilhas/ como caso de teste. Os itens acima foram validados só entre
+// arquivos XLSX reais (Madonna/Match) e pela lógica de extração — não ainda
+// contra a saída real do parser de PDF lado a lado.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const dynamic = "force-dynamic";
@@ -105,26 +114,35 @@ function tokenizeRow(row: string[]): string[] {
   return row.join(" ").split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
 }
 
-// clientes (ACESSO): o resumo do dia vem como 2 linhas dentro da MESMA célula —
-// uma linha de valores, uma linha de labels logo abaixo, pareadas por posição
-// (ex: "012 ... \nACESSO ...").
-function extractAcesso(rows: string[][]): number | null {
+// Bloco de indicadores do topo do dia: 2 linhas dentro da MESMA célula — uma
+// linha de valores, uma linha de labels logo abaixo, pareadas por posição
+// (ex: "012  00:56:58  00%  003  R$350,80  R$300,69\nACESSO PERMANÊNCIA CMV
+// TICKET ZERO TICKET REAL TICKET MÉDIO"). Um único parse dá clientes,
+// permanência, CMV%, ticket real e ticket médio — todos nessa mesma linha.
+function extractResumoTopo(rows: string[][]): Record<string, string> {
   for (const row of rows) {
     const cellText = String(row.find((c) => c && c.trim()) ?? "");
     if (!cellText.includes("\n")) continue;
     const lines = cellText.split("\n").map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) continue;
     const labels = lines[1]!.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
-    const idx = labels.findIndex((l) => stripAccents(l).toUpperCase() === "ACESSO");
-    if (idx === -1) continue;
+    if (!labels.some((l) => stripAccents(l).toUpperCase() === "ACESSO")) continue; // garante que é o bloco certo
     const values = lines[0]!.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
-    const v = values[idx];
-    if (v != null) {
-      const n = parseInt(v, 10);
-      if (!isNaN(n)) return n;
+    const map: Record<string, string> = {};
+    for (let i = 0; i < labels.length; i++) {
+      const key = stripAccents(labels[i]!).toUpperCase();
+      if (values[i] != null) map[key] = values[i]!;
     }
+    return map;
   }
-  return null;
+  return {};
+}
+
+// CMV/pct_bruto vêm como "00%"/"38%" — divide por 100 pro formato decimal que
+// o schema usa (0.27 para 27%), igual o prompt do PDF já pede.
+function parsePctBR(v: string | null | undefined): number | null {
+  const n = parseNumBR(v);
+  return n != null ? n / 100 : null;
 }
 
 // PREVISTO = receita do dia (o que foi vendido: convite + produto + gorjeta ±
@@ -164,6 +182,78 @@ function extractOrdinalRows(rows: string[][], headerIdx: number, maxRows = 60): 
   return out;
 }
 
+type MotivoRow = { motivo: string; qtd: number | null; consumo: number | null };
+
+// Desconto/Cancelado AGREGADOS por motivo: sem ordinal "0Nº" — 1 linha por
+// motivo (motivo, qtd, consumo), termina numa linha de totais cujo primeiro
+// token é um número puro (ex: "Staff Sócio  009  R$803,00" ... "012  R$1.025,00").
+function extractMotivoRows(rows: string[][], headerIdx: number): MotivoRow[] {
+  if (headerIdx === -1) return [];
+  const out: MotivoRow[] = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (isBlankRow(row)) break;
+    const tokens = tokenizeRow(row);
+    if (tokens.length === 0) break;
+    if (/^\d+$/.test(tokens[0]!)) break; // linha de totais da seção
+    if (tokens.length < 3) break;
+    const qtd = parseInt(tokens[1]!, 10);
+    out.push({ motivo: tokens[0]!, qtd: isNaN(qtd) ? null : qtd, consumo: parseNumBR(tokens[tokens.length - 1]!) });
+  }
+  return out;
+}
+
+type DetalheRow = { item: string; usuario: string; motivo: string; qtd: number | null; valor: number | null };
+
+// Desconto/Cancelado DETALHADO por item: alterna linhas de "cabeçalho de
+// comanda" (ex: "21 - LOREAN DESK ... R$803,00" — ignoradas, mesma regra do
+// prompt do PDF: "ignorar linhas de cabeçalho de comanda") com linhas de item:
+// item, usuário, motivo, qtd, valor. Usuário e motivo aparecem ora como 2
+// tokens (nome/motivo em células adjacentes, separadas por células vazias:
+// "Alex" + "Pereira"), ora como 1 token só (nome/motivo cru numa única célula:
+// "Maicon Borges") — os DOIS formatos aparecem no MESMO arquivo real (Match/
+// 468: desconto_detalhe vem partido, cancelado_detalhe vem cru), então uma
+// contagem fixa de tokens erra um dos dois. Por isso o motivo é identificado
+// por MATCH contra a lista de motivos já extraída da tabela agregada da mesma
+// seção (sempre impressa antes da detalhada) — o que sobra antes dele é o
+// usuário. Se a linha não tiver motivo algum batendo a lista conhecida, é
+// DESCARTADA em vez de gravar errado. Blanks aparecem ENTRE blocos de comanda
+// — não são fim de seção; só para na linha de totais (1 valor sozinho) ou fim
+// da planilha.
+function extractDetalheRows(rows: string[][], headerIdx: number, knownMotivos: string[]): DetalheRow[] {
+  if (headerIdx === -1) return [];
+  const motivoSet = new Set(knownMotivos.map((m) => m.toLowerCase()));
+  const out: DetalheRow[] = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (isBlankRow(row)) continue;
+    const tokens = tokenizeRow(row);
+    if (tokens.length === 0) continue;
+    if (tokens.length === 1 && parseNumBR(tokens[0]) != null) break; // linha de totais da seção
+    if (/^\d+\s*-/.test(tokens[0]!)) continue; // cabeçalho de comanda — ignora
+    if (tokens.length < 4) continue; // não bate o mínimo (item, motivo, qtd, valor) — descarta
+    const valor = parseNumBR(tokens[tokens.length - 1]!);
+    const qtdRaw = tokens[tokens.length - 2]!;
+    const qtd = /^\d+$/.test(qtdRaw) ? parseInt(qtdRaw, 10) : null;
+    if (qtd == null) continue; // formato inesperado — descarta
+    const item = tokens[0]!;
+    const middle = tokens.slice(1, tokens.length - 2);
+    let motivo: string | null = null;
+    let usuario: string | null = null;
+    for (let len = Math.min(2, middle.length); len >= 1; len--) {
+      const candidate = middle.slice(middle.length - len).join(" ");
+      if (motivoSet.has(candidate.toLowerCase())) {
+        motivo = candidate;
+        usuario = middle.slice(0, middle.length - len).join(" ");
+        break;
+      }
+    }
+    if (motivo == null || !usuario) continue; // motivo não bate a lista conhecida — descarta em vez de gravar errado
+    out.push({ item, usuario, motivo, qtd, valor });
+  }
+  return out;
+}
+
 // ── Row parsers específicos (nums já vêm de extractOrdinalRows) ────────────────
 
 type PagamentoRow = { forma: string; valor_fechado: number | null; valor_recebido: number | null; diferenca: number | null };
@@ -186,6 +276,14 @@ function toHorarioRow(r: { nome: string; nums: number[] }): HorarioRow | null {
   const hora = parseInt(r.nome, 10);
   if (isNaN(hora)) return null;
   return { hora, clientes: r.nums[0] ?? null, gorjeta: r.nums[1] ?? null, produto: r.nums[3] ?? null, consumo: r.nums[4] ?? null };
+}
+
+type UsuarioRow = { usuario: string; qtd: number | null; gorjeta: number | null; produto: number | null; consumo: number | null };
+
+// Seção "Usuário" — mesmo formato de coluna (Qtde|Gorjeta|Convite|Produto|
+// Consumo) e mesmo padrão ordinal de ambientes/turnos/horários.
+function toUsuarioRow(r: { nome: string; nums: number[] }): UsuarioRow {
+  return { usuario: r.nome, qtd: r.nums[0] ?? null, gorjeta: r.nums[1] ?? null, produto: r.nums[3] ?? null, consumo: r.nums[4] ?? null };
 }
 
 type GrupoRow = { grupo: string; qtde: number | null; bruto: number | null; desconto: number | null; gorjeta: number | null; consumo: number | null };
@@ -250,10 +348,18 @@ type ParsedMovimento = {
   desconto: number | null;
   custo: number | null;
   lucro: number | null;
+  cmv_pct: number | null;
+  ticket_medio: number | null;
+  ticket_real: number | null;
+  permanencia_media: string | null;
   pagamentos: PagamentoRow[];
   ambientes: NomeQuadRow[];
   turnos: NomeQuadRow[];
   horarios: HorarioRow[];
+  descontos: MotivoRow[];
+  descontos_detalhe: DetalheRow[];
+  cancelamentos_detalhe: DetalheRow[];
+  usuarios: UsuarioRow[];
 };
 
 function sheetRows(buffer: Buffer): string[][] {
@@ -270,7 +376,16 @@ function parseMovimento(buffer: Buffer, filename: string): ParsedMovimento {
   const workdayIdMatch = flatText.match(/Workday:?\s*(\d+)/i);
   const workday_id = workdayIdMatch ? parseInt(workdayIdMatch[1]!, 10) : null;
   const data = extractDateFromFilename(filename);
-  const clientes = extractAcesso(rows);
+
+  const resumoTopo = extractResumoTopo(rows);
+  const clientes = resumoTopo["ACESSO"] != null ? parseInt(resumoTopo["ACESSO"]!, 10) : null;
+  const permanencia_media = resumoTopo["PERMANENCIA"] ?? null; // já vem "HH:MM:SS"
+  // cmv_pct: o rótulo CMV está sempre presente no bloco do topo — quando o
+  // valor é "00%" (unidade sem custo cadastrado no Lorean) vira 0, nunca null,
+  // porque o campo EXISTE, só o valor é zero.
+  const cmv_pct     = resumoTopo["CMV"] != null ? (parsePctBR(resumoTopo["CMV"]) ?? 0) : null;
+  const ticket_real  = resumoTopo["TICKET REAL"]  != null ? parseNumBR(resumoTopo["TICKET REAL"])  : null;
+  const ticket_medio = resumoTopo["TICKET MEDIO"] != null ? parseNumBR(resumoTopo["TICKET MEDIO"]) : null;
 
   const bruto    = extractLabelValue(flatText, "BRUTO");
   const gorjeta  = extractLabelValue(flatText, "GORJETA");
@@ -301,7 +416,37 @@ function parseMovimento(buffer: Buffer, filename: string): ParsedMovimento {
   const horIdx = findHeaderRowIndex(rows, (t) => t.includes("HORARIO"));
   const horarios = extractOrdinalRows(rows, horIdx).map(toHorarioRow).filter((h): h is HorarioRow => h != null);
 
-  return { workday_id, data, clientes, receita_bruta, devedor, bruto, gorjeta, desconto, custo, lucro, pagamentos, ambientes, turnos, horarios };
+  // Desconto agregado (por motivo) — exige "MOTIVO" mas exclui a versão
+  // detalhada (que também tem "USUARIO" no cabeçalho).
+  const descIdx = findHeaderRowIndex(rows, (t) => t.includes("DESCONTO") && t.includes("MOTIVO") && !t.includes("USUARIO"));
+  const descontos = extractMotivoRows(rows, descIdx);
+
+  const descDetIdx = findHeaderRowIndex(rows, (t) => t.includes("DESCONTO") && t.includes("USUARIO") && t.includes("MOTIVO"));
+  const descontos_detalhe = extractDetalheRows(rows, descDetIdx, descontos.map((d) => d.motivo));
+
+  // Cancelamento: só a versão detalhada é gravada (mesmo comportamento do PDF —
+  // WORKDAY_PROMPT não tem campo "cancelamentos" agregado, só "cancelamentos_detalhe").
+  // A agregada "Cancelado (Motivo)" existe no arquivo mas não é persistida — só
+  // serve aqui pra fornecer a lista de motivos conhecidos que desambigua as
+  // linhas detalhadas (ver comentário de extractDetalheRows).
+  const cancelAggIdx = findHeaderRowIndex(rows, (t) => t.includes("CANCELADO") && t.includes("MOTIVO") && !t.includes("USUARIO"));
+  const cancelamentosMotivos = extractMotivoRows(rows, cancelAggIdx).map((m) => m.motivo);
+
+  const cancelDetIdx = findHeaderRowIndex(rows, (t) => t.includes("CANCELADO") && t.includes("USUARIO") && t.includes("MOTIVO"));
+  const cancelamentos_detalhe = extractDetalheRows(rows, cancelDetIdx, cancelamentosMotivos);
+
+  // "Usuário" tem cabeçalho igual ao de ambientes/turnos/horários (Qtde|Gorjeta|
+  // Convite|Produto|Consumo) — exige QTDE+GORJETA+PRODUTO pra não confundir com
+  // "Convite Edit"/"Gorjeta Edit"/"Consumo Move"/o desconto detalhado (que também
+  // menciona "Usuário" mas começa com "Desconto").
+  const usuIdx = findHeaderRowIndex(rows, (t) => t.startsWith("USUARIO") && t.includes("QTDE") && t.includes("GORJETA") && t.includes("PRODUTO"));
+  const usuarios = extractOrdinalRows(rows, usuIdx).map(toUsuarioRow);
+
+  return {
+    workday_id, data, clientes, receita_bruta, devedor, bruto, gorjeta, desconto, custo, lucro,
+    cmv_pct, ticket_medio, ticket_real, permanencia_media,
+    pagamentos, ambientes, turnos, horarios, descontos, descontos_detalhe, cancelamentos_detalhe, usuarios,
+  };
 }
 
 type ParsedVenda = {
@@ -352,9 +497,18 @@ async function insertMovimento(
         receita_liquida: receitaLiquida,
         custo: parsed.custo,
         lucro: parsed.lucro,
+        cmv_pct: parsed.cmv_pct,
+        ticket_medio: parsed.ticket_medio,
+        ticket_real: parsed.ticket_real,
+        permanencia_media: parsed.permanencia_media,
         previsto: parsed.receita_bruta, // mesmo valor — receita_bruta É o previsto
         devedor: parsed.devedor,
         clientes: parsed.clientes,
+        // abertura_at/fechamento_at não existem no XLSX (só no PDF) — null
+        // explícito pra não deixar um valor de um import anterior por PDF
+        // parecer que veio deste import.
+        abertura_at: null,
+        fechamento_at: null,
       },
       { onConflict: "unit_id,workday_id" },
     )
@@ -400,6 +554,10 @@ async function insertMovimento(
     supabase.from("lorean_ambientes").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_turnos").delete().eq("workday_id_fk", wd.id),
     supabase.from("lorean_horarios").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_descontos").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wd.id),
   ]);
 
   const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
@@ -421,6 +579,26 @@ async function insertMovimento(
   if (parsed.horarios.length) {
     inserts.push(supabase.from("lorean_horarios").insert(
       parsed.horarios.map((h) => ({ hora: h.hora, clientes: h.clientes, gorjeta: h.gorjeta, produto: h.produto, consumo: h.consumo, workday_id_fk: wd.id })),
+    ).then());
+  }
+  if (parsed.descontos.length) {
+    inserts.push(supabase.from("lorean_descontos").insert(
+      parsed.descontos.map((d) => ({ motivo: d.motivo, qtd: d.qtd, consumo: d.consumo, workday_id_fk: wd.id })),
+    ).then());
+  }
+  if (parsed.descontos_detalhe.length) {
+    inserts.push(supabase.from("lorean_descontos_detalhe").insert(
+      parsed.descontos_detalhe.map((d) => ({ item: d.item, usuario: d.usuario, motivo: d.motivo, qtd: d.qtd, valor: d.valor, workday_id_fk: wd.id })),
+    ).then());
+  }
+  if (parsed.cancelamentos_detalhe.length) {
+    inserts.push(supabase.from("lorean_cancelamentos_detalhe").insert(
+      parsed.cancelamentos_detalhe.map((c) => ({ item: c.item, usuario: c.usuario, motivo: c.motivo, qtd: c.qtd, valor: c.valor, workday_id_fk: wd.id })),
+    ).then());
+  }
+  if (parsed.usuarios.length) {
+    inserts.push(supabase.from("lorean_usuarios").insert(
+      parsed.usuarios.map((u) => ({ usuario: u.usuario, qtd: u.qtd, gorjeta: u.gorjeta, produto: u.produto, consumo: u.consumo, workday_id_fk: wd.id })),
     ).then());
   }
   const results = await Promise.all(inserts);
@@ -526,8 +704,12 @@ export async function POST(request: Request) {
             resumo: {
               clientes: parsed.clientes, receita_bruta: parsed.receita_bruta, devedor: parsed.devedor, bruto: parsed.bruto,
               gorjeta: parsed.gorjeta, desconto: parsed.desconto, custo: parsed.custo, lucro: parsed.lucro,
+              cmv_pct: parsed.cmv_pct, ticket_medio: parsed.ticket_medio, ticket_real: parsed.ticket_real,
+              permanencia_media: parsed.permanencia_media,
               pagamentos: parsed.pagamentos.length, ambientes: parsed.ambientes.length,
               turnos: parsed.turnos.length, horarios: parsed.horarios.length,
+              descontos: parsed.descontos.length, descontos_detalhe: parsed.descontos_detalhe.length,
+              cancelamentos_detalhe: parsed.cancelamentos_detalhe.length, usuarios: parsed.usuarios.length,
             },
           });
         } else {

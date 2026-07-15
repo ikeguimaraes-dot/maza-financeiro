@@ -15,10 +15,16 @@ import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract"
 // lorean_turnos/lorean_horarios/lorean_grupos pro mesmo workday_id. Mudou um
 // campo aqui? Confere se o parser XLSX extrai a mesma coisa.
 //
+// import-xlsx/route.ts já extrai TODOS os campos que este parser grava, exceto
+// abertura_at/fechamento_at — confirmado ausente na exportação XLSX (não dá
+// pra fabricar; ver comentário equivalente lá pro porquê).
+//
 // GAP CONHECIDO: a prova de equivalência direta (mesmo workday, campo a
-// campo) está bloqueada por falta de crédito na conta Anthropic — ver
-// comentário equivalente no topo de import-xlsx/route.ts pra lista de campos
-// ainda não cross-validados.
+// campo, saída deste parser vs. saída do XLSX) está bloqueada por falta de
+// crédito na conta Anthropic — o que existe até agora é validação dos campos
+// novos só contra os arquivos XLSX reais (Madonna/Match), não lado a lado com
+// este parser. Retomar usando o par PDF+XLSX do Match (workday 468) em
+// planilhas/ assim que houver crédito.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const dynamic = "force-dynamic";
