@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@kph/db/supabase/server";
+import { getShellLoginUrl } from "../../../src/lib/shell-url";
 import type { RoleName } from "@kph/db/types/database";
 
 export type CurrentUser = {
@@ -95,16 +96,23 @@ function isNextInternal(e: unknown): boolean {
   return typeof message === "string" && message.includes("Dynamic server usage");
 }
 
-/** AUTH DESATIVADO — retorna user bypass quando não há sessão. */
+/**
+ * Garante user autenticado. Se não houver sessão, redireciona pro login do shell.
+ *
+ * O middleware (kph-os-financeiro/src/middleware.ts) já deveria ter bloqueado
+ * essa request antes de chegar aqui. Este redirect é uma rede de segurança
+ * caso o middleware falhe ou seja bypassado em alguma rota interna.
+ *
+ * A URL do shell vem de NEXT_PUBLIC_SHELL_URL (dev) ou do fallback de produção.
+ * Não usamos `headers().get("referer")` porque pode ser spoofed.
+ */
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (user) return user;
-  // UUID fixo seedado em 039_seed_bypass_user.sql — satisfaz FK auth.users(id).
-  return {
-    id: "00000000-0000-0000-0000-000000000001",
-    email: "bypass@kph.os",
-    roles: [{ role: "founder" as RoleName, unitId: null, brandId: null, groupId: null }],
-  };
+  // Sem sessão → manda pro login do shell. Não temos `request.url` aqui
+  // (servers components não recebem a request), então voltamos pra raiz
+  // do shell — o shell decide pra onde mandar.
+  redirect(getShellLoginUrl("/").toString());
 }
 
 /** Falha se o user não tiver pelo menos uma das roles especificadas. */
