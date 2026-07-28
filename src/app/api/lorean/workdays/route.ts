@@ -3,14 +3,28 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const CORS = {
-  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
-  "Access-Control-Allow-Methods": "GET",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// CORS com allowlist — ecoa o Origin quando permitido. Em prod o shell fica
+// em https://kph-os.vercel.app; em dev ele sobe em http://localhost:3000.
+const CORS_ALLOWLIST = new Set([
+  "https://kph-os.vercel.app",
+  "http://localhost:3000",
+]);
 
-export function OPTIONS() {
-  return new Response(null, { headers: CORS });
+function corsHeaders(request: Request) {
+  const origin = request.headers.get("origin");
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
+  };
+  if (origin && CORS_ALLOWLIST.has(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
+}
+
+export function OPTIONS(request: Request) {
+  return new Response(null, { headers: corsHeaders(request) });
 }
 
 function getServiceClient() {
@@ -21,6 +35,7 @@ function getServiceClient() {
 }
 
 export async function GET(request: Request) {
+  const CORS = corsHeaders(request);
   const { searchParams } = new URL(request.url);
   const unit_id = searchParams.get("unit_id");
   const start   = searchParams.get("start");

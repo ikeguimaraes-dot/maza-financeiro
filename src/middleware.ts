@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getShellLoginUrl } from "../lib/shell-url";
+import { getShellLoginUrl } from "./lib/shell-url";
 
 /**
  * Middleware do sub-app financeiro — gate paralelo ao shell.
