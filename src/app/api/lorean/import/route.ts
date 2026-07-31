@@ -104,7 +104,8 @@ Regras:
 - descontos_detalhe: extrair da seção detalhada de Desconto que lista cada produto descontado com Usuário, Motivo, Qtde e Consumo (ignorar as linhas de cabeçalho de comanda como '115 - LOREAN DESK'). valor = coluna Consumo.
 - cancelamentos_detalhe: extrair da seção detalhada de Cancelado que lista cada produto cancelado com Usuário, Motivo, Qtde e Consumo (ignorar linhas de cabeçalho de comanda como '103 - LOREAN DESK'). valor = coluna Consumo.
 - horarios: da seção 'Horário' (hora como inteiro: '20h' → 20). Arrays vazios se a seção não existir: []
-- usuarios: da seção 'Usuário'. Arrays vazios se a seção não existir: []`;
+- usuarios: da seção 'Usuário'. Arrays vazios se a seção não existir: []
+- previsto = receita_bruta: os dois campos têm SEMPRE o mesmo valor — a linha que começa com "=" (ex: "= R$ 60.483,37") logo depois do bloco Convite/Produto/Gorjeta/Pendência Antiga/Diferença Real, no resumo do topo do relatório. NÃO é o FECHADO, nem o RECEBIDO, nem a soma dos pagamentos — representa o total vendido no dia (produto + gorjeta + convite ± pendência antiga).`;
 
 const CAIXA_PROMPT = `Extraia os dados deste relatório de fechamento de caixa Lorean e retorne APENAS JSON válido, sem texto adicional, sem markdown.
 
