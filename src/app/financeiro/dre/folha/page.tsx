@@ -94,6 +94,27 @@ const API_BASE =
 
 const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function fetchJsonWithSessionRetry(url: string) {
+  let lastStatus = 0
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, { credentials: "same-origin", cache: "no-store" })
+    lastStatus = response.status
+    const contentType = response.headers.get("content-type") ?? ""
+    if (response.ok && contentType.includes("application/json")) return response.json()
+    // Uma troca de zona pode restaurar o cookie alguns milissegundos depois da
+    // primeira request. Não tente interpretar a tela HTML de login como JSON.
+    if (attempt < 2 && (response.redirected || response.status === 307 || !contentType.includes("application/json"))) {
+      await wait(350)
+      continue
+    }
+    const text = await response.text()
+    throw new Error(`API da folha respondeu HTTP ${response.status}: ${text.slice(0, 120)}`)
+  }
+  throw new Error(`API da folha indisponível (HTTP ${lastStatus})`)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 const fmt = (v: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(v)
@@ -150,8 +171,7 @@ export default function FolhaPage() {
   // COM dados e ajusta os seletores — evita abrir num mês sem folha (ex.: mês
   // corrente ainda não importado) e renderizar vazio.
   useEffect(() => {
-    fetch(`${API_BASE}/api/folha/meses-disponiveis?unit_id=${unitId}`)
-      .then((r) => r.json())
+    fetchJsonWithSessionRetry(`${API_BASE}/api/folha/meses-disponiveis?unit_id=${unitId}`)
       .then((d: { competencias?: string[] }) => {
         const comps = d.competencias ?? []
         if (comps.length > 0) {
@@ -165,10 +185,9 @@ export default function FolhaPage() {
   useEffect(() => {
     setLoading(true)
     setError(null)
-    fetch(
+    fetchJsonWithSessionRetry(
       `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`
     )
-      .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(d.error)
         setData(d)

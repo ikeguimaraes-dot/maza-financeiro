@@ -20,19 +20,21 @@ export async function createSupabaseServerClient(
 
   const cookieStore = resolvedCookieStore ?? (await cookies());
 
-  // AUTH DESATIVADO: sem sessão → service role para bypassar RLS
-  const hasSession = cookieStore.getAll().some((c) => c.name.includes("auth-token"));
-  if (!hasSession) return createServiceClient();
+  // Detecta ambiente pelo header Host — em localhost Domain é ignorado pelo browser.
+  const headerStore = await headers();
+  const host = headerStore.get("host") ?? "";
+  const isLocalDev =
+    host.startsWith("localhost") || host.startsWith("127.0.0.1");
+  const sharedDomain = isLocalDev ? undefined : ".vercel.app";
 
   // Aplica o Set-Cookie do middleware se a request foi um Server Action
   // (Next.js 14+ tem bug que dropa Set-Cookie de middleware em Server Actions)
-  const headerStore = await headers();
   const middlewareCookies = headerStore.get("x-middleware-set-cookie");
   if (middlewareCookies) {
     try {
       const parsed = JSON.parse(middlewareCookies);
       for (const { name, value, options } of parsed) {
-        cookieStore.set(name, value, options);
+        cookieStore.set(name, value, { ...options, domain: sharedDomain });
       }
     } catch {
       // Ignorar, provavelmente Server Component
@@ -40,15 +42,19 @@ export async function createSupabaseServerClient(
   }
 
   return createServerClient<Database>(url, anonKey, {
+    cookieOptions: {
+      path: "/",
+      domain: sharedDomain,
+      sameSite: "lax",
+      secure: !isLocalDev,
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll() {
         try {
-          for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, options);
-          }
+          // Somente leitura: o middleware é o único responsável pelo refresh.
         } catch {
           // Server Component: cookies não podem ser escritos. proxy.ts
           // cuida do refresh. Ignorar é seguro.

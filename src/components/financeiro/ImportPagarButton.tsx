@@ -18,7 +18,11 @@ export function ImportPagarButton() {
     fd.append("file", file)
 
     try {
-      const res = await fetch("/api/financeiro/pagar/import", { method: "POST", body: fd })
+      const apiBase = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "";
+      const res = await fetch(`${apiBase}/api/financeiro/pagar/import`, {
+        method: "POST",
+        body: fd,
+      })
       const json = await res.json()
       if (json.ok) {
         setStatus({ ok: true, msg: `${json.inserted} títulos importados` })
