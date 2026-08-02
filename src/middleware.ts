@@ -12,9 +12,8 @@ import { getShellLoginUrl } from "./lib/shell-url";
  * Fluxo:
  *   1. User acessa kph-os-financeiro.vercel.app sem cookie
  *   2. Middleware detecta ausência de sb-*-auth-token
- *   3. 302 → <SHELL_URL>/login?redirect=<URL completa>
- *   4. Shell autentica, seta cookie (HttpOnly, Domain=.vercel.app)
- *   5. Cookie volta no redirect → libera acesso
+ *   3. 302 → <SHELL_URL>/login?next=/financeiro/...
+ *   4. Shell autentica e volta para a rota canônica no próprio shell
  *
  * Quando o shell for o portão (acesso via kph-os.vercel.app/financeiro), o
  * rewrite preserva o cookie do shell automaticamente — middleware do sub-app
@@ -29,20 +28,35 @@ import { getShellLoginUrl } from "./lib/shell-url";
  */
 
 export function middleware(request: NextRequest) {
+  // O callback precisa rodar antes de existir um cookie neste sub-app.
+  if (request.nextUrl.pathname === "/auth/sso/callback") {
+    return NextResponse.next();
+  }
+
   // Verifica se tem cookie de auth do Supabase
   const hasSession = request.cookies
     .getAll()
     .some((c) => c.name.includes("auth-token") && c.value.length > 0);
+
+  if (process.env.NEXT_PUBLIC_SHELL_URL?.includes("localhost")) {
+    console.info("[finance-auth-boundary]", {
+      pathname: request.nextUrl.pathname,
+      cookieNames: request.cookies.getAll().map((cookie) => cookie.name),
+      hasSession,
+      forwardedHost: request.headers.get("x-forwarded-host"),
+      host: request.headers.get("host"),
+    });
+  }
 
   if (hasSession) {
     return NextResponse.next();
   }
 
   // Sem sessão → redirect pro login central
-  // req.url é a URL completa do sub-app (ex: https://kph-os-financeiro.vercel.app/financeiro
-  // ou http://localhost:3001/financeiro). Preservamos ela inteira pro redirect
-  // pós-login voltar pro lugar certo.
-  const url = getShellLoginUrl(request.url);
+  // Sempre retorna pela URL canônica do shell. Cookies de projetos distintos
+  // em *.vercel.app não podem ser compartilhados entre si.
+  const returnTo = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  const url = getShellLoginUrl(returnTo);
   return NextResponse.redirect(url, 302);
 }
 

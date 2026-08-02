@@ -52,11 +52,9 @@ export async function createSupabaseServerClient(
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll() {
         try {
-          for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, { ...options, domain: sharedDomain });
-          }
+          // Somente leitura: o middleware é o único responsável pelo refresh.
         } catch {
           // Server Component: cookies não podem ser escritos. proxy.ts
           // cuida do refresh. Ignorar é seguro.

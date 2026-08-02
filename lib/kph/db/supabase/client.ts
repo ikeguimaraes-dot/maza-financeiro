@@ -36,5 +36,33 @@ export function getBrowserClient(): SupabaseClient<Database> | null {
       secure: !isLocalDev,
       maxAge: 60 * 60 * 24 * 400,
     },
+    // Mantém exatamente o mesmo formato de cookie usado pelo shell. Sem este
+    // adaptador, bundles antigos do sub-app podiam interpretar a sessão como
+    // inválida e apagar o cookie compartilhado durante a troca de páginas.
+    cookies: {
+      getAll() {
+        if (typeof document === "undefined") return [];
+        return document.cookie.split(";").map((cookie) => {
+          const separator = cookie.indexOf("=");
+          return {
+            name: separator === -1 ? cookie.trim() : cookie.slice(0, separator).trim(),
+            value: separator === -1 ? "" : cookie.slice(separator + 1),
+          };
+        });
+      },
+      setAll(cookiesToSet) {
+        if (typeof document === "undefined") return;
+        cookiesToSet.forEach(({ name, value, options }) => {
+          if (name.includes("auth-token") &&
+              (value.length === 0 || (options?.maxAge != null && options.maxAge <= 0))) return;
+          let serialized = `${name}=${value}`;
+          serialized += `; Path=${options?.path ?? "/"}`;
+          if (options?.maxAge != null) serialized += `; Max-Age=${options.maxAge}`;
+          if (options?.sameSite) serialized += `; SameSite=${options.sameSite}`;
+          if (options?.secure && !isLocalDev) serialized += "; Secure";
+          document.cookie = serialized;
+        });
+      },
+    },
   });
 }

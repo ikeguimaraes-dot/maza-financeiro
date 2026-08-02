@@ -9,6 +9,7 @@ import type { RoleName } from "@kph/db/types/database";
 export type CurrentUser = {
   id: string;
   email: string | null;
+  displayName: string | null;
   roles: Array<{
     role: RoleName;
     unitId: string | null;
@@ -72,9 +73,15 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       };
     });
 
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+    const displayName = [metadata.display_name, metadata.full_name, metadata.name]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ?.trim() ?? null;
+
     return {
       id: user.id,
       email: user.email ?? null,
+      displayName,
       roles,
     };
   } catch (e) {
@@ -109,10 +116,16 @@ function isNextInternal(e: unknown): boolean {
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (user) return user;
+  if (process.env.NEXT_PUBLIC_SHELL_URL?.includes("localhost")) {
+    const cookieStore = await cookies();
+    console.info("[finance-require-user] no session", {
+      cookieNames: cookieStore.getAll().map((cookie) => cookie.name),
+    });
+  }
   // Sem sessão → manda pro login do shell. Não temos `request.url` aqui
   // (servers components não recebem a request), então voltamos pra raiz
   // do shell — o shell decide pra onde mandar.
-  redirect(getShellLoginUrl("/").toString());
+  redirect(getShellLoginUrl("/financeiro").toString());
 }
 
 /** Falha se o user não tiver pelo menos uma das roles especificadas. */

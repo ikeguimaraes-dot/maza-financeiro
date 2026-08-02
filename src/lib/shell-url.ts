@@ -24,22 +24,25 @@ function getShellBaseUrl(): string {
 }
 
 /**
- * Monta a URL completa de login do shell, com ?redirect=<returnTo>.
+ * Monta a URL completa de login do shell, com ?next=<returnTo>.
  *
- * @param returnTo URL absoluta pra onde o user deve voltar após logar.
- *                 Em geral é a URL atual da request (request.url).
+ * @param returnTo Path do shell para onde o user deve voltar após logar.
  *
  * @example
- *   getShellLoginUrl("http://localhost:3001/financeiro")
- *   // → http://localhost:3000/login?redirect=http%3A%2F%2Flocalhost%3A3001%2Ffinanceiro
+ *   getShellLoginUrl("/financeiro")
+ *   // → http://localhost:3000/login?next=%2Ffinanceiro
  *
- *   getShellLoginUrl("https://kph-os-financeiro.vercel.app/financeiro")
- *   // → https://kph-os.vercel.app/login?redirect=https%3A%2F%2Fkph-os-financeiro.vercel.app%2Ffinanceiro
+ *   getShellLoginUrl("/financeiro/fluxo")
+ *   // → https://kph-os.vercel.app/login?next=%2Ffinanceiro%2Ffluxo
  */
 export function getShellLoginUrl(returnTo: string): URL {
   const base = getShellBaseUrl();
   const url = new URL("/login", base);
-  url.searchParams.set("redirect", returnTo);
+  const safeReturnTo =
+    returnTo.startsWith("/") && !returnTo.startsWith("//")
+      ? returnTo
+      : "/financeiro";
+  url.searchParams.set("next", safeReturnTo);
   return url;
 }
 

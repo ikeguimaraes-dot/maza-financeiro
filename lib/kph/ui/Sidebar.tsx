@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   // shell
   ChevronDown, ChevronRight, Check, LogOut, Circle,
@@ -35,6 +35,7 @@ type NavItem = {
   href?: string;
   label: string;
   icon: LucideIcon;
+  roles?: string[];
   defaultOpen?: boolean;
   children?: NavItem[];
 };
@@ -52,6 +53,7 @@ type RemoteNavItem = {
   href?: string;
   label: string;
   icon: string;
+  roles?: string[];
   defaultOpen?: boolean;
   children?: RemoteNavItem[];
 };
@@ -63,6 +65,36 @@ type RemoteNavGroup = {
   defaultOpen: boolean;
   items: RemoteNavItem[];
 };
+
+function getZone(pathname: string): string {
+  if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
+    return "inteligencia";
+  }
+  const match = pathname.match(/^\/(financeiro|pessoas|operacao|compras|comercial|marca|inteligencia)(?:\/|$)/);
+  return match?.[1] ?? "shell";
+}
+
+function getNavigationHref(href: string | undefined, pathname: string): string {
+  if (!href) return "#";
+  if (getZone(href) === getZone(pathname)) return href;
+  const shell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "");
+  return shell ? `${shell}${href}` : href;
+}
+
+function NavigationLink({
+  href,
+  pathname,
+  children,
+  style,
+}: {
+  href?: string;
+  pathname: string;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  const destination = getNavigationHref(href, pathname);
+  return <a href={destination} style={style}>{children}</a>;
+}
 
 // ── Icon resolver ───────────────────────────────────────────────────────────
 
@@ -92,6 +124,7 @@ function convertItem(item: RemoteNavItem): NavItem {
     href: item.href,
     label: item.label,
     icon: resolveIcon(item.icon),
+    roles: item.roles,
     defaultOpen: item.defaultOpen,
     children: item.children?.map(convertItem),
   };
@@ -280,7 +313,11 @@ const STORAGE_KEY = "kph_sidebar_groups";
 
 // ── Main Sidebar component ──────────────────────────────────────────────────
 
-export function Sidebar() {
+export function Sidebar(_props?: {
+  tierLevel?: number;
+  approvalsCount?: number;
+  punchAdjCount?: number;
+}) {
   const pathname = usePathname();
   const { user } = useAuth();
   const { unit, units, setUnit } = useUnit();
@@ -288,6 +325,26 @@ export function Sidebar() {
   const ref = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [remoteGroups, setRemoteGroups] = useState<NavGroup[] | null>(null);
+
+  useEffect(() => {
+    const syncSessionCookie = () => {
+      const cookies = document.cookie.split(";").map((item) => item.trim());
+      const auth = cookies.find((item) =>
+        item.startsWith("sb-") && item.slice(0, item.indexOf("=")).includes("auth-token"),
+      );
+      if (auth) {
+        window.localStorage.setItem("kph_auth_browser_backup", auth);
+        return;
+      }
+      const backup = window.localStorage.getItem("kph_auth_browser_backup");
+      if (backup?.startsWith("sb-") && backup.includes("auth-token=")) {
+        document.cookie = `${backup}; Path=/; Max-Age=2592000; SameSite=Lax`;
+      }
+    };
+    syncSessionCookie();
+    const timer = window.setInterval(syncSessionCookie, 250);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // ── (a) Unit switcher click-outside handler
   useEffect(() => {
@@ -310,8 +367,7 @@ export function Sidebar() {
 
   // ── (b) Fetch nav from shell; fall back to NAV_GROUPS on error
   useEffect(() => {
-    const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL;
-    if (!shellUrl) return;
+    const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "") ?? "";
     fetch(`${shellUrl}/api/nav`, { next: { revalidate: 300 } } as RequestInit)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { groups?: RemoteNavGroup[] } | null) => {
@@ -322,9 +378,34 @@ export function Sidebar() {
       .catch(() => {});
   }, []);
 
-  const effectiveGroups = remoteGroups ?? NAV_GROUPS;
+  const userRoles = useMemo(
+    () => new Set<string>((user?.roles ?? []).map((entry) => entry.role)),
+    [user?.roles],
+  );
+  const effectiveGroups = useMemo(() => {
+    const source = remoteGroups ?? NAV_GROUPS;
+    const filterItem = (item: NavItem): NavItem | null => {
+      if (item.roles?.length && !item.roles.some((role) => userRoles.has(role))) {
+        return null;
+      }
+      const children = item.children
+        ?.map(filterItem)
+        .filter((child): child is NavItem => child !== null);
+      if (item.children && !children?.length) return null;
+      return { ...item, children };
+    };
+    return source
+      .map((group) => ({
+        ...group,
+        items: group.items.map(filterItem).filter((item): item is NavItem => item !== null),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [remoteGroups, userRoles]);
 
-  const initials = user?.email?.slice(0, 2).toUpperCase() ?? "?";
+  const displayName = user?.displayName?.trim() || user?.email?.split("@")[0] || "—";
+  const initials = displayName
+    ? displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()
+    : "?";
   const emailShort = user?.email
     ? user.email.length > 22
       ? user.email.slice(0, 19) + "…"
@@ -441,7 +522,7 @@ export function Sidebar() {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {emailShort}
+              {displayName}
             </div>
             <div style={{ fontSize: 10, color: "var(--text-3)" }}>{role}</div>
           </div>
@@ -660,9 +741,10 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                       const childActive = child.href === activeHref ||
                         (child.href ? pathname.startsWith(child.href + "/") : false);
                       return (
-                        <Link
+                        <NavigationLink
                           key={child.href ?? child.label}
-                          href={child.href ?? "#"}
+                          href={child.href}
+                          pathname={pathname}
                           style={{
                             position: "relative",
                             display: "flex", alignItems: "center", gap: 10,
@@ -688,7 +770,7 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                             style={{ color: childActive ? "var(--brand)" : "currentColor", flexShrink: 0 }}
                           />
                           <span style={{ flex: 1 }}>{child.label}</span>
-                        </Link>
+                        </NavigationLink>
                       );
                     })}
                   </div>
@@ -698,9 +780,10 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
               // Regular leaf item
               const active = it.href === activeHref;
               return (
-                <Link
+                <NavigationLink
                   key={it.href ?? it.label + idx}
-                  href={it.href ?? "#"}
+                  href={it.href}
+                  pathname={pathname}
                   style={{
                     position: "relative",
                     display: "flex", alignItems: "center", gap: 12,
@@ -725,7 +808,7 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                     style={{ color: active ? "var(--brand)" : "currentColor" }}
                   />
                   <span style={{ flex: 1 }}>{it.label}</span>
-                </Link>
+                </NavigationLink>
               );
             })}
           </div>
