@@ -18,7 +18,7 @@ export function ImportPagarButton() {
     fd.append("file", file)
 
     try {
-      const apiBase = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "";
+      const apiBase = "/financeiro";
       const res = await fetch(`${apiBase}/api/financeiro/pagar/import`, {
         method: "POST",
         body: fd,

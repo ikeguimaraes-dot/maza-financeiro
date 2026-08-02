@@ -12,7 +12,7 @@ import {
 import { useUnit } from "@kph/auth/context";
 import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
 
-const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
+const API_BASE = "/financeiro";
 
 // ── Color tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -413,7 +413,7 @@ export default function ReceitaPage() {
           }}>
             {showImport ? "Fechar" : "Importar PDFs"}
           </button>
-          <Link href="/financeiro/dre/receita/import-lote" style={{
+          <Link href="/financeiro/dre/receita/import-lote" prefetch={false} style={{
             padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: C.surface3, color: C.text2, border: `1px solid ${C.border}`,
             textDecoration: "none", display: "inline-block",

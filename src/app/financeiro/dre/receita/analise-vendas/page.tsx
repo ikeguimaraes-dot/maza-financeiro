@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { useUnit } from "@kph/auth/context";
 
-const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
+const API_BASE = "/financeiro";
 
 // ── Color tokens ─────────────────────────────────────────────────────────────
 const C = {
