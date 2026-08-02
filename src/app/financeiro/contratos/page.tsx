@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
+const API_BASE = "/financeiro";
 
 // ── Tokens exatos do protótipo ──────────────────────────────────────────────
 const VARS = {

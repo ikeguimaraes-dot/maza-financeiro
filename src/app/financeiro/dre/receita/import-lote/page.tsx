@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useUnit } from "@kph/auth/context";
 
-const API_BASE = process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app";
+const API_BASE = "/financeiro";
 
 // ── Color tokens (mesmos de /financeiro/dre/receita) ────────────────────────
 const C = {

@@ -90,7 +90,7 @@ const UNITS = [
 ]
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "https://kph-os-financeiro.vercel.app"
+  "/financeiro"
 
 const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 
