@@ -675,7 +675,10 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
         const isOpen = openMap[g.id] ?? g.defaultOpen;
         return (
           <details key={g.id} className="sidebar-disclosure" open={isOpen}
-            onToggle={(e) => setOpenMap((prev) => prev[g.id] === e.currentTarget.open ? prev : { ...prev, [g.id]: e.currentTarget.open })}
+            onToggle={(event) => {
+              const nextOpen = event.currentTarget.open;
+              setOpenMap((prev) => prev[g.id] === nextOpen ? prev : { ...prev, [g.id]: nextOpen });
+            }}
             style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {g.title && (
               <summary
@@ -712,7 +715,10 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                 );
                 return (
                   <details key={it.label + idx} className="sidebar-disclosure sidebar-subdisclosure" open={subOpen}
-                    onToggle={(e) => setSubOpenMap((prev) => prev[subKey] === e.currentTarget.open ? prev : { ...prev, [subKey]: e.currentTarget.open })}>
+                    onToggle={(event) => {
+                      const nextOpen = event.currentTarget.open;
+                      setSubOpenMap((prev) => prev[subKey] === nextOpen ? prev : { ...prev, [subKey]: nextOpen });
+                    }}>
                     <summary
                       style={{
                         display: "flex", alignItems: "center", gap: 12,
