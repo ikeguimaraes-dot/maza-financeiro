@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-instrument-sans, system-ui, sans-serif);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-fraunces, Georgia, serif);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -84,54 +84,39 @@
 }
 
 .dark {
-  /* MAZA — paleta dark editorial (mesma do painel Madonna). Ouro discreto, neutros frios. */
-  --background: #0A0A0B;
-  --foreground: #E5E5E7;
-  --card: #131316;
-  --card-foreground: #E5E5E7;
-  --popover: #1A1A1E;
-  --popover-foreground: #E5E5E7;
-  --primary: #D4A574;       /* gold como ação principal */
-  --primary-foreground: #1A1208;
-  --secondary: #1A1A1E;
-  --secondary-foreground: #E5E5E7;
-  --muted: #1A1A1E;
-  --muted-foreground: #71717A;
-  --accent: rgba(212, 165, 116, 0.16);
-  --accent-foreground: #D4A574;
-  --destructive: #EF4444;
-  --border: #27272A;
-  --input: #27272A;
-  --ring: #D4A574;
-  --chart-1: #D4A574;
-  --chart-2: #3B82F6;
-  --chart-3: #22C55E;
-  --chart-4: #A855F7;
-  --chart-5: #F59E0B;
-  --sidebar: #131316;
-  --sidebar-foreground: #E5E5E7;
-  --sidebar-primary: #D4A574;
-  --sidebar-primary-foreground: #1A1208;
-  --sidebar-accent: #1A1A1E;
-  --sidebar-accent-foreground: #E5E5E7;
-  --sidebar-border: #27272A;
-  --sidebar-ring: #D4A574;
-
-  /* Vars próprios (não-shadcn) — usados em components custom (Sidebar, etc.). */
-  --bg: #0A0A0B;
-  --surface: #131316;
-  --surface-2: #1A1A1E;
-  --surface-3: #232328;
-  --text: #E5E5E7;
-  --text-2: #A1A1AA;
-  --text-3: #71717A;
-  --border-strong: #3F3F46;
-  --brand: #D4A574;
-  --brand-soft: rgba(212, 165, 116, 0.16);
-  --brand-strong: #B8895C;
-  --t: 160ms ease;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-  --shadow-lg: 0 12px 24px -8px rgba(0,0,0,0.5);
+  --background: #111110; --foreground: #F5F0E8;
+  --card: #1A1A18; --card-foreground: #F5F0E8;
+  --popover: #222220; --popover-foreground: #F5F0E8;
+  --primary: #C4622D; --primary-foreground: #F5F0E8;
+  --secondary: #242422; --secondary-foreground: #F5F0E8;
+  --muted: #242422; --muted-foreground: #8A8278;
+  --accent: rgba(196,98,45,0.12); --accent-foreground: #C4622D;
+  --destructive: #FCA5A5;
+  --border: rgba(245,240,232,0.08); --input: rgba(245,240,232,0.06); --ring: #C4622D;
+  --chart-1: #C4622D; --chart-2: #B8975A; --chart-3: #8A8278; --chart-4: #F5F0E8; --chart-5: #4ADE80;
+  --sidebar: #151513; --sidebar-foreground: #F5F0E8;
+  --sidebar-primary: #C4622D; --sidebar-primary-foreground: #F5F0E8;
+  --sidebar-accent: rgba(196,98,45,0.08); --sidebar-accent-foreground: #F5F0E8;
+  --sidebar-border: rgba(245,240,232,0.06); --sidebar-ring: #C4622D;
+  --maza-carvao: #1A1A1A; --maza-creme: #F5F0E8; --maza-brasa: #C4622D; --maza-pedra: #8A8278; --maza-ouro: #B8975A;
+  --bg: #111110; --surface: #1A1A18; --surface-2: #222220; --surface-3: #2C2C2A;
+  --surface-hover: rgba(245,240,232,0.04);
+  --text: #F5F0E8; --text-2: #C4BDB4; --text-3: #A09890;
+  --border-soft: rgba(245,240,232,0.08); --border-hover: rgba(245,240,232,0.16);
+  --border-active: rgba(196,98,45,0.4); --border-strong: rgba(245,240,232,0.14);
+  --brand: #C4622D; --brand-soft: rgba(196,98,45,0.10); --brand-hover: rgba(196,98,45,0.16); --brand-strong: #A84E22;
+  --ouro: #B8975A; --ouro-soft: rgba(184,151,90,0.12);
+  --color-success: #4ADE80; --color-success-bg: rgba(74,222,128,0.08);
+  --color-warning: #FCD34D; --color-warning-bg: rgba(252,211,77,0.08);
+  --color-danger: #FCA5A5; --color-danger-bg: rgba(252,165,165,0.08);
+  --color-info: #C4622D; --color-info-bg: rgba(196,98,45,0.08);
+  --font-display: var(--font-fraunces, Georgia, serif);
+  --font-ui: var(--font-instrument-sans, system-ui, sans-serif);
+  --r-sm: 4px; --r-md: 6px; --r-lg: 10px; --r-xl: 14px; --r-full: 9999px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.5); --shadow-md: 0 4px 12px rgba(0,0,0,0.6);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.7); --shadow-brasa: 0 0 20px rgba(196,98,45,0.12);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px rgba(245,240,232,0.04);
+  --t: 180ms ease; --t-fast: 120ms ease; --t-slow: 300ms ease;
 }
 
 @layer base {
@@ -140,6 +125,10 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
