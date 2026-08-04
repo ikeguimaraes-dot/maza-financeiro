@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const next = safeFinancePath(request.nextUrl.searchParams.get("next"));
   const shellUrl =
-    process.env.NEXT_PUBLIC_SHELL_URL?.trim() || "https://kph-os.vercel.app";
+    process.env.NEXT_PUBLIC_SHELL_URL?.trim() || "https://maza.vercel.app";
 
   if (!tokenHash) {
     return NextResponse.redirect(new URL("/login?error=missing_code", shellUrl));

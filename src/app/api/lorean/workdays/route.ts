@@ -4,9 +4,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // CORS com allowlist — ecoa o Origin quando permitido. Em prod o shell fica
-// em https://kph-os.vercel.app; em dev ele sobe em http://localhost:3000.
+// em https://maza.vercel.app; em dev ele sobe em http://localhost:3000.
 const CORS_ALLOWLIST = new Set([
-  "https://kph-os.vercel.app",
+  "https://maza.vercel.app",
   "http://localhost:3000",
 ]);
 

@@ -1,9 +1,9 @@
 // Helpers das rotas /api/dre/* — service role do projeto principal
-// (iqgrvptrtphvbmvrqntm, onde vive titulos_a_pagar) + CORS para o shell kph-os.
+// (iqgrvptrtphvbmvrqntm, onde vive titulos_a_pagar) + CORS para o shell maza.
 import { createClient } from "@supabase/supabase-js";
 
 export const CORS = {
-  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
+  "Access-Control-Allow-Origin":  "https://maza.vercel.app",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
@@ -75,8 +75,8 @@ export function buildLinhaResolver(mapaRows: MapaRow[] | null | undefined, overr
 
 // ── CORS por allowlist dinâmica (ecoa o Origin quando permitido) ──
 const CORS_ALLOWLIST = new Set([
-  "https://kph-os.vercel.app",
-  "https://kph-os-dashboard.vercel.app",
+  "https://maza.vercel.app",
+  "https://maza-dashboard.vercel.app",
   "http://localhost:3000",
 ]);
 

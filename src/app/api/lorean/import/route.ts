@@ -32,7 +32,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const CORS = {
-  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
+  "Access-Control-Allow-Origin":  "https://maza.vercel.app",
   "Access-Control-Allow-Methods": "GET, POST",
   "Access-Control-Allow-Headers": "Content-Type",
 };

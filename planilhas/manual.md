@@ -30,8 +30,8 @@ O projeto é separado do dashboard operacional principal (`meetandeat-dashboard`
 
 **Arquitetura:** Frontend Next.js conecta diretamente ao Supabase via cliente JS. Não há backend intermediário nem route handlers `/api`. Componentes de gráfico são Client Components separados; o restante é Server Component.
 
-**Repo ativo:** `kph-os-financeiro` — GitHub `ikeguimaraes-dot/kph-os-financeiro`
-**Deploy:** Vercel auto-deploy via push para `main`. URLs de produção: `kph-os.vercel.app` e `kph-os-financeiro.vercel.app`.
+**Repo ativo:** `maza-financeiro` — GitHub `ikeguimaraes-dot/maza-financeiro`
+**Deploy:** Vercel auto-deploy via push para `main`. URLs de produção: `maza.vercel.app` e `maza-financeiro.vercel.app`.
 
 **⚠️ FLUXO DE TRABALHO:** o código é editado via Claude Code e versionado no GitHub. Mudanças só chegam à produção via `git push` → deploy automático na Vercel. Se um fix "não aparece" no browser, **primeiro confirmar que o commit foi pushed e o deploy subiu** (erro comum: commits presos localmente sem push).
 
@@ -40,7 +40,7 @@ O projeto é separado do dashboard operacional principal (`meetandeat-dashboard`
 ## 3. ESTRUTURA DE PASTAS
 
 ```
-kph-os-financeiro/
+maza-financeiro/
 ├── src/
 │   ├── app/
 │   │   └── financeiro/
@@ -354,7 +354,7 @@ Cards recalculam ao vivo do Supabase; problemas flutuam ao topo e ficam expandid
 - ✅ `v_aprovacoes_pendentes` criada (some o erro no console)
 
 ### Abertas
-1. **404 de prefetch da sidebar** — vêm do `Sidebar.tsx` em `lib/kph/ui/` (rotas `/pessoas/*`, `/operacao/*`, `/compras/*` sem `prefetch={false}` ou sem página). É do **repo do shell**, não do kph-os-financeiro. Resolver em sprint do shell.
+1. **404 de prefetch da sidebar** — vêm do `Sidebar.tsx` em `lib/kph/ui/` (rotas `/pessoas/*`, `/operacao/*`, `/compras/*` sem `prefetch={false}` ou sem página). É do **repo do shell**, não do maza-financeiro. Resolver em sprint do shell.
 2. **api/nav centralizada** — sidebar propagada manualmente nos 8 repos. Sprint do shell.
 3. **Taggear custo_tipo (F/V) no realizado** — só o orçado tem tags; break-even real exige no realizado.
 4. **Contagem física de estoque mensal** — valores atuais parecem estimativas.

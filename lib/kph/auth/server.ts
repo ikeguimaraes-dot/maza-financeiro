@@ -106,7 +106,7 @@ function isNextInternal(e: unknown): boolean {
 /**
  * Garante user autenticado. Se não houver sessão, redireciona pro login do shell.
  *
- * O middleware (kph-os-financeiro/src/middleware.ts) já deveria ter bloqueado
+ * O middleware (maza-financeiro/src/middleware.ts) já deveria ter bloqueado
  * essa request antes de chegar aqui. Este redirect é uma rede de segurança
  * caso o middleware falhe ou seja bypassado em alguma rota interna.
  *

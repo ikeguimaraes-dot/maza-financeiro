@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const CORS = {
-  "Access-Control-Allow-Origin":  "https://kph-os.vercel.app",
+  "Access-Control-Allow-Origin":  "https://maza.vercel.app",
   "Access-Control-Allow-Methods": "GET",
   "Access-Control-Allow-Headers": "Content-Type",
 };

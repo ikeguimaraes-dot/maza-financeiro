@@ -5,17 +5,17 @@ import { getShellLoginUrl } from "./lib/shell-url";
  * Middleware do sub-app financeiro — gate paralelo ao shell.
  *
  * Por que existe: o rewrite do shell (`/financeiro/*` →
- * `https://kph-os-financeiro.vercel.app/financeiro/*`) é server-side.
- * Se o user digita `kph-os-financeiro.vercel.app/financeiro` DIRETO na barra
+ * `https://maza-financeiro.vercel.app/financeiro/*`) é server-side.
+ * Se o user digita `maza-financeiro.vercel.app/financeiro` DIRETO na barra
  * de endereço, o shell nunca vê essa request. Este middleware cobre esse caso.
  *
  * Fluxo:
- *   1. User acessa kph-os-financeiro.vercel.app sem cookie
+ *   1. User acessa maza-financeiro.vercel.app sem cookie
  *   2. Middleware detecta ausência de sb-*-auth-token
  *   3. 302 → <SHELL_URL>/login?next=/financeiro/...
  *   4. Shell autentica e volta para a rota canônica no próprio shell
  *
- * Quando o shell for o portão (acesso via kph-os.vercel.app/financeiro), o
+ * Quando o shell for o portão (acesso via maza.vercel.app/financeiro), o
  * rewrite preserva o cookie do shell automaticamente — middleware do sub-app
  * só roda de fato no acesso direto.
  *
@@ -23,7 +23,7 @@ import { getShellLoginUrl } from "./lib/shell-url";
  * Mudanças aqui precisam ser replicadas (ou extraídas pra packages/middleware).
  *
  * ENV: NEXT_PUBLIC_SHELL_URL controla pra onde redirecionamos. Em dev use
- *      http://localhost:3000; em prod use https://kph-os.vercel.app. Veja
+ *      http://localhost:3000; em prod use https://maza.vercel.app. Veja
  *      .env.example.
  */
 
@@ -33,7 +33,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL ?? "https://kph-os.vercel.app";
+  const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL ?? "https://maza.vercel.app";
   const entryHost =
     request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ??
     request.headers.get("host")?.split(":")[0];

@@ -5,7 +5,7 @@ import "server-only";
  *
  * Comportamento:
  *   - Se NEXT_PUBLIC_SHELL_URL estiver setada (dev/preview), usa ela.
- *   - Caso contrário, fallback pra produção (https://kph-os.vercel.app).
+ *   - Caso contrário, fallback pra produção (https://maza.vercel.app).
  *
  * Em Edge runtime (middleware), `process.env` está disponível mas NÃO use
  * `node:*` APIs. Este helper usa apenas `process.env` (Web API compatível).
@@ -15,7 +15,7 @@ import "server-only";
  *             e reexportar daqui. Por ora, duplicação consciente.
  */
 
-const PRODUCTION_SHELL_URL = "https://kph-os.vercel.app";
+const PRODUCTION_SHELL_URL = "https://maza.vercel.app";
 
 function getShellBaseUrl(): string {
   const fromEnv = process.env.NEXT_PUBLIC_SHELL_URL?.trim();
@@ -33,7 +33,7 @@ function getShellBaseUrl(): string {
  *   // → http://localhost:3000/login?next=%2Ffinanceiro
  *
  *   getShellLoginUrl("/financeiro/fluxo")
- *   // → https://kph-os.vercel.app/login?next=%2Ffinanceiro%2Ffluxo
+ *   // → https://maza.vercel.app/login?next=%2Ffinanceiro%2Ffluxo
  */
 export function getShellLoginUrl(returnTo: string): URL {
   const base = getShellBaseUrl();
