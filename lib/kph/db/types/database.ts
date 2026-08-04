@@ -1,4 +1,4 @@
-// Tipos do schema Supabase do KPH OS.
+// Tipos do schema Supabase do MAZA.
 //
 // Mantido manualmente — quando o schema crescer, considerar gerar via
 // `supabase gen types typescript`. Por enquanto, single source of truth aqui.

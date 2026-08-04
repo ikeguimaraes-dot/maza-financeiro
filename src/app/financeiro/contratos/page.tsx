@@ -216,7 +216,7 @@ export default function ContratosPage() {
         {/* Header */}
         <header style={{ padding: "34px 0 24px" }}>
           <div style={{ fontSize: 11.5, letterSpacing: ".16em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>
-            KPH OS &nbsp;/&nbsp; Financeiro &nbsp;/&nbsp; <b style={{ color: C.gold, fontWeight: 600 }}>Contratos</b>
+            MAZA &nbsp;/&nbsp; Financeiro &nbsp;/&nbsp; <b style={{ color: C.gold, fontWeight: 600 }}>Contratos</b>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
             <div>

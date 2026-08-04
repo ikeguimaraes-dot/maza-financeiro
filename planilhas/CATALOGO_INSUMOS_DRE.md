@@ -1,9 +1,9 @@
-# Catálogo de Insumos da DRE — KPH OS
+# Catálogo de Insumos da DRE — MAZA
 ### com exemplos reais do Meet & Eat
 
 **Para que serve este documento:** listar TODA informação que precisa entrar no sistema para a DRE Gerencial sair completa. Cada bloco traz **exemplos reais extraídos da DRE do Meet & Eat**, para que quem for preencher entenda na prática o que vai em cada campo.
 
-É agnóstico de origem — não importa ainda se a informação vem do KPH OS, de planilha ou da contabilidade. O objetivo é levar esta lista para a reunião com os donos de cada área e perguntar, para cada item: **"Quem é o dono disso? Como você recebe essa informação hoje? Com que frequência?"**
+É agnóstico de origem — não importa ainda se a informação vem do MAZA, de planilha ou da contabilidade. O objetivo é levar esta lista para a reunião com os donos de cada área e perguntar, para cada item: **"Quem é o dono disso? Como você recebe essa informação hoje? Com que frequência?"**
 
 ---
 
@@ -38,7 +38,7 @@ Para cada bloco, pergunte ao dono:
 
 ## BLOCO 2 — PESSOAL / FOLHA
 **Área provável: RH / Departamento Pessoal**
-**⚠️ Provavelmente JÁ está no KPH OS (holerites)**
+**⚠️ Provavelmente JÁ está no MAZA (holerites)**
 
 | Informação | Exemplo real (Meet & Eat) |
 |---|---|
@@ -53,7 +53,7 @@ Para cada bloco, pergunte ao dono:
 | Gorjetas pagas | 67% repassado aos funcionários |
 | Encargos sobre gorjeta | Férias 11,11% · 13º 8,33% · FGTS 8% · INSS 25,8% |
 
-**Pergunta-chave para o RH:** o custo total de pessoal com encargos já é calculável a partir dos holerites no KPH OS? Se sim, a DRE só lê — ninguém preenche.
+**Pergunta-chave para o RH:** o custo total de pessoal com encargos já é calculável a partir dos holerites no MAZA? Se sim, a DRE só lê — ninguém preenche.
 
 ---
 
@@ -199,7 +199,7 @@ Na planilha do Meet & Eat há lançamentos com classificação **`#N/A`** (ex: "
 ## RESUMO — AS 13 FONTES
 
 1. **Receita** — Financeiro/Operação
-2. **Pessoal** — RH *(já no KPH OS?)*
+2. **Pessoal** — RH *(já no MAZA?)*
 3. **CMV** — Compras/Estoque
 4. **Ocupação** — Adm/Financeiro
 5. **Utilidades** — Adm
@@ -216,4 +216,4 @@ Na planilha do Meet & Eat há lançamentos com classificação **`#N/A`** (ex: "
 
 ---
 
-*Documento para reunião com donos de área. Próximo passo: para cada bloco, registrar dono + origem + frequência + formato. Depois: desenhar planilhas-padrão (interna e da contabilidade) e definir o que a DRE puxa direto do KPH OS.*
+*Documento para reunião com donos de área. Próximo passo: para cada bloco, registrar dono + origem + frequência + formato. Depois: desenhar planilhas-padrão (interna e da contabilidade) e definir o que a DRE puxa direto do MAZA.*

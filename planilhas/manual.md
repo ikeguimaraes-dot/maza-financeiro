@@ -1,4 +1,4 @@
-# MANUAL.md — KPH OS · Módulo Financeiro (DRE Gerencial)
+# MANUAL.md — MAZA · Módulo Financeiro (DRE Gerencial)
 
 Contexto completo do projeto para orientar todas as sessões de desenvolvimento.
 Leia este arquivo inteiro antes de escrever qualquer código.
@@ -7,7 +7,7 @@ Leia este arquivo inteiro antes de escrever qualquer código.
 
 ## 1. O QUE É ESTE PROJETO
 
-Sistema operacional de hospitalidade chamado **KPH OS**, desenvolvido para gestão de restaurantes do grupo KPH Participações. O módulo ativo neste repositório é o **Financeiro**, com foco no submenu **DRE Gerencial** — um dashboard de Orçado vs Realizado (2026).
+Sistema operacional de hospitalidade chamado **MAZA**, desenvolvido para gestão de restaurantes do grupo KPH Participações. O módulo ativo neste repositório é o **Financeiro**, com foco no submenu **DRE Gerencial** — um dashboard de Orçado vs Realizado (2026).
 
 **⭐ ATUALIZAÇÃO IMPORTANTE (jun/2026): o sistema agora é MULTI-UNIDADE.**
 Deixou de ser exclusivo do Meet & Eat. Cada unidade (restaurante) tem seus próprios dados, isolados por `unit_id`. A importação é feita pela interface (modal de import), não mais por SQL manual.
