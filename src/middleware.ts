@@ -33,23 +33,6 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const configuredShellUrl = process.env.NEXT_PUBLIC_SHELL_URL?.trim();
-  const shellUrl = configuredShellUrl &&
-    !(process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(configuredShellUrl))
-      ? configuredShellUrl
-      : "https://maza.vercel.app";
-  const entryHost =
-    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ??
-    request.headers.get("host")?.split(":")[0];
-  const shellHost = new URL(shellUrl).host;
-  const localEntry = entryHost === "localhost" || entryHost === "127.0.0.1";
-  if (!localEntry && entryHost && entryHost !== shellHost) {
-    return NextResponse.redirect(
-      new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, shellUrl),
-      302,
-    );
-  }
-
   // Verifica se tem cookie de auth do Supabase
   const hasSession = request.cookies
     .getAll()
