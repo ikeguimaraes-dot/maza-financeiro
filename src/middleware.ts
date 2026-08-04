@@ -33,7 +33,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL ?? "https://maza.vercel.app";
+  const configuredShellUrl = process.env.NEXT_PUBLIC_SHELL_URL?.trim();
+  const shellUrl = configuredShellUrl &&
+    !(process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(configuredShellUrl))
+      ? configuredShellUrl
+      : "https://maza.vercel.app";
   const entryHost =
     request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ??
     request.headers.get("host")?.split(":")[0];

@@ -77,7 +77,10 @@ function getZone(pathname: string): string {
 function getNavigationHref(href: string | undefined, pathname: string): string {
   if (!href) return "#";
   if (getZone(href) === getZone(pathname)) return href;
-  const shell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "");
+  const configuredShell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "");
+  const shell = process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(configuredShell ?? "")
+    ? "https://maza.vercel.app"
+    : configuredShell;
   return shell ? `${shell}${href}` : href;
 }
 
@@ -368,7 +371,10 @@ export function Sidebar(_props?: {
 
   // ── (b) Fetch nav from shell; fall back to NAV_GROUPS on error
   useEffect(() => {
-    const shellUrl = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "") ?? "";
+    const configuredShell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "") ?? "";
+    const shellUrl = process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(configuredShell)
+      ? "https://maza.vercel.app"
+      : configuredShell;
     fetch(`${shellUrl}/api/nav`, { next: { revalidate: 300 } } as RequestInit)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { groups?: RemoteNavGroup[] } | null) => {

@@ -11,8 +11,11 @@ function safeFinancePath(value: string | null): string {
 export async function GET(request: NextRequest) {
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const next = safeFinancePath(request.nextUrl.searchParams.get("next"));
-  const shellUrl =
-    process.env.NEXT_PUBLIC_SHELL_URL?.trim() || "https://maza.vercel.app";
+  const configuredShellUrl = process.env.NEXT_PUBLIC_SHELL_URL?.trim();
+  const shellUrl = configuredShellUrl &&
+    !(process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(configuredShellUrl))
+      ? configuredShellUrl
+      : "https://maza.vercel.app";
 
   if (!tokenHash) {
     return NextResponse.redirect(new URL("/login?error=missing_code", shellUrl));

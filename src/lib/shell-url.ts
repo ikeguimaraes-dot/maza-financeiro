@@ -19,7 +19,10 @@ const PRODUCTION_SHELL_URL = "https://maza.vercel.app";
 
 function getShellBaseUrl(): string {
   const fromEnv = process.env.NEXT_PUBLIC_SHELL_URL?.trim();
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  const isLocalUrl = fromEnv?.includes("localhost") || fromEnv?.includes("127.0.0.1");
+  if (fromEnv && fromEnv.length > 0 && !(process.env.NODE_ENV === "production" && isLocalUrl)) {
+    return fromEnv;
+  }
   return PRODUCTION_SHELL_URL;
 }
 
