@@ -40,7 +40,7 @@ export function FinanceiroNav() {
           whiteSpace: "nowrap",
         }}
       >
-        KPH Financeiro
+        Maza Financeiro
       </span>
       {LINKS.map(({ href, label, exact }) => {
         const active = exact ? pathname === href : pathname.startsWith(href);

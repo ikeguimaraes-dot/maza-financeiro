@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "KPH Financeiro",
-  description: "Módulo financeiro do grupo KPH.",
+  title: "Maza Financeiro",
+  description: "Módulo financeiro do grupo Maza.",
 };
 
 export default function RootLayout({

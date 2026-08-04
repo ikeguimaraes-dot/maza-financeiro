@@ -227,3 +227,7 @@
     display: none !important;
   }
 }
+
+.sidebar-disclosure > summary { list-style: none; }
+.sidebar-disclosure > summary::-webkit-details-marker { display: none; }
+.sidebar-disclosure[open] > summary .sidebar-disclosure-chevron { transform: rotate(90deg); }

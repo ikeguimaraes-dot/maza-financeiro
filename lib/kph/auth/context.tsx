@@ -9,6 +9,7 @@ import { getBrowserClient } from "@kph/db/supabase/client";
 type AuthContextValue = {
   user: CurrentUser | null;
   units: Unit[];
+  hasRegisteredUnits: boolean;
   unitId: string | null;
   setUnitId: (id: string) => void;
   signOut: () => Promise<void>;
@@ -36,10 +37,12 @@ function persistUnit(id: string) {
 export function AuthProvider({
   user,
   units,
+  hasRegisteredUnits,
   children,
 }: {
   user: CurrentUser | null;
   units: Unit[];
+  hasRegisteredUnits: boolean;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -83,9 +86,9 @@ export function AuthProvider({
   };
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, units, unitId, setUnitId, signOut }),
+    () => ({ user, units, hasRegisteredUnits, unitId, setUnitId, signOut }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user, units, unitId],
+    [user, units, hasRegisteredUnits, unitId],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
