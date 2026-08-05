@@ -446,7 +446,7 @@ export default async function DreGerencialPage({
                     fontSize: 12,
                     fontWeight: active ? 700 : 500,
                     background: active ? "var(--brand)" : "var(--surface)",
-                    color: active ? "#1A1208" : "var(--text-3)",
+                    color: active ? "var(--primary-foreground)" : "var(--text-3)",
                     border: `1px solid ${active ? "transparent" : "var(--border)"}`,
                     textDecoration: "none",
                   }}

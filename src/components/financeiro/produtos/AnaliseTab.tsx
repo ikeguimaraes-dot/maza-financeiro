@@ -172,8 +172,8 @@ export function AnaliseTab({ unitId }: Props) {
               {([["variacao", "Variação"], ["alfabetica", "A–Z"], ["gasto", "Gasto"]] as const).map(([v, label]) => (
                 <button key={v} onClick={() => setSort(v)} style={{
                   flex: 1, padding: "6px 4px", fontSize: 11, fontWeight: sortMode === v ? 700 : 500,
-                  background: sortMode === v ? "var(--brand, #D4A574)" : "var(--surface)",
-                  color: sortMode === v ? "#1A1208" : "var(--text-3)",
+                  background: sortMode === v ? "var(--brand, #C4622D)" : "var(--surface)",
+                  color: sortMode === v ? "var(--primary-foreground)" : "var(--text-3)",
                   border: "none", cursor: "pointer", whiteSpace: "nowrap",
                 }}>{label}</button>
               ))}
@@ -192,7 +192,7 @@ export function AnaliseTab({ unitId }: Props) {
                   width: "100%", padding: "9px 12px", textAlign: "left",
                   background: active ? "var(--surface-2)" : "transparent",
                   borderBottom: "1px solid var(--border)",
-                  borderLeft: `3px solid ${active ? "var(--brand, #D4A574)" : "transparent"}`,
+                  borderLeft: `3px solid ${active ? "var(--brand, #C4622D)" : "transparent"}`,
                   cursor: "pointer",
                 }}>
                   <span style={{ minWidth: 0, flex: 1 }}>

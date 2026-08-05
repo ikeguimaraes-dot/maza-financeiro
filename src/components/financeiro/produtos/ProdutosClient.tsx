@@ -181,7 +181,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
             onClick={() => setShowImport(true)}
             style={{
               padding:"7px 16px", borderRadius:8, fontSize:12, fontWeight:700,
-              background:"var(--brand, #D4A574)", color:"#1A1208",
+              background:"var(--brand, #C4622D)", color:"var(--primary-foreground)",
               border:"none", cursor:"pointer",
             }}
           >
@@ -220,7 +220,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
             <button key={t} onClick={() => setTab(t)} style={{
               padding:"8px 18px", fontSize:13, fontWeight:active?700:500,
               color:active?"var(--text)":"var(--text-3)",
-              borderBottom:active?"2px solid var(--brand, #D4A574)":"2px solid transparent",
+              borderBottom:active?"2px solid var(--brand, #C4622D)":"2px solid transparent",
               background:"transparent", border:"none", cursor:"pointer",
               whiteSpace:"nowrap", marginBottom:-1,
             }}>
@@ -242,7 +242,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           </p>
           <button onClick={() => setShowImport(true)} style={{
             marginTop:16, padding:"9px 20px", borderRadius:8, fontSize:13,
-            fontWeight:700, background:"var(--brand, #D4A574)", color:"#1A1208",
+            fontWeight:700, background:"var(--brand, #C4622D)", color:"var(--primary-foreground)",
             border:"none", cursor:"pointer",
           }}>
             ↑ Importar Excel
@@ -281,8 +281,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               {([["all","Todos"],["cmv","CMV"],["no_cmv","Sem CMV"]] as const).map(([v, label]) => (
                 <button key={v} onClick={() => { setFilterCmv(v); handleFilterChange() }} style={{
                   padding:"7px 14px", fontSize:12, fontWeight:filterCmv===v?700:500,
-                  background:filterCmv===v?"var(--brand, #D4A574)":"var(--surface)",
-                  color:filterCmv===v?"#1A1208":"var(--text-3)",
+                  background:filterCmv===v?"var(--brand, #C4622D)":"var(--surface)",
+                  color:filterCmv===v?"var(--primary-foreground)":"var(--text-3)",
                   border:"none", cursor:"pointer", whiteSpace:"nowrap",
                 }}>{label}</button>
               ))}

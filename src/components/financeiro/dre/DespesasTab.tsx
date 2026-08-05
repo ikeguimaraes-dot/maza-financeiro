@@ -292,8 +292,8 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
                 style={{
                   padding: "6px 14px", borderRadius: 8, fontSize: 12,
                   fontWeight: mesSel === m ? 700 : 500,
-                  background: mesSel === m ? "var(--brand, #D4A574)" : "var(--surface)",
-                  color: mesSel === m ? "#1A1208" : "var(--text-3)",
+                  background: mesSel === m ? "var(--brand, #C4622D)" : "var(--surface)",
+                  color: mesSel === m ? "var(--primary-foreground)" : "var(--text-3)",
                   border: `1px solid ${mesSel === m ? "transparent" : "var(--border)"}`,
                   cursor: "pointer",
                 }}
@@ -424,8 +424,8 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
               style={{
                 padding: "6px 14px", borderRadius: 8, fontSize: 12,
                 fontWeight: mesSel === m ? 700 : 500,
-                background: mesSel === m ? "var(--brand, #D4A574)" : "var(--surface)",
-                color: mesSel === m ? "#1A1208" : "var(--text-3)",
+                background: mesSel === m ? "var(--brand, #C4622D)" : "var(--surface)",
+                color: mesSel === m ? "var(--primary-foreground)" : "var(--text-3)",
                 border: `1px solid ${mesSel === m ? "transparent" : "var(--border)"}`,
                 cursor: "pointer",
               }}

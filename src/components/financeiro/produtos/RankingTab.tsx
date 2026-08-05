@@ -56,7 +56,7 @@ const selectStyle = (active: boolean): CSSProperties => ({
   padding: "6px 12px", borderRadius: 8, fontSize: 12,
   background: "var(--surface)",
   color: active ? "var(--text)" : "var(--text-3)",
-  border: `1px solid ${active ? "var(--brand, #D4A574)" : "var(--border)"}`,
+  border: `1px solid ${active ? "var(--brand, #C4622D)" : "var(--border)"}`,
   cursor: "pointer",
 })
 
@@ -199,7 +199,7 @@ export function RankingTab({ unitId, mes, ano }: Props) {
             <>
               <span style={{
                 fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 99,
-                background: "var(--brand, #D4A574)", color: "#1A1208", whiteSpace: "nowrap",
+                background: "var(--brand, #C4622D)", color: "var(--primary-foreground)", whiteSpace: "nowrap",
               }}>
                 {activeFilters} ativo{activeFilters > 1 ? "s" : ""}
               </span>
