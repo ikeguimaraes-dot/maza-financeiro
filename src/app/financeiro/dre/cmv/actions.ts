@@ -2,6 +2,8 @@
 
 import { createSupabaseServerClient } from "@kph/db/supabase/server"
 import { getCurrentUnit } from "@kph/auth/unit"
+import { requireUser } from "@kph/auth/server"
+import { createServiceClient } from "@kph/db/supabase/server"
 
 export type ProdutoInsert = {
   unit_id: string
@@ -27,6 +29,141 @@ export type ProdutoInsert = {
   desc_gerencial: string | null
   mes_lancamento: number
   ano_lancamento: number
+}
+
+export type NfeImportPayload = {
+  arquivo: string
+  direcao: "entrada" | "saida"
+  notas: Array<{
+    chave: string; numero: string | null; serie: string | null; emissao: string
+    emitenteCnpj: string | null; emitenteNome: string | null
+    destinatarioCnpj: string | null; destinatarioNome: string | null
+    valorTotal: number; statusSefaz: string | null; cancelada: boolean
+    itens: Array<{
+      codigo: string | null; descricao: string | null; ncm: string | null
+      cfop: string | null; unidade: string | null; quantidade: number | null
+      valorUnitario: number | null; valorTotal: number | null
+    }>
+  }>
+  rejeitadas: number
+}
+
+export type NfeImportResult = {
+  ok: boolean
+  importadas: number
+  duplicadas: number
+  canceladas: number
+  itens: number
+  error?: string
+}
+
+export async function importNfe(payload: NfeImportPayload): Promise<NfeImportResult> {
+  const empty = { ok: false, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0 }
+  try {
+    await requireUser()
+    const unit = await getCurrentUnit()
+    if (!unit) return { ...empty, error: "Unidade não identificada." }
+    if (!payload.notas.length) return { ...empty, error: "O ZIP não contém NF-e válida." }
+
+    const db = createServiceClient()
+    if (!db) return { ...empty, error: "Conexão administrativa com o banco não configurada." }
+    // Tabelas novas ainda não constam nos tipos gerados.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = db as any
+    const keys = payload.notas.map(note => note.chave)
+    const { data: existing, error: existingError } = await raw
+      .from("nfe_documentos").select("chave").eq("unit_id", unit.id).in("chave", keys)
+    if (existingError) return { ...empty, error: `Migração 025 pendente: ${existingError.message}` }
+    const existingKeys = new Set((existing ?? []).map((row: { chave: string }) => row.chave))
+    const novas = payload.notas.filter(note => !existingKeys.has(note.chave))
+    const canceladas = novas.filter(note => note.cancelada).length
+    const validas = novas.filter(note => !note.cancelada)
+
+    const valorTotal = validas.reduce((sum, note) => sum + note.valorTotal, 0)
+    const { data: batch, error: batchError } = await raw.from("nfe_importacoes").insert({
+      unit_id: unit.id, arquivo: payload.arquivo, direcao: payload.direcao,
+      total_xml: payload.notas.length + payload.rejeitadas,
+      importadas: validas.length, duplicadas: existingKeys.size,
+      canceladas, rejeitadas: payload.rejeitadas, valor_total: valorTotal,
+    }).select("id").single()
+    if (batchError) return { ...empty, error: batchError.message }
+
+    // Uma nova importação com direção corrigida deve também corrigir os
+    // documentos já conhecidos (ex.: pacote de entrada marcado como saída).
+    if (existingKeys.size) {
+      const { error } = await raw.from("nfe_documentos")
+        .update({ direcao: payload.direcao })
+        .eq("unit_id", unit.id)
+        .in("chave", [...existingKeys])
+      if (error) return { ...empty, error: error.message }
+    }
+
+    if (novas.length) {
+      const { error } = await raw.from("nfe_documentos").insert(novas.map(note => ({
+        unit_id: unit.id, importacao_id: batch.id, chave: note.chave, direcao: payload.direcao,
+        numero: note.numero, serie: note.serie, emissao: note.emissao,
+        emitente_cnpj: note.emitenteCnpj, emitente_nome: note.emitenteNome,
+        destinatario_cnpj: note.destinatarioCnpj, destinatario_nome: note.destinatarioNome,
+        valor_total: note.valorTotal, status_sefaz: note.statusSefaz, cancelada: note.cancelada,
+      })))
+      if (error) return { ...empty, error: error.message }
+    }
+
+    let itemCount = 0
+    // Reprocessa também documentos já conhecidos: o upsert é idempotente e isto
+    // permite reparar uma importação interrompida entre documento e itens.
+    const notasParaProdutos = payload.notas.filter(note => !note.cancelada)
+    if (payload.direcao === "entrada" && notasParaProdutos.length) {
+      const rows = notasParaProdutos.flatMap(note => note.itens.map((item, index) => {
+        const date = new Date(note.emissao)
+        return {
+          unit_id: unit.id, chave_nfe: note.chave,
+          fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
+          v_total_danfe: note.valorTotal, dt_emissao: note.emissao,
+          item_codigo: item.codigo ?? String(index + 1), item_descricao: item.descricao,
+          unidade_medida: item.unidade, tipo_item: item.ncm,
+          q_embalagem: item.quantidade, q_estoque: item.quantidade,
+          v_embalagem: item.valorUnitario, v_total_embalagem: item.valorTotal,
+          v_custo_medio: item.valorUnitario, v_custo_compra: item.valorUnitario,
+          v_custo_total: item.valorTotal, perc_variacao: null, calcula_cmv: true,
+          fornecedor_codigo: note.emitenteCnpj, codigo_gerencial: item.cfop,
+          desc_gerencial: "NF-e sem classificação",
+          mes_lancamento: date.getMonth() + 1, ano_lancamento: date.getFullYear(),
+        }
+      }))
+      // O índice legado é parcial e não pode ser inferido pelo ON CONFLICT do
+      // PostgREST. Filtrar antes da inserção mantém a operação idempotente sem
+      // depender do formato desse índice.
+      const noteKeys = [...new Set(rows.map(row => row.chave_nfe))]
+      const { data: existingProducts, error: productsError } = await raw
+        .from("produtos_relatorio")
+        .select("chave_nfe,item_codigo")
+        .eq("unit_id", unit.id)
+        .in("chave_nfe", noteKeys)
+      if (productsError) return { ...empty, error: productsError.message }
+
+      const known = new Set((existingProducts ?? []).map((row: { chave_nfe: string; item_codigo: string }) =>
+        `${row.chave_nfe}\u0000${row.item_codigo}`
+      ))
+      const pending = rows.filter(row => {
+        const key = `${row.chave_nfe}\u0000${row.item_codigo}`
+        if (known.has(key)) return false
+        known.add(key)
+        return true
+      })
+
+      for (let i = 0; i < pending.length; i += 500) {
+        const chunk = pending.slice(i, i + 500)
+        const { error } = await raw.from("produtos_relatorio").insert(chunk)
+        if (error) return { ...empty, error: error.message }
+        itemCount += chunk.length
+      }
+    }
+
+    return { ok: true, importadas: validas.length, duplicadas: existingKeys.size, canceladas, itens: itemCount }
+  } catch (error) {
+    return { ...empty, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export async function deleteProdutosMes(
