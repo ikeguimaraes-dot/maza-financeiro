@@ -211,9 +211,9 @@ const NAV_GROUPS: NavGroup[] = [
       {
         label: "DRE", icon: Sheet, defaultOpen: true,
         children: [
+          { href: "/financeiro/dre",                      label: "DRE Gerencial",     icon: LayoutGrid },
+          { href: "/financeiro/dre/gerencial",           label: "Gerencial",         icon: LayoutDashboard },
           { href: "/financeiro/dre/receita",              label: "Receita",           icon: TrendingUp },
-          { href: "/financeiro/dre/receita/analise-vendas", label: "Análise de Vendas", icon: BarChart3 },
-          { href: "/financeiro/dre/classificacao",        label: "Classificação",     icon: ListChecks },
           { href: "/financeiro/dre/folha",                label: "Folha",             icon: Users },
           { href: "/financeiro/dre/cmv",                  label: "CMV",               icon: ShoppingCart },
           { href: "/financeiro/dre/ocupacao",             label: "Ocupação",          icon: Building2 },
@@ -225,10 +225,12 @@ const NAV_GROUPS: NavGroup[] = [
           { href: "/financeiro/dre/taxas-cartao",         label: "Taxas de Cartão",   icon: CreditCard },
           { href: "/financeiro/dre/impostos",             label: "Impostos",          icon: Landmark },
           { href: "/financeiro/dre/despesas-financeiras", label: "Desp. Financeiras", icon: BadgeDollarSign },
-          { href: "/financeiro/dre/budget",               label: "Budget",            icon: PiggyBank },
+          { href: "/financeiro/orcamento",                label: "Budget",            icon: PiggyBank },
+          { href: "/financeiro/dre/classificacao",        label: "Classificação",     icon: ListChecks },
+          { href: "/financeiro/dre/receita/analise-vendas", label: "Análise de Vendas", icon: BarChart3 },
         ],
       },
-      { href: "/financeiro/produtos",     label: "Relatório de Produtos", icon: Package },
+      { href: "/financeiro/dre/cmv",      label: "Relatório de Produtos", icon: Package },
       { href: "/financeiro/contratos",    label: "Contratos",            icon: FileText },
       { href: "/financeiro/pagar",        label: "Contas a Pagar",       icon: CreditCard },
       { href: "/financeiro/receber",      label: "Contas a Receber",     icon: Banknote },
@@ -379,14 +381,16 @@ export function Sidebar(_props?: {
         ? "https://maza-maza.vercel.app"
         : configuredShell)
       : configuredShell;
-    fetch(`${shellUrl}/api/nav`, { next: { revalidate: 300 } } as RequestInit)
+    fetch(`${shellUrl}/api/nav`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { groups?: RemoteNavGroup[] } | null) => {
         if (data?.groups?.length) {
           setRemoteGroups(convertRemoteGroups(data.groups));
         }
       })
-      .catch(() => {});
+      .catch((error) => {
+        console.warn("[sidebar] Não foi possível carregar o menu do shell; usando fallback sincronizado.", error);
+      });
   }, []);
 
   const userRoles = useMemo(
@@ -395,8 +399,9 @@ export function Sidebar(_props?: {
   );
   const effectiveGroups = useMemo(() => {
     const source = remoteGroups ?? NAV_GROUPS;
+    const hasFullAccess = userRoles.has("founder");
     const filterItem = (item: NavItem): NavItem | null => {
-      if (item.roles?.length && !item.roles.some((role) => userRoles.has(role))) {
+      if (!hasFullAccess && item.roles?.length && !item.roles.some((role) => userRoles.has(role))) {
         return null;
       }
       const children = item.children
