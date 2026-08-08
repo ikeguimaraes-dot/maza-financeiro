@@ -8,6 +8,7 @@ import {
 import { useRouter } from "next/navigation"
 import type { ProdutoRow } from "@/app/financeiro/dre/cmv/page"
 import { ImportModal } from "./ImportModal"
+import { NfeImportModal } from "./NfeImportModal"
 import { RankingTab } from "./RankingTab"
 import { AnaliseTab } from "./AnaliseTab"
 
@@ -52,6 +53,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
   const router = useRouter()
   const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">("analise")
   const [showImport, setShowImport] = useState(false)
+  const [showNfeImport, setShowNfeImport] = useState(false)
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
   const [localQ, setLocalQ] = useState(q)
@@ -178,6 +180,16 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           )}
           {/* Import button */}
           <button
+            onClick={() => setShowNfeImport(true)}
+            style={{
+              padding:"7px 16px", borderRadius:8, fontSize:12, fontWeight:700,
+              background:"var(--surface)", color:"var(--text)",
+              border:"1px solid var(--border)", cursor:"pointer",
+            }}
+          >
+            ↑ Importar NF-e
+          </button>
+          <button
             onClick={() => setShowImport(true)}
             style={{
               padding:"7px 16px", borderRadius:8, fontSize:12, fontWeight:700,
@@ -221,7 +233,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               padding:"8px 18px", fontSize:13, fontWeight:active?700:500,
               color:active?"var(--text)":"var(--text-3)",
               borderBottom:active?"2px solid var(--brand, #C4622D)":"2px solid transparent",
-              background:"transparent", border:"none", cursor:"pointer",
+              borderTop:"none", borderRight:"none", borderLeft:"none",
+              background:"transparent", cursor:"pointer",
               whiteSpace:"nowrap", marginBottom:-1,
             }}>
               {labels[t]}
@@ -463,7 +476,37 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           </div>
 
           {/* Bar chart */}
-          {top10Chart.length > 0 && (
+          {top10Chart.length === 1 && (
+            <div style={{
+              background:"var(--surface)", border:"1px solid var(--border)",
+              borderRadius:10, padding:"18px 20px",
+            }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:16 }}>
+                <div>
+                  <p style={{ fontSize:10,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",
+                    color:"var(--text-3)",margin:"0 0 6px" }}>CMV por categoria</p>
+                  <p style={{ fontSize:14,fontWeight:650,color:"var(--text)",margin:0 }}>
+                    {top10Chart[0]!.fullName}
+                  </p>
+                  {top10Chart[0]!.fullName.startsWith("NF-e sem classifica") && (
+                    <p style={{ fontSize:11,color:"var(--text-3)",margin:"5px 0 0" }}>
+                      Classifique os itens para visualizar a distribuição por categoria.
+                    </p>
+                  )}
+                </div>
+                <div style={{ textAlign:"right", flexShrink:0 }}>
+                  <p style={{ fontSize:18,fontWeight:750,color:"var(--text)",margin:0 }}>
+                    {fmtBRL(top10Chart[0]!.total)}
+                  </p>
+                  <p style={{ fontSize:11,color:"var(--text-3)",margin:"3px 0 0" }}>100% do CMV</p>
+                </div>
+              </div>
+              <div style={{ height:6,background:"var(--surface-2)",borderRadius:999,marginTop:16,overflow:"hidden" }}>
+                <div style={{ width:"100%",height:"100%",background:"var(--brand, #C4622D)",borderRadius:999 }} />
+              </div>
+            </div>
+          )}
+          {top10Chart.length > 1 && (
             <div style={{ background:"var(--surface)", border:"1px solid var(--border)",
               borderRadius:10, padding:"16px 20px" }}>
               <p style={{ fontSize:10,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",
@@ -472,7 +515,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               </p>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={top10Chart} margin={{ top:0, right:0, left:0, bottom:60 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" fill="transparent" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize:10, fill:"var(--text-3)" }}
                     angle={-40} textAnchor="end" interval={0} />
                   <YAxis tickFormatter={v => fmtBRLc(v)} tick={{ fontSize:10, fill:"var(--text-3)" }} width={80} />
@@ -482,7 +525,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                     contentStyle={{ background:"var(--surface)", border:"1px solid var(--border)",
                       borderRadius:8, fontSize:12 }}
                   />
-                  <Bar dataKey="total" fill="#D4A574" radius={[4,4,0,0]} />
+                  <Bar dataKey="total" fill="var(--brand, #C4622D)" maxBarSize={56} radius={[5,5,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -555,6 +598,12 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
             setShowImport(false)
             router.refresh()
           }}
+        />
+      )}
+      {showNfeImport && (
+        <NfeImportModal
+          onClose={() => setShowNfeImport(false)}
+          onSuccess={() => router.refresh()}
         />
       )}
     </>

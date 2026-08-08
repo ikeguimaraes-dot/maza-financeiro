@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import * as XLSX from "xlsx"
 import { deleteProdutosMes, insertProdutos } from "@/app/financeiro/dre/cmv/actions"
 import type { ProdutoInsert } from "@/app/financeiro/dre/cmv/actions"
@@ -208,7 +209,7 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
 
   const busy = status === "parsing" || status === "uploading"
 
-  return (
+  return createPortal(
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
@@ -333,5 +334,5 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
         )}
       </div>
     </div>
-  )
+  , document.body)
 }
