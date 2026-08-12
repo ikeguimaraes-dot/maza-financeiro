@@ -27,6 +27,12 @@ const fmtPct = (v: number | null | undefined) =>
 const fmtQty = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(v)
 
+const fmtDate = (value: string | null | undefined) => {
+  if (!value) return "—"
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR").format(date)
+}
+
 const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 const mesLabel = (m: number, a: number) => `${MESES[(m - 1) % 12]} ${a}`
 
@@ -44,14 +50,16 @@ type Props = {
   meses: { mes: number; ano: number }[]
   unitId: string | null
   q?: string
+  direcao: "entrada" | "saida"
+  totalDocumentos: number
 }
 
 const PAGE_SIZE = 50
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "" }: Props) {
+export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">("analise")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">(direcao === "entrada" ? "analise" : "tabela")
   const [showImport, setShowImport] = useState(false)
   const [showNfeImport, setShowNfeImport] = useState(false)
 
@@ -74,7 +82,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
     if (localQ.trim())
       r = r.filter(x =>
         (x.fornecedor_nome ?? "").toLowerCase().includes(localQ.toLowerCase()) ||
-        (x.item_descricao ?? "").toLowerCase().includes(localQ.toLowerCase())
+        (x.item_descricao ?? "").toLowerCase().includes(localQ.toLowerCase()) ||
+        (x.nr_danfe ?? "").toLowerCase().includes(localQ.toLowerCase())
       )
     if (filterCat) r = r.filter(x => x.desc_gerencial === filterCat)
     if (filterCmv === "cmv")    r = r.filter(x => x.calcula_cmv === true)
@@ -147,10 +156,10 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
         <div>
           <h1 style={{ fontSize:26, fontWeight:700, color:"var(--text)",
             letterSpacing:-0.5, margin:"0 0 4px" }}>
-            Relatório de Produtos
+            NF-e {direcao === "entrada" ? "Entrada" : "Saída"}
           </h1>
           <p style={{ fontSize:13, color:"var(--text-3)", margin:0 }}>
-            CMV detalhado por item · {mesLabel(mes, ano)}
+            {direcao === "entrada" ? "Compras recebidas e CMV" : "Vendas emitidas"} por item · {mesLabel(mes, ano)}
             {rows.length > 0 && ` · ${rows.length.toLocaleString("pt-BR")} itens`}
           </p>
         </div>
@@ -165,7 +174,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                 if (localQ) params.set("q", localQ)
                 params.set("mes", m!)
                 params.set("ano", a!)
-                router.push(`/financeiro/dre/cmv?${params.toString()}`)
+                const pathname = direcao === "entrada" ? "/financeiro/dre/cmv" : "/financeiro/dre/nfe-saida"
+                router.push(`${pathname}?${params.toString()}`)
               }}
               style={{
                 padding:"7px 12px", borderRadius:8, fontSize:12, fontWeight:500,
@@ -187,7 +197,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               border:"1px solid var(--border)", cursor:"pointer",
             }}
           >
-            ↑ Importar NF-e
+            ↑ Importar NF-e {direcao === "entrada" ? "Entrada" : "Saída"}
           </button>
           <button
             onClick={() => setShowImport(true)}
@@ -206,8 +216,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
       {hasData && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:12, marginBottom:20 }}>
           {([
-            { label:"Total Comprado",  value: fmtBRL(totalComprado),                        sub: mesLabel(mes, ano) },
-            { label:"Itens CMV",       value: cmvRows.length.toLocaleString("pt-BR"),        sub: `de ${rows.length.toLocaleString("pt-BR")} itens` },
+            { label:direcao === "entrada" ? "Total Comprado" : "Total Emitido", value: fmtBRL(direcao === "entrada" ? totalComprado : totalDocumentos), sub: mesLabel(mes, ano) },
+            { label:direcao === "entrada" ? "Itens CMV" : "Itens de Saída", value: (direcao === "entrada" ? cmvRows.length : rows.length).toLocaleString("pt-BR"), sub: `de ${rows.length.toLocaleString("pt-BR")} itens` },
             { label:"Fornecedores",    value: fornUnicos.toLocaleString("pt-BR"),            sub: "únicos no mês" },
           ]).map(({ label, value, sub }) => (
             <div key={label} style={{
@@ -227,6 +237,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
         {(["analise", "cmv", "ranking", "tabela"] as const).map(t => {
           const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise" }
+          if (direcao === "saida" && t !== "tabela") return null
           const active = tab === t
           return (
             <button key={t} onClick={() => setTab(t)} style={{
@@ -269,7 +280,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           {/* Filters */}
           <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
             <input
-              placeholder="Buscar fornecedor ou item…"
+              placeholder="Buscar NF, fornecedor ou item…"
               value={localQ}
               onChange={e => { setLocalQ(e.target.value); setPage(0) }}
               style={{
@@ -312,6 +323,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               <thead>
                 <tr style={{ background:"var(--surface-2)" }}>
                   {([
+                    ["dt_emissao","Data","left"],
+                    ["nr_danfe","Número NF","left"],
                     ["fornecedor_nome","Fornecedor","left"],
                     ["item_descricao","Item","left"],
                     ["desc_gerencial","Categoria","left"],
@@ -339,6 +352,12 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               <tbody>
                 {pageRows.map(r => (
                   <tr key={r.id} style={{ borderTop:"1px solid var(--border)" }}>
+                    <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                      {fmtDate(r.dt_emissao)}
+                    </td>
+                    <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:600, whiteSpace:"nowrap" }}>
+                      {r.nr_danfe ?? "—"}
+                    </td>
                     <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:500, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                       {r.fornecedor_nome ?? "—"}
                     </td>
@@ -381,7 +400,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               </tbody>
               <tfoot>
                 <tr style={{ borderTop:"2px solid var(--border)", background:"var(--surface-2)" }}>
-                  <td colSpan={5} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
+                  <td colSpan={7} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
                     {filterCat ? `Total ${filterCat}` : "Total geral"}
                   </td>
                   <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
@@ -602,6 +621,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
       )}
       {showNfeImport && (
         <NfeImportModal
+          direction={direcao}
           onClose={() => setShowNfeImport(false)}
           onSuccess={() => router.refresh()}
         />

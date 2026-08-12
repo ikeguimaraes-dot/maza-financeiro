@@ -7,7 +7,7 @@ import { ProdutosClient } from "@/components/financeiro/produtos/ProdutosClient"
 
 export const dynamic = "force-dynamic"
 
-type SearchParams = Promise<{ mes?: string; ano?: string; q?: string }>
+export type NfeSearchParams = Promise<{ mes?: string; ano?: string; q?: string }>
 
 export type ProdutoRow = {
   id: number
@@ -36,7 +36,25 @@ export type ProdutoRow = {
   ano_lancamento: number
 }
 
-export default async function ProdutosPage({ searchParams }: { searchParams: SearchParams }) {
+// O PostgREST limita cada resposta a 1.000 linhas. Paginar evita que a
+// tabela e os totais considerem somente o primeiro bloco da importação.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAll(buildQuery: (from: number, to: number) => any) {
+  const pageSize = 1000
+  const result: any[] = []
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1)
+    if (error) throw new Error(error.message)
+    const page = data ?? []
+    result.push(...page)
+    if (page.length < pageSize) return result
+  }
+}
+
+export async function NfeProdutosPage({ searchParams, direcao }: {
+  searchParams: NfeSearchParams
+  direcao: "entrada" | "saida"
+}) {
   await requireUser()
   const sp = await searchParams
 
@@ -56,29 +74,66 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const uq = (qb: any) => unitId ? qb.eq("unit_id", unitId) : qb
 
-  // Current month
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let rowsQuery: any = uq(db.from("produtos_relatorio").select("*"))
-    .eq("mes_lancamento", mes)
-    .eq("ano_lancamento", ano)
-    .order("fornecedor_nome")
-    .order("item_descricao")
-    .limit(10000)
-  const { data: rows } = await rowsQuery
+  const rows = await fetchAll((from, to) => {
+    let query = uq(db.from("produtos_relatorio").select("*"))
+      .eq("mes_lancamento", mes)
+      .eq("ano_lancamento", ano)
+      .order("id")
+    query = direcao === "entrada"
+      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+      : query.eq("direcao_nfe", "saida")
+    return query.range(from, to)
+  })
 
   // Previous month for MoM comparison
   const prevMes = mes === 1 ? 12 : mes - 1
   const prevAno = mes === 1 ? ano - 1 : ano
-  const { data: prevRows } = await uq(
-    db.from("produtos_relatorio").select("id,v_custo_total,calcula_cmv,desc_gerencial")
-  )
-    .eq("mes_lancamento", prevMes)
-    .eq("ano_lancamento", prevAno)
-    .limit(10000)
+  const prevRows = await fetchAll((from, to) => {
+    let query = uq(db.from("produtos_relatorio")
+      .select("id,v_custo_total,calcula_cmv,desc_gerencial"))
+      .eq("mes_lancamento", prevMes)
+      .eq("ano_lancamento", prevAno)
+      .order("id")
+    query = direcao === "entrada"
+      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+      : query.eq("direcao_nfe", "saida")
+    return query.range(from, to)
+  })
 
-  // Available months for the selector
-  const { data: mesesData } = await db.rpc('get_produto_meses', { p_unit_id: unitId })
-  const meses: { mes: number; ano: number }[] = mesesData ?? []
+  // Available months for this direction only.
+  const mesesData = await fetchAll((from, to) => {
+    let query = uq(db.from("produtos_relatorio")
+      .select("id,mes_lancamento,ano_lancamento"))
+      .order("id")
+    query = direcao === "entrada"
+      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+      : query.eq("direcao_nfe", "saida")
+    return query.range(from, to)
+  })
+  const mesesMap = new Map<string, { mes: number; ano: number }>()
+  for (const row of mesesData ?? []) {
+    const item = { mes: Number(row.mes_lancamento), ano: Number(row.ano_lancamento) }
+    mesesMap.set(`${item.ano}-${item.mes}`, item)
+  }
+  const meses = [...mesesMap.values()].sort((a, b) =>
+    a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes
+  )
+
+  // Para saída, o indicador deve usar o valor fiscal total das notas (vNF).
+  // Somar itens pode divergir por impostos/frete e antes ainda era truncado.
+  const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01T00:00:00.000Z`
+  const proximoMes = new Date(Date.UTC(ano, mes, 1)).toISOString()
+  const documentos = await fetchAll((from, to) => uq(db.from("nfe_documentos")
+    .select("id,valor_total")
+    .eq("direcao", direcao)
+    .eq("cancelada", false)
+    .gte("emissao", inicioMes)
+    .lt("emissao", proximoMes)
+    .order("id")
+    .range(from, to)))
+  const totalDocumentos = documentos.reduce(
+    (sum, row) => sum + Number(row.valor_total ?? 0), 0
+  )
 
   const mesDisponivel = meses.some(m => m.mes === mes && m.ano === ano)
   if (!mesDisponivel && meses.length > 0) {
@@ -87,7 +142,8 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
     params.set("mes", String(ultimo.mes))
     params.set("ano", String(ultimo.ano))
     if (q) params.set("q", q)
-    redirect(`/financeiro/dre/cmv?${params.toString()}`)
+    const pathname = direcao === "entrada" ? "/financeiro/dre/cmv" : "/financeiro/dre/nfe-saida"
+    redirect(`${pathname}?${params.toString()}`)
   }
 
   return (
@@ -110,7 +166,13 @@ export default async function ProdutosPage({ searchParams }: { searchParams: Sea
         meses={meses}
         unitId={unitId}
         q={q}
+        direcao={direcao}
+        totalDocumentos={totalDocumentos}
       />
     </div>
   )
+}
+
+export default function ProdutosPage({ searchParams }: { searchParams: NfeSearchParams }) {
+  return <NfeProdutosPage searchParams={searchParams} direcao="entrada" />
 }
