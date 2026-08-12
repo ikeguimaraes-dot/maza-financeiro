@@ -70,9 +70,26 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     // Tabelas novas ainda não constam nos tipos gerados.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = db as any
+    // A unidade fiscal vem do CNPJ da própria empresa: emitente nas saídas e
+    // destinatário nas entradas. Isso impede que um ZIP de outra unidade seja
+    // gravado apenas porque ela estava selecionada no menu.
+    const ownCnpjs = payload.notas
+      .filter(note => !note.cancelada)
+      .map(note => payload.direcao === "saida" ? note.emitenteCnpj : note.destinatarioCnpj)
+      .filter((cnpj): cnpj is string => Boolean(cnpj))
+    const counts = new Map<string, number>()
+    for (const cnpj of ownCnpjs) counts.set(cnpj, (counts.get(cnpj) ?? 0) + 1)
+    const dominantCnpj = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    let targetUnitId = unit.id
+    if (dominantCnpj) {
+      const { data: fiscalUnit, error: fiscalUnitError } = await raw
+        .from("units").select("id,name").eq("cnpj", dominantCnpj).maybeSingle()
+      if (fiscalUnitError) return { ...empty, error: fiscalUnitError.message }
+      if (fiscalUnit?.id) targetUnitId = fiscalUnit.id
+    }
     const keys = payload.notas.map(note => note.chave)
     const { data: existing, error: existingError } = await raw
-      .from("nfe_documentos").select("chave").eq("unit_id", unit.id).in("chave", keys)
+      .from("nfe_documentos").select("chave").eq("unit_id", targetUnitId).in("chave", keys)
     if (existingError) return { ...empty, error: `Migração 025 pendente: ${existingError.message}` }
     const existingKeys = new Set((existing ?? []).map((row: { chave: string }) => row.chave))
     const novas = payload.notas.filter(note => !existingKeys.has(note.chave))
@@ -81,7 +98,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
 
     const valorTotal = validas.reduce((sum, note) => sum + note.valorTotal, 0)
     const { data: batch, error: batchError } = await raw.from("nfe_importacoes").insert({
-      unit_id: unit.id, arquivo: payload.arquivo, direcao: payload.direcao,
+      unit_id: targetUnitId, arquivo: payload.arquivo, direcao: payload.direcao,
       total_xml: payload.notas.length + payload.rejeitadas,
       importadas: validas.length, duplicadas: existingKeys.size,
       canceladas, rejeitadas: payload.rejeitadas, valor_total: valorTotal,
@@ -93,14 +110,14 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     if (existingKeys.size) {
       const { error } = await raw.from("nfe_documentos")
         .update({ direcao: payload.direcao })
-        .eq("unit_id", unit.id)
+        .eq("unit_id", targetUnitId)
         .in("chave", [...existingKeys])
       if (error) return { ...empty, error: error.message }
     }
 
     if (novas.length) {
       const { error } = await raw.from("nfe_documentos").insert(novas.map(note => ({
-        unit_id: unit.id, importacao_id: batch.id, chave: note.chave, direcao: payload.direcao,
+        unit_id: targetUnitId, importacao_id: batch.id, chave: note.chave, direcao: payload.direcao,
         numero: note.numero, serie: note.serie, emissao: note.emissao,
         emitente_cnpj: note.emitenteCnpj, emitente_nome: note.emitenteNome,
         destinatario_cnpj: note.destinatarioCnpj, destinatario_nome: note.destinatarioNome,
@@ -113,11 +130,11 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     // Reprocessa também documentos já conhecidos: o upsert é idempotente e isto
     // permite reparar uma importação interrompida entre documento e itens.
     const notasParaProdutos = payload.notas.filter(note => !note.cancelada)
-    if (payload.direcao === "entrada" && notasParaProdutos.length) {
+    if (notasParaProdutos.length) {
       const rows = notasParaProdutos.flatMap(note => note.itens.map((item, index) => {
         const date = new Date(note.emissao)
         return {
-          unit_id: unit.id, chave_nfe: note.chave,
+          unit_id: targetUnitId, chave_nfe: note.chave,
           fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
           v_total_danfe: note.valorTotal, dt_emissao: note.emissao,
           item_codigo: item.codigo ?? String(index + 1), item_descricao: item.descricao,
@@ -125,9 +142,10 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
           q_embalagem: item.quantidade, q_estoque: item.quantidade,
           v_embalagem: item.valorUnitario, v_total_embalagem: item.valorTotal,
           v_custo_medio: item.valorUnitario, v_custo_compra: item.valorUnitario,
-          v_custo_total: item.valorTotal, perc_variacao: null, calcula_cmv: true,
+          v_custo_total: item.valorTotal, perc_variacao: null, calcula_cmv: payload.direcao === "entrada",
           fornecedor_codigo: note.emitenteCnpj, codigo_gerencial: item.cfop,
-          desc_gerencial: "NF-e sem classificação",
+          desc_gerencial: payload.direcao === "entrada" ? "NF-e sem classificação" : "NF-e saída",
+          direcao_nfe: payload.direcao,
           mes_lancamento: date.getMonth() + 1, ano_lancamento: date.getFullYear(),
         }
       }))
@@ -135,10 +153,22 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
       // PostgREST. Filtrar antes da inserção mantém a operação idempotente sem
       // depender do formato desse índice.
       const noteKeys = [...new Set(rows.map(row => row.chave_nfe))]
+      // Se o usuário reenviar o pacote na página correta, move também os itens
+      // que já existiam para a direção escolhida.
+      const { error: directionError } = await raw
+        .from("produtos_relatorio")
+        .update({
+          direcao_nfe: payload.direcao,
+          calcula_cmv: payload.direcao === "entrada",
+        })
+        .eq("unit_id", targetUnitId)
+        .in("chave_nfe", noteKeys)
+      if (directionError) return { ...empty, error: directionError.message }
+
       const { data: existingProducts, error: productsError } = await raw
         .from("produtos_relatorio")
         .select("chave_nfe,item_codigo")
-        .eq("unit_id", unit.id)
+        .eq("unit_id", targetUnitId)
         .in("chave_nfe", noteKeys)
       if (productsError) return { ...empty, error: productsError.message }
 

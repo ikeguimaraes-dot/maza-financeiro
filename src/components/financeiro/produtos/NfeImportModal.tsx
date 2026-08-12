@@ -6,16 +6,16 @@ import JSZip from "jszip"
 import { importNfe, type NfeImportResult } from "@/app/financeiro/dre/cmv/actions"
 import { inferDirection, parseNfeXml, type NfeDirection, type ParsedNfe } from "@/lib/nfe/parser"
 
-type Props = { onClose: () => void; onSuccess: () => void }
+type Props = { direction: NfeDirection; onClose: () => void; onSuccess: () => void }
 type Status = "idle" | "reading" | "ready" | "uploading" | "done" | "error"
 
-export function NfeImportModal({ onClose, onSuccess }: Props) {
+export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState<Status>("idle")
   const [fileName, setFileName] = useState("")
   const [notes, setNotes] = useState<ParsedNfe[]>([])
   const [rejected, setRejected] = useState(0)
-  const [direction, setDirection] = useState<NfeDirection | "">("")
+  const direction = fixedDirection
   const [error, setError] = useState("")
   const [result, setResult] = useState<NfeImportResult | null>(null)
 
@@ -32,7 +32,11 @@ export function NfeImportModal({ onClose, onSuccess }: Props) {
         catch { invalid++ }
       }
       if (!parsed.length) throw new Error("Nenhum XML de NF-e válido foi encontrado.")
-      setNotes(parsed); setRejected(invalid); setDirection(inferDirection(parsed) ?? ""); setStatus("ready")
+      const inferred = inferDirection(parsed)
+      if (inferred && inferred !== fixedDirection) {
+        throw new Error(`Este pacote parece ser de ${inferred === "entrada" ? "entrada" : "saída"}. Envie-o na página correta.`)
+      }
+      setNotes(parsed); setRejected(invalid); setStatus("ready")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); setStatus("error")
     }
@@ -84,11 +88,9 @@ export function NfeImportModal({ onClose, onSuccess }: Props) {
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:16 }}>
           {[["XMLs", notes.length], ["Válidas", active.length], ["Canceladas", notes.length-active.length], ["Total", total.toLocaleString("pt-BR",{style:"currency",currency:"BRL"})]].map(([label,value]) => <div key={String(label)} style={{ padding:10, background:"var(--surface-2)", borderRadius:8 }}><div style={{ fontSize:9, color:"var(--text-3)", textTransform:"uppercase", fontWeight:700 }}>{label}</div><div style={{ fontSize:14, fontWeight:700, marginTop:3 }}>{value}</div></div>)}
         </div>
-        <label style={{ display:"grid", gap:5, fontSize:12, color:"var(--text-2)" }}>Tipo do pacote
-          <select value={direction} onChange={e => setDirection(e.target.value as NfeDirection)} style={{ padding:9, borderRadius:7, border:"1px solid var(--border)", background:"var(--surface-2)", color:"var(--text)" }}>
-            <option value="">Selecione…</option><option value="entrada">Entrada — compras recebidas</option><option value="saida">Saída — vendas emitidas</option>
-          </select>
-        </label>
+        <div style={{ padding:9, borderRadius:7, border:"1px solid var(--border)", background:"var(--surface-2)", fontSize:12 }}>
+          {direction === "entrada" ? "Entrada — compras recebidas" : "Saída — vendas emitidas"}
+        </div>
         <p style={{ fontSize:11, lineHeight:1.5, color:"var(--text-3)" }}>{direction === "entrada" ? "As notas válidas alimentarão o relatório de compras/CMV. Itens entram como “NF-e sem classificação” para revisão." : direction === "saida" ? "As notas serão registradas para auditoria e não serão somadas ao CMV." : "O sistema tentou detectar automaticamente; confirme antes de importar."}</p>
       </>}
 
