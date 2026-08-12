@@ -182,6 +182,7 @@ export type Database = {
           name: string;
           address: string | null;
           whatsapp_number: string | null;
+          cnpj: string | null;
           active: boolean;
           created_at: string;
         };
@@ -191,6 +192,7 @@ export type Database = {
           name: string;
           address?: string | null;
           whatsapp_number?: string | null;
+          cnpj?: string | null;
           active?: boolean;
           created_at?: string;
         };
@@ -200,6 +202,7 @@ export type Database = {
           name?: string;
           address?: string | null;
           whatsapp_number?: string | null;
+          cnpj?: string | null;
           active?: boolean;
           created_at?: string;
         };
