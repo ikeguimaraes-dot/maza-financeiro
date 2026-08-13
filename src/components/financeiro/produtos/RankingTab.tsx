@@ -384,7 +384,7 @@ type DrawerProps = {
   onClose: () => void
 }
 
-function HistoricoDrawer({ item, historico, loading, onClose }: DrawerProps) {
+export function HistoricoDrawer({ item, historico, loading, onClose }: DrawerProps) {
   const chartData = historico.map(h => ({
     label:      mesLabel(h.mes_lancamento, h.ano_lancamento),
     custoTotal: h.v_custo_total != null ? Math.abs(h.v_custo_total) : null,

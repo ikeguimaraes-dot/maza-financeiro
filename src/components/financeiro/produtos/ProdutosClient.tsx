@@ -7,9 +7,11 @@ import {
 } from "recharts"
 import { useRouter } from "next/navigation"
 import type { ProdutoRow } from "@/app/financeiro/dre/cmv/page"
+import { getHistoricoProduto } from "@/app/financeiro/dre/cmv/actions"
+import type { HistoricoRow, RankingItem } from "@/app/financeiro/dre/cmv/actions"
 import { ImportModal } from "./ImportModal"
 import { NfeImportModal } from "./NfeImportModal"
-import { RankingTab } from "./RankingTab"
+import { HistoricoDrawer, RankingTab } from "./RankingTab"
 import { AnaliseTab } from "./AnaliseTab"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
@@ -62,6 +64,32 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
   const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise">(direcao === "entrada" ? "analise" : "tabela")
   const [showImport, setShowImport] = useState(false)
   const [showNfeImport, setShowNfeImport] = useState(false)
+  const [tableDrawerItem, setTableDrawerItem] = useState<RankingItem | null>(null)
+  const [tableHistorico, setTableHistorico] = useState<HistoricoRow[]>([])
+  const [loadingTableHistorico, setLoadingTableHistorico] = useState(false)
+
+  async function openTableDrawer(row: ProdutoRow) {
+    if (direcao !== "entrada" || !row.item_codigo) return
+    const item: RankingItem = {
+      item_codigo: row.item_codigo,
+      item_descricao: row.item_descricao,
+      fornecedor_nome: row.fornecedor_nome,
+      desc_gerencial: row.desc_gerencial,
+      unidade_medida: row.unidade_medida,
+      custo_total: Number(row.v_custo_total ?? 0),
+      quantidade_total: Number(row.q_estoque ?? 0),
+      custo_medio: Number(row.v_custo_medio ?? 0),
+      variacao_media: row.perc_variacao,
+    }
+    setTableDrawerItem(item)
+    setTableHistorico([])
+    setLoadingTableHistorico(true)
+    try {
+      setTableHistorico(await getHistoricoProduto(unitId, row.item_codigo))
+    } finally {
+      setLoadingTableHistorico(false)
+    }
+  }
 
   // ── Tabela filters ──────────────────────────────────────────────────────────
   const [localQ, setLocalQ] = useState(q)
@@ -351,7 +379,13 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
               </thead>
               <tbody>
                 {pageRows.map(r => (
-                  <tr key={r.id} style={{ borderTop:"1px solid var(--border)" }}>
+                  <tr
+                    key={r.id}
+                    onClick={() => void openTableDrawer(r)}
+                    style={{ borderTop:"1px solid var(--border)", cursor:direcao === "entrada" && r.item_codigo ? "pointer" : "default" }}
+                    onMouseEnter={e => { if (direcao === "entrada" && r.item_codigo) e.currentTarget.style.background = "var(--surface-2)" }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "" }}
+                  >
                     <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
                       {fmtDate(r.dt_emissao)}
                     </td>
@@ -624,6 +658,14 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
           direction={direcao}
           onClose={() => setShowNfeImport(false)}
           onSuccess={() => router.refresh()}
+        />
+      )}
+      {tableDrawerItem && (
+        <HistoricoDrawer
+          item={tableDrawerItem}
+          historico={tableHistorico}
+          loading={loadingTableHistorico}
+          onClose={() => { setTableDrawerItem(null); setTableHistorico([]) }}
         />
       )}
     </>
