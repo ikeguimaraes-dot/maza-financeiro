@@ -75,7 +75,7 @@ export async function GET(req: Request) {
     ...new Set((competenciasRaw ?? []).map((r) => r.competencia)),
   ]
 
-  const [mesNum, anoNum] = competencia.split("-").map(Number)
+  const [anoNum, mesNum] = competencia.split("-").map(Number)
 
   const { data: gorjetaDist } = await supabase
     .from("gorjeta_distribuicao")

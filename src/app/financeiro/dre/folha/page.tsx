@@ -3,7 +3,8 @@
 // src/app/financeiro/dre/folha/page.tsx
 // Repo: maza-financeiro
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
+import { useUnit } from "@kph/auth/context"
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -84,11 +85,6 @@ interface FolhaData {
 }
 
 // ── Constantes ────────────────────────────────────────────────────────────
-const UNITS = [
-  { label: "Meet & Eat", id: "674eac8c-5a38-4a42-aa60-0a666387909b" },
-  { label: "MDNA", id: "f9c6c7fc-2ecc-4f79-98ce-c3118b670182" },
-]
-
 const API_BASE =
   "/financeiro"
 
@@ -157,7 +153,8 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 // ── Componente principal ──────────────────────────────────────────────────
 export default function FolhaPage() {
   const now = new Date()
-  const [unitId, setUnitId] = useState(UNITS[0]!.id)
+  const { unit } = useUnit()
+  const unitId = unit?.id ?? null
   const [mes, setMes] = useState(now.getMonth() + 1)
   const [ano, setAno] = useState(now.getFullYear())
   const [data, setData] = useState<FolhaData | null>(null)
@@ -166,13 +163,18 @@ export default function FolhaPage() {
   const [buscaColab, setBuscaColab] = useState("")
   const [sortColab, setSortColab] = useState<"nome" | "custo" | "divisao">("divisao")
   const [uploading, setUploading] = useState(false)
+  const monthsRequestRef = useRef(0)
+  const dataRequestRef = useRef(0)
 
   // Default inteligente: ao trocar de unidade, busca a competência mais recente
   // COM dados e ajusta os seletores — evita abrir num mês sem folha (ex.: mês
   // corrente ainda não importado) e renderizar vazio.
   useEffect(() => {
+    if (!unitId) return
+    const requestId = ++monthsRequestRef.current
     fetchJsonWithSessionRetry(`${API_BASE}/api/folha/meses-disponiveis?unit_id=${unitId}`)
       .then((d: { competencias?: string[] }) => {
+        if (requestId !== monthsRequestRef.current) return
         const comps = d.competencias ?? []
         if (comps.length > 0) {
           const [a, m] = comps[0]!.split("-").map(Number)
@@ -183,17 +185,30 @@ export default function FolhaPage() {
   }, [unitId])
 
   useEffect(() => {
+    if (!unitId) {
+      setData(null)
+      setLoading(false)
+      setError("Nenhuma unidade ativa selecionada.")
+      return
+    }
+    const requestId = ++dataRequestRef.current
     setLoading(true)
     setError(null)
+    setData(null)
     fetchJsonWithSessionRetry(
       `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`
     )
       .then((d) => {
+        if (requestId !== dataRequestRef.current) return
         if (d.error) throw new Error(d.error)
         setData(d)
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false))
+      .catch((e: Error) => {
+        if (requestId === dataRequestRef.current) setError(e.message)
+      })
+      .finally(() => {
+        if (requestId === dataRequestRef.current) setLoading(false)
+      })
   }, [unitId, mes, ano])
 
   // Colaboradores filtrados + ordenados
@@ -217,15 +232,20 @@ export default function FolhaPage() {
     return list
   }, [data, buscaColab, sortColab])
 
-  const unitLabel = UNITS.find((u) => u.id === unitId)?.label ?? ""
+  const unitLabel = unit?.name ?? "unidade atual"
 
-  // ── Upload de planilha ──────────────────────────────────────────────────
+  // ── Upload de recibos em PDF ────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = Array.from(e.target.files ?? [])
+    if (files.length === 0) return
+    if (!unitId) {
+      alert("Selecione uma unidade antes de importar.")
+      e.target.value = ""
+      return
+    }
     setUploading(true)
     const formData = new FormData()
-    formData.append("file", file)
+    files.forEach((file) => formData.append("files", file))
     formData.append("unit_id", unitId)
     formData.append("mes", String(mes))
     formData.append("ano", String(ano))
@@ -237,10 +257,16 @@ export default function FolhaPage() {
       const result = await res.json()
       if (!res.ok) throw new Error(result.error ?? "Erro no upload")
       // Recarrega dados após import
-      const novo = await fetch(
+      const reloadResponse = await fetch(
         `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`
-      ).then((r) => r.json())
+      )
+      const novo = await reloadResponse.json()
+      if (!reloadResponse.ok || novo.error) throw new Error(novo.error ?? "Erro ao recarregar a folha")
+      if (!Array.isArray(novo.colaboradores) || novo.colaboradores.length !== result.colaboradores) {
+        throw new Error(`Foram gravados ${result.colaboradores} colaboradores, mas a página recebeu ${novo.colaboradores?.length ?? 0}.`)
+      }
       setData(novo)
+      alert(`${result.importados} funcionário${result.importados === 1 ? "" : "s"} importado${result.importados === 1 ? "" : "s"} com sucesso.`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro desconhecido"
       alert(`Erro ao importar: ${msg}`)
@@ -261,22 +287,9 @@ export default function FolhaPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Seletor de unidade */}
-          <div className="flex bg-gray-800/60 border border-gray-700/50 rounded-lg overflow-hidden">
-            {UNITS.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => setUnitId(u.id)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  unitId === u.id
-                    ? "bg-purple-900/60 text-purple-300 border-r border-gray-700"
-                    : "text-gray-500 hover:text-gray-300"
-                }`}
-              >
-                {u.label}
-              </button>
-            ))}
-          </div>
+          <span className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-700/50 bg-gray-800/60 text-gray-300">
+            {unitLabel}
+          </span>
 
           {/* Seletor de mês */}
           <select
@@ -300,7 +313,23 @@ export default function FolhaPage() {
             ))}
           </select>
 
-          {/* Botão importar */}
+          {/* Importar planilha */}
+          <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border cursor-pointer transition-colors ${
+            uploading
+              ? "border-gray-700 text-gray-500 cursor-not-allowed"
+              : "border-gray-600 text-gray-300 bg-gray-800/40 hover:bg-gray-800"
+          }`}>
+            Importar planilha
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              disabled={uploading}
+              onChange={handleUpload}
+            />
+          </label>
+
+          {/* Importar PDFs */}
           <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border cursor-pointer transition-colors ${
             uploading
               ? "border-gray-700 text-gray-500 cursor-not-allowed"
@@ -309,10 +338,11 @@ export default function FolhaPage() {
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
-            {uploading ? "Importando…" : "Importar planilha"}
+            {uploading ? "Importando PDFs…" : "Importar PDFs"}
             <input
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".pdf,application/pdf"
+              multiple
               className="hidden"
               disabled={uploading}
               onChange={handleUpload}

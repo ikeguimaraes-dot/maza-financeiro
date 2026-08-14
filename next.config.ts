@@ -10,7 +10,10 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_FINANCEIRO_URL:
       process.env.NEXT_PUBLIC_FINANCEIRO_URL ?? "/financeiro",
   },
-  serverExternalPackages: ["@anthropic-ai/sdk"],
+  // PDF.js resolves its worker relative to its installed package. Keeping these
+  // dependencies external prevents Turbopack from rewriting that path into a
+  // non-existent .next/server/chunks/pdf.worker.mjs in development.
+  serverExternalPackages: ["@anthropic-ai/sdk", "pdf-parse", "pdfjs-dist"],
 };
 
 export default nextConfig;
