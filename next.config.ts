@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   // PDF.js resolves its worker relative to its installed package. Keeping these
   // dependencies external prevents Turbopack from rewriting that path into a
   // non-existent .next/server/chunks/pdf.worker.mjs in development.
-  serverExternalPackages: ["@anthropic-ai/sdk", "pdf-parse", "pdfjs-dist"],
+  serverExternalPackages: ["@anthropic-ai/sdk", "@napi-rs/canvas", "pdf-parse", "pdfjs-dist"],
 };
 
 export default nextConfig;

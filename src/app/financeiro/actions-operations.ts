@@ -1,12 +1,16 @@
 "use server";
 
 import { createOperationsClient } from "@kph/db/supabase/operations-client";
+import { createSupabaseServerClient } from "@kph/db/supabase/server";
 import type {
   VendaDiaria,
   MetaProjecao,
   TituloAPagar,
   WorkdayPagamento,
 } from "@kph/db/types/operations-database";
+
+/** TituloAPagar + nome da unidade (join com `units` via unit_id). */
+export type TituloComUnidade = TituloAPagar & { unit_name: string | null };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -126,27 +130,68 @@ export async function getMetasMes(
 
 // ── Contas a Pagar ────────────────────────────────────────────────────────────
 
-/** Todos os títulos a pagar de uma competência (filtro por ref_mes). */
+/**
+ * Todos os títulos a pagar cujo d_vencimento cai dentro do mês da
+ * competência informada — visão de "contas a pagar" (o que vence naquele
+ * mês), não de ref_mes (mês de competência do Everest, usado pra
+ * dedup/upsert no import e em outras telas como o DRE — não mexido aqui,
+ * só o filtro de exibição desta página). Filtra também por unit_id, se
+ * informada — mesma unidade selecionada na shell (padrão do resto do
+ * módulo: unitId resolvido via getCurrentUnit() na page e passado pra cá,
+ * aplicado como .eq("unit_id", unitId) igual DRE/CMV). Retorna com o nome
+ * da unidade (join via unit_id → units.name). fantasia_empresa é só texto
+ * de origem do ERP, não é usado pra separar unidade (empresas diferentes
+ * podem cair na mesma unidade, ex: "TEEM GROUP LTDA" e "MEET & EAT" são a
+ * mesma unidade).
+ */
 export async function getTitulosAPagar(
   competencia: string,
-): Promise<TituloAPagar[]> {
+  unitId?: string | null,
+): Promise<TituloComUnidade[]> {
   const ops = createOperationsClient();
   if (!ops) return [];
 
-  // ref_mes é "YYYY-MM-01" no banco
-  const refMes = competencia.slice(0, 7) + "-01";
+  const { dateFrom, dateTo } = competenciaToRange(competencia);
 
-  const { data, error } = await ops
+  let query = ops
     .from("titulos_a_pagar")
     .select("*")
-    .eq("ref_mes", refMes)
-    .order("d_vencimento", { ascending: true, nullsFirst: false });
+    .gte("d_vencimento", dateFrom)
+    .lte("d_vencimento", dateTo);
+  if (unitId) query = query.eq("unit_id", unitId);
+
+  const { data, error } = await query.order("d_vencimento", { ascending: true, nullsFirst: false });
 
   if (error) {
     console.error("[getTitulosAPagar]", error.message);
     return [];
   }
-  return (data ?? []) as TituloAPagar[];
+  const titulos = (data ?? []) as TituloAPagar[];
+  if (titulos.length === 0) return [];
+
+  const unitIds = [...new Set(titulos.map((t) => t.unit_id).filter((id): id is string => !!id))];
+  const unitNames = new Map<string, string>();
+  if (unitIds.length > 0) {
+    const supabase = await createSupabaseServerClient();
+    if (supabase) {
+      const { data: unitsData, error: unitsError } = await supabase
+        .from("units")
+        .select("id, name")
+        .in("id", unitIds);
+      if (unitsError) {
+        console.error("[getTitulosAPagar] units:", unitsError.message);
+      } else {
+        for (const u of (unitsData ?? []) as { id: string; name: string }[]) {
+          unitNames.set(u.id, u.name);
+        }
+      }
+    }
+  }
+
+  return titulos.map((t) => ({
+    ...t,
+    unit_name: t.unit_id ? (unitNames.get(t.unit_id) ?? null) : null,
+  }));
 }
 
 // ── Fluxo de Caixa ────────────────────────────────────────────────────────────
@@ -275,11 +320,11 @@ export type PagarKpis = {
   fluxo_caixa_valor: number;
 };
 
-export async function getPagarKpisETitulos(competencia: string): Promise<{
-  titulos: TituloAPagar[];
+export async function getPagarKpisETitulos(competencia: string, unitId?: string | null): Promise<{
+  titulos: TituloComUnidade[];
   kpis: PagarKpis;
 }> {
-  const titulos = await getTitulosAPagar(competencia);
+  const titulos = await getTitulosAPagar(competencia, unitId);
 
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
@@ -324,4 +369,190 @@ export async function getPagarKpisETitulos(competencia: string): Promise<{
       fluxo_caixa_valor,
     },
   };
+}
+
+// ── Conciliação (CMV × boletos) ────────────────────────────────────────────────
+
+export type BoletoConciliacao = {
+  id: string;
+  n_titulo: string | null;
+  d_vencimento: string | null;
+  v_titulo: number | null;
+  /** Posição do boleto dentro do parcelamento do seu n_titulo (1-based). */
+  parcelaPos: number;
+  /** Total de boletos do mesmo n_titulo — "Parcela X de Y". */
+  parcelaTotal: number;
+};
+
+export type NotaConciliacao = {
+  nr_danfe: string;
+  fornecedor_nome: string | null;
+  v_total_danfe: number | null;
+  boletos: BoletoConciliacao[];
+};
+
+export type ConciliacaoData = {
+  /** Notas de produtos_relatorio do mês/unidade — TODAS (sem filtro de
+   * calcula_cmv, uma nota de material de limpeza não entra no custo do CMV
+   * mas ainda é uma compra real com boleto), com os boletos vinculados por
+   * n_nota_fiscal = nr_danfe. */
+  notas: NotaConciliacao[];
+  /** Títulos do mês (por d_vencimento, mesmo filtro da aba Títulos) sem nota
+   * de produto correspondente: C1 = n_nota_fiscal null (aluguel,
+   * pró-labore, serviços, impostos); C2 = n_nota_fiscal preenchido mas que
+   * não bate com nenhum nr_danfe de produtos_relatorio da unidade. */
+  boletosSemNota: TituloComUnidade[];
+};
+
+/**
+ * Cruza as notas do CMV (produtos_relatorio, uma linha por nr_danfe distinto
+ * do mes_lancamento/ano_lancamento informados) com os boletos de
+ * titulos_a_pagar cujo n_nota_fiscal bate com o nr_danfe da nota — mesma
+ * unidade, qualquer vencimento (o boleto pode vencer num mês diferente do
+ * mes_lancamento da nota). Visão de leitura, sem filtro calcula_cmv (mesmo
+ * raciocínio de Bonificação/Fornecedor no CMV — aqui é sobre notas fiscais,
+ * não sobre o cálculo do CMV). v_total_danfe repete igual em toda linha de
+ * produto da mesma nota — pega o primeiro valor não-nulo, nunca soma.
+ *
+ * "Parcela X de Y" e derivada, nao lida da coluna parcela (corrompida — o
+ * Excel converteu o "X/Y" do Everest em datas na exportacao). Agrupa os
+ * boletos por n_titulo (nao por n_nota_fiscal — uma nota raramente, mas
+ * pode, ter mais de um titulo independente, cada um com seu proprio
+ * parcelamento; ex.: nota 13497 tem os titulos 1746 e 2609). Y = quantos
+ * boletos aquele n_titulo tem; X = posicao por d_vencimento crescente
+ * dentro do mesmo n_titulo.
+ *
+ * Além das notas, também traz os títulos do mês (por d_vencimento) que não
+ * têm nota de produto correspondente — "boleto sem nota" (C1/C2 acima). A
+ * checagem de C2 usa o universo de nr_danfe da unidade INTEIRO (todos os
+ * meses), não só do mês selecionado: uma nota lançada num mês com boleto
+ * vencendo no mês seguinte não pode ser confundida com "boleto sem nota" só
+ * porque a nota não é deste mes_lancamento.
+ */
+export async function getConciliacao(
+  unitId: string | null,
+  mes: number,
+  ano: number
+): Promise<ConciliacaoData> {
+  const vazio: ConciliacaoData = { notas: [], boletosSemNota: [] };
+  try {
+    const supabase = await createSupabaseServerClient();
+    const ops = createOperationsClient();
+    if (!supabase || !ops) return vazio;
+
+    // 1) Notas do CMV do mês/unidade — dedup por nr_danfe.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    let pq = db
+      .from("produtos_relatorio")
+      .select("nr_danfe,fornecedor_nome,v_total_danfe")
+      .eq("mes_lancamento", mes)
+      .eq("ano_lancamento", ano)
+      .not("nr_danfe", "is", null)
+      .limit(20000);
+    if (unitId) pq = pq.eq("unit_id", unitId);
+    const { data: produtosData } = await pq;
+
+    const notasMap = new Map<string, NotaConciliacao>();
+    for (const r of (produtosData ?? []) as { nr_danfe: string | null; fornecedor_nome: string | null; v_total_danfe: number | null }[]) {
+      if (!r.nr_danfe) continue;
+      const existing = notasMap.get(r.nr_danfe);
+      if (!existing) {
+        notasMap.set(r.nr_danfe, { nr_danfe: r.nr_danfe, fornecedor_nome: r.fornecedor_nome, v_total_danfe: r.v_total_danfe, boletos: [] });
+      } else if (existing.v_total_danfe == null && r.v_total_danfe != null) {
+        existing.v_total_danfe = r.v_total_danfe;
+      }
+    }
+    const nrDanfesDoMes = [...notasMap.keys()];
+
+    // 2) TODO nr_danfe da unidade, qualquer mês — só pra classificar
+    // corretamente os boletos sem nota (C2) no passo 4, ver docstring acima.
+    let allPq = db
+      .from("produtos_relatorio")
+      .select("nr_danfe")
+      .not("nr_danfe", "is", null)
+      .limit(50000);
+    if (unitId) allPq = allPq.eq("unit_id", unitId);
+    const { data: allNotasData } = await allPq;
+    const nrDanfesUnidade = new Set(
+      (allNotasData ?? []).map((r: { nr_danfe: string | null }) => r.nr_danfe).filter((v: string | null): v is string => !!v)
+    );
+
+    // 3) Boletos vinculados às notas do mês, na mesma unidade, qualquer
+    // vencimento — n_nota_fiscal = nr_danfe. parcela não é selecionada: a
+    // coluna está corrompida (Excel converteu "X/Y" em datas na exportação).
+    type RawBoleto = { id: string; n_titulo: string | null; d_vencimento: string | null; v_titulo: number | null };
+    const rawBoletosPorNota = new Map<string, RawBoleto[]>();
+    if (nrDanfesDoMes.length > 0) {
+      let tq = ops
+        .from("titulos_a_pagar")
+        .select("id,n_nota_fiscal,n_titulo,d_vencimento,v_titulo")
+        .in("n_nota_fiscal", nrDanfesDoMes)
+        .limit(20000);
+      if (unitId) tq = tq.eq("unit_id", unitId);
+      const { data: titulosData } = await tq;
+      for (const t of (titulosData ?? []) as { id: string; n_nota_fiscal: string | null; n_titulo: string | null; d_vencimento: string | null; v_titulo: number | null }[]) {
+        if (!t.n_nota_fiscal || !notasMap.has(t.n_nota_fiscal)) continue;
+        const bucket = rawBoletosPorNota.get(t.n_nota_fiscal) ?? [];
+        bucket.push({ id: t.id, n_titulo: t.n_titulo, d_vencimento: t.d_vencimento, v_titulo: t.v_titulo });
+        rawBoletosPorNota.set(t.n_nota_fiscal, bucket);
+      }
+    }
+
+    // "Parcela X de Y" derivada por n_titulo — não por n_nota_fiscal (ver
+    // docstring acima). Y = tamanho do grupo; X = posição por d_vencimento
+    // crescente dentro do grupo.
+    function comParcelaInfo(raw: RawBoleto[]): BoletoConciliacao[] {
+      const porTitulo = new Map<string, RawBoleto[]>();
+      for (const b of raw) {
+        const key = b.n_titulo ?? `__sem-titulo-${b.id}`;
+        const bucket = porTitulo.get(key) ?? [];
+        bucket.push(b);
+        porTitulo.set(key, bucket);
+      }
+      const comInfo: BoletoConciliacao[] = [];
+      for (const bucket of porTitulo.values()) {
+        const ordenado = [...bucket].sort((a, b) => (a.d_vencimento ?? "").localeCompare(b.d_vencimento ?? ""));
+        ordenado.forEach((b, i) => {
+          comInfo.push({
+            id: b.id,
+            n_titulo: b.n_titulo,
+            d_vencimento: b.d_vencimento,
+            v_titulo: b.v_titulo,
+            parcelaPos: i + 1,
+            parcelaTotal: ordenado.length,
+          });
+        });
+      }
+      // Ordem de exibição da sub-tabela: d_vencimento crescente pra nota
+      // inteira (mesmo quando há mais de um n_titulo).
+      return comInfo.sort((a, b) => (a.d_vencimento ?? "").localeCompare(b.d_vencimento ?? ""));
+    }
+
+    for (const nota of notasMap.values()) {
+      nota.boletos = comParcelaInfo(rawBoletosPorNota.get(nota.nr_danfe) ?? []);
+    }
+
+    // Notas sem boleto primeiro (é o que precisa de atenção), depois por
+    // nr_danfe.
+    const notas = [...notasMap.values()].sort((a, b) => {
+      if (a.boletos.length === 0 && b.boletos.length > 0) return -1;
+      if (a.boletos.length > 0 && b.boletos.length === 0) return 1;
+      return a.nr_danfe.localeCompare(b.nr_danfe, "pt-BR", { numeric: true });
+    });
+
+    // 4) Boletos sem nota — títulos do mês (por d_vencimento, mesmo filtro
+    // da aba Títulos) cujo n_nota_fiscal não bate com nenhuma nota da
+    // unidade (C1 = null, C2 = preenchido mas sem correspondência).
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const competencia = `${ano}-${pad(mes)}-01`;
+    const titulosDoMes = await getTitulosAPagar(competencia, unitId);
+    const boletosSemNota = titulosDoMes.filter(
+      (t) => !t.n_nota_fiscal || !nrDanfesUnidade.has(t.n_nota_fiscal)
+    );
+
+    return { notas, boletosSemNota };
+  } catch {
+    return vazio;
+  }
 }

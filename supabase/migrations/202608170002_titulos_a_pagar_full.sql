@@ -1,0 +1,60 @@
+-- Adiciona todas as colunas faltantes em titulos_a_pagar
+-- para cobrir as 59 colunas da planilha Everest.
+-- Evolução idempotente da tabela usada por Contas a Pagar.
+
+ALTER TABLE titulos_a_pagar
+  ADD COLUMN IF NOT EXISTS origem              text,
+  ADD COLUMN IF NOT EXISTS empresa             text,
+  ADD COLUMN IF NOT EXISTS fantasia_empresa    text,
+  ADD COLUMN IF NOT EXISTS fornecedor          text,
+  ADD COLUMN IF NOT EXISTS n_conta             text,
+  ADD COLUMN IF NOT EXISTS grupo_economico     text,
+  ADD COLUMN IF NOT EXISTS cep                 text,
+  ADD COLUMN IF NOT EXISTS bairro              text,
+  ADD COLUMN IF NOT EXISTS cidade              text,
+  ADD COLUMN IF NOT EXISTS uf                  text,
+  ADD COLUMN IF NOT EXISTS pais                text,
+  ADD COLUMN IF NOT EXISTS condicao_compra     text,
+  ADD COLUMN IF NOT EXISTS prazo_medio         numeric,
+  ADD COLUMN IF NOT EXISTS serie               text,
+  ADD COLUMN IF NOT EXISTS documento           text,
+  ADD COLUMN IF NOT EXISTS portador_num        text,
+  ADD COLUMN IF NOT EXISTS c_gerencial         text,
+  ADD COLUMN IF NOT EXISTS d_autorizacao_pgto  date,
+  ADD COLUMN IF NOT EXISTS dia_semana          text,
+  ADD COLUMN IF NOT EXISTS v_desconto          numeric,
+  ADD COLUMN IF NOT EXISTS v_multa_atraso      numeric,
+  ADD COLUMN IF NOT EXISTS v_juros_dia         numeric,
+  ADD COLUMN IF NOT EXISTS v_original          numeric,
+  ADD COLUMN IF NOT EXISTS v_saldo_anterior    numeric,
+  ADD COLUMN IF NOT EXISTS v_credito_periodo   numeric,
+  ADD COLUMN IF NOT EXISTS v_debito_periodo    numeric,
+  ADD COLUMN IF NOT EXISTS d_liquidacao_periodo date,
+  ADD COLUMN IF NOT EXISTS situacao_periodo    text,
+  ADD COLUMN IF NOT EXISTS v_saldo_periodo     numeric,
+  ADD COLUMN IF NOT EXISTS dias_atraso_periodo numeric,
+  ADD COLUMN IF NOT EXISTS v_atraso_periodo    numeric,
+  ADD COLUMN IF NOT EXISTS v_atualizado_periodo numeric,
+  ADD COLUMN IF NOT EXISTS d_liquidacao_atual  date,
+  ADD COLUMN IF NOT EXISTS v_atraso_atual      numeric,
+  ADD COLUMN IF NOT EXISTS v_atualizado_atual  numeric,
+  ADD COLUMN IF NOT EXISTS ano                 numeric,
+  ADD COLUMN IF NOT EXISTS mes                 text,
+  ADD COLUMN IF NOT EXISTS semana              numeric,
+  ADD COLUMN IF NOT EXISTS trimestre           numeric,
+  ADD COLUMN IF NOT EXISTS quadrimestre        numeric;
+
+ALTER TABLE public.titulos_a_pagar
+  ADD COLUMN IF NOT EXISTS unit_id uuid,
+  ADD COLUMN IF NOT EXISTS v_pagamento numeric,
+  ADD COLUMN IF NOT EXISTS d_liquidacao date,
+  ADD COLUMN IF NOT EXISTS forma_pagamento text,
+  ADD COLUMN IF NOT EXISTS posicao text,
+  ADD COLUMN IF NOT EXISTS dre text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_titulos_chave
+  ON public.titulos_a_pagar (n_titulo, parcela, fantasia_empresa, ref_mes)
+  NULLS NOT DISTINCT;
+
+CREATE INDEX IF NOT EXISTS idx_titulos_unit_vencimento
+  ON public.titulos_a_pagar (unit_id, d_vencimento);

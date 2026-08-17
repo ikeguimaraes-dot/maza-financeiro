@@ -216,6 +216,7 @@ export type TituloAPagar = {
   tipo: string | null;
   origem: string | null;
   n_nota_fiscal: string | null;
+  unit_id: string | null;
   empresa: string | null;
   fantasia_empresa: string | null;
   // fornecedor
@@ -271,6 +272,11 @@ export type TituloAPagar = {
   dias_atraso_atual: number | null;
   v_atraso_atual: number | null;
   v_atualizado_atual: number | null;
+  v_pagamento: number | null;
+  d_liquidacao: string | null;
+  forma_pagamento: string | null;
+  posicao: string | null;
+  dre: string | null;
   // período
   ano: number | null;
   mes: string | null;

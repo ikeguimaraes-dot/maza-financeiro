@@ -4,54 +4,7 @@ export const maxDuration = 60
 import * as XLSX from "xlsx"
 import { createOperationsClient } from "@kph/db/supabase/operations-client"
 import { requireUser } from "@kph/auth/server"
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function toDate(v: unknown): string | null {
-  if (v == null || v === "") return null
-  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().split("T")[0]!
-  if (typeof v === "number") return new Date((v - 25569) * 86400 * 1000).toISOString().split("T")[0]!
-  if (typeof v === "string") {
-    const d = new Date(v)
-    return isNaN(d.getTime()) ? null : d.toISOString().split("T")[0]!
-  }
-  return null
-}
-
-function toStr(v: unknown): string | null {
-  if (v == null || v === "" || v instanceof Date) return null
-  const s = String(v).trim()
-  return s === "" || s === "NaN" ? null : s
-}
-
-function toNum(v: unknown): number | null {
-  if (v == null || v === "" || v instanceof Date) return null
-  const n = Number(v)
-  return isNaN(n) ? null : n
-}
-
-function toBool(v: unknown): boolean {
-  if (typeof v === "boolean") return v
-  if (typeof v === "number") return v === 1
-  if (typeof v === "string") return v === "1" || v.toLowerCase() === "s" || v.toLowerCase() === "true"
-  return false
-}
-
-function refMes(dateStr: string | null): string | null {
-  if (!dateStr || dateStr.length < 7) return null
-  return dateStr.slice(0, 7) + "-01"
-}
-
-function parseParcela(v: unknown): string | null {
-  if (v == null || v === "") return null
-  if (v instanceof Date) return String(v.getDate())
-  return toStr(v)
-}
-
-function parseMes(v: unknown): string | null {
-  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().split("T")[0]!
-  return toStr(v)
-}
+import { mapRow, normalizeUnitName } from "@/lib/pagar-import/parse-titulos"
 
 // ── Route ─────────────────────────────────────────────────────────────────────
 
@@ -65,6 +18,7 @@ export async function POST(req: Request) {
 
   const file = formData.get("file") as File | null
   if (!file) return Response.json({ error: "Arquivo não enviado" }, { status: 400 })
+  const diagnostico = formData.get("mode") === "diagnostico"
 
   const buffer = Buffer.from(await file.arrayBuffer())
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true })
@@ -74,93 +28,128 @@ export async function POST(req: Request) {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[sheetName]!, { defval: null })
   if (!rows.length) return Response.json({ error: "Nenhuma linha encontrada" }, { status: 400 })
 
-  const db = createOperationsClient()
+  const db = createOperationsClient() as any
   if (!db) return Response.json({ error: "Banco indisponível" }, { status: 500 })
+  const { data: units, error: unitsError } = await db.from("units").select("id,name")
+  if (unitsError) return Response.json({ error: `Erro ao carregar unidades: ${unitsError.message}` }, { status: 500 })
+  const unitMap = new Map<string, string>((units ?? []).map((unit: { id: string; name: string }) => [normalizeUnitName(unit.name), unit.id]))
 
   const importadoEm = new Date().toISOString()
-  const refMesesSet = new Set<string>()
+  const unknownEmpresas = new Map<string, number>()
+  const allRecords: Record<string, unknown>[] = []
+  let linhasDescartadas = 0
 
-  const records = rows.map((r) => {
-    const dComp = toDate(r["D. Competência"])
-    const dVenc = toDate(r["D. Vencimento"])
-    const rm = refMes(dVenc)
-    if (rm) refMesesSet.add(rm)
-
-    return {
-      id:                    crypto.randomUUID(),
-      tipo:                  toStr(r["Tipo"]),
-      origem:                toStr(r["Origem"]),
-      n_nota_fiscal:         toStr(r["N.Nota Fiscal"] != null ? String(Math.round(Number(r["N.Nota Fiscal"]))) : null),
-      empresa:               toStr(r["Empresa"] != null ? String(r["Empresa"]) : null),
-      fantasia_empresa:      toStr(r["Fantasia Empresa"]),
-      fornecedor:            toStr(r["Fornecedor"] != null ? String(r["Fornecedor"]) : null),
-      razao_fornecedor:      toStr(r["Razão Fornecedor"]),
-      fantasia_fornecedor:   toStr(r["Fantasia Fornecedor"]),
-      cnpj_cpf_fornecedor:   toStr(r["CNPJ/CPF Fornecedor"]),
-      n_conta:               toStr(r["N. Conta"]),
-      t_fornecedor:          toStr(r["T. Fornecedor"]),
-      grupo_economico:       toStr(r["Grupo Econômico"] != null ? String(r["Grupo Econômico"]) : null),
-      cep:                   toStr(r["CEP"]),
-      bairro:                toStr(r["Bairro"]),
-      cidade:                toStr(r["Cidade"]),
-      uf:                    toStr(r["UF"]),
-      pais:                  toStr(r["País"]),
-      condicao_compra:       toStr(r["Condição Compra"]),
-      prazo_medio:           toNum(r["Prazo Médio"]),
-      serie:                 toStr(r["Série"]),
-      n_titulo:              toStr(r["N. Título/Provisão"] != null ? String(r["N. Título/Provisão"]) : null),
-      parcela:               parseParcela(r["Parcela"]),
-      documento:             toStr(r["Documento"] != null ? String(r["Documento"]) : null),
-      portador_num:          toStr(r["Portador"] != null ? String(r["Portador"]) : null),
-      portador:              toStr(r["Descrição do Portador"]),
-      c_gerencial:           toStr(r["C. Gerencial"] != null ? String(r["C. Gerencial"]) : null),
-      descricao_c_gerencial: toStr(r["Descrição C. Gerencial"]),
-      d_lancamento:          toDate(r["D. Lançamento"]),
-      d_competencia:         dComp,
-      d_autorizacao_pgto:    toDate(r["D. Autorização Pgto"]),
-      d_vencimento:          toDate(r["D. Vencimento"]),
-      dia_semana:            toStr(r["Dia Semana"]),
-      v_desconto:            toNum(r["V. Desconto"]),
-      v_multa_atraso:        toNum(r["V. Multa Atraso"]),
-      v_juros_dia:           toNum(r["V. Juros Dia"]),
-      v_titulo:              toNum(r["V. Título/Provisão"]),
-      v_original:            toNum(r["V. Original"]),
-      v_saldo_anterior:      toNum(r["V. Saldo Anterior"]),
-      v_credito_periodo:     toNum(r["V. Crédito Período"]),
-      v_debito_periodo:      toNum(r["V. Débito Período"]),
-      d_liquidacao_periodo:  toDate(r["D. Liquidação Período"]),
-      situacao_periodo:      toStr(r["Situação Período"]),
-      v_saldo_periodo:       toNum(r["V. Saldo Período"]),
-      dias_atraso_periodo:   toNum(r["Dias Atraso Período"]),
-      v_atraso_periodo:      toNum(r["V. Atraso Período"]),
-      v_atualizado_periodo:  toNum(r["V. Atualizado Período"]),
-      d_liquidacao_atual:    toDate(r["D. Liquidação Atual"]),
-      situacao_atual:        toStr(r["Situação Atual"]),
-      v_saldo_atual:         toNum(r["V. Saldo Atual"]),
-      dias_atraso_atual:     toNum(r["Dias Atraso Atual"]),
-      v_atraso_atual:        toNum(r["V. Atraso Atual"]),
-      v_atualizado_atual:    toNum(r["V. Atualizado Atual"]),
-      ano:                   toNum(r["Ano"]),
-      mes:                   parseMes(r["Mês"]),
-      semana:                toNum(r["Semana"]),
-      trimestre:             toNum(r["Trimestre"]),
-      quadrimestre:          toNum(r["Quadrimestre"]),
-      fluxo_de_caixa:        toBool(r["Fluxo de Caixa"]),
-      tipo_sep:              toStr(r["Tipo SEP"] != null ? String(r["Tipo SEP"]) : null),
-      ref_mes:               rm,
-      importado_em:          importadoEm,
+  for (const r of rows) {
+    const { record, fantasiaEmpresa } = mapRow(r, unitMap)
+    if (!record) {
+      if (fantasiaEmpresa) {
+        // Fantasia Empresa presente mas não reconhecida — conta pra
+        // reportar/abortar; não é a linha de rodapé (essa tem
+        // Fantasia Empresa e Fornecedor ambos vazios).
+        unknownEmpresas.set(fantasiaEmpresa, (unknownEmpresas.get(fantasiaEmpresa) ?? 0) + 1)
+      } else {
+        linhasDescartadas++
+      }
+      continue
     }
-  })
+    allRecords.push({ ...record, importado_em: importadoEm })
+  }
 
-  if (refMesesSet.size > 0) {
-    const { error: delErr } = await db.from("titulos_a_pagar").delete().in("ref_mes", [...refMesesSet])
+  // ── Modo Diagnóstico — só analisa, não grava nada no banco ──────────────────
+  if (diagnostico) {
+    const situacoes = new Map<string, number>()
+    for (const rec of allRecords) {
+      const s = String(rec.situacao_atual ?? "(vazio)")
+      situacoes.set(s, (situacoes.get(s) ?? 0) + 1)
+    }
+
+    // Colisões de chave de dedup com valor divergente (mesmo diagnóstico
+    // usado no import de produtos) — indicaria a mesma parcela aparecendo
+    // duas vezes no arquivo com dados diferentes.
+    const byKey = new Map<string, Record<string, unknown>[]>()
+    for (const rec of allRecords) {
+      const key = `${rec.n_titulo}|${rec.parcela}|${rec.fantasia_empresa}|${rec.ref_mes}`
+      const bucket = byKey.get(key) ?? []
+      bucket.push(rec)
+      byKey.set(key, bucket)
+    }
+    const colisoes = [...byKey.entries()].filter(([, recs]) => recs.length > 1)
+
+    const amostra = allRecords.slice(0, 15).map((rec) => ({
+      id: rec.id, n_titulo: rec.n_titulo, parcela: rec.parcela,
+      fantasia_empresa: rec.fantasia_empresa, ref_mes: rec.ref_mes,
+      v_titulo: rec.v_titulo, v_saldo_atual: rec.v_saldo_atual,
+      v_pagamento: rec.v_pagamento, situacao_atual: rec.situacao_atual,
+      posicao: rec.posicao, dre: rec.dre, d_vencimento: rec.d_vencimento,
+    }))
+
+    return Response.json({
+      ok: true,
+      diagnostico: true,
+      totalLinhasArquivo: rows.length,
+      totalTitulosValidos: allRecords.length,
+      linhasDescartadasSemFantasiaOuFornecedor: linhasDescartadas,
+      fantasiaEmpresaNaoReconhecida: [...unknownEmpresas.entries()].map(([empresa, count]) => ({ empresa, count })),
+      situacaoContagem: [...situacoes.entries()].sort((a, b) => b[1] - a[1]),
+      colisoesDedupNaChave: colisoes.length,
+      amostraColisoes: colisoes.slice(0, 5).map(([key, recs]) => ({ key, ocorrencias: recs.length })),
+      amostraRegistros: amostra,
+    })
+  }
+
+  // ── Import de verdade ────────────────────────────────────────────────────────
+  // Aborta o import inteiro se alguma Fantasia Empresa não estiver no
+  // UNIT_MAP — não grava nada com unit_id nulo nem pula em silêncio.
+  if (unknownEmpresas.size > 0) {
+    const detalhe = [...unknownEmpresas.entries()]
+      .map(([empresa, count]) => `"${empresa}" (${count} linha${count !== 1 ? "s" : ""})`)
+      .join(", ")
+    return Response.json(
+      { error: `Import abortado — Fantasia Empresa não reconhecida: ${detalhe}. Atualize o mapa de unidades antes de importar.` },
+      { status: 400 },
+    )
+  }
+
+  // Dedup em memória pela chave natural (n_titulo, parcela, fantasia_empresa,
+  // ref_mes) — mantém a última ocorrência, pra não conflitar dentro do mesmo
+  // upsert quando a planilha traz a mesma parcela repetida internamente.
+  const dedup = new Map<string, Record<string, unknown>>()
+  for (const rec of allRecords) {
+    const key = `${rec.n_titulo}|${rec.parcela}|${rec.fantasia_empresa}|${rec.ref_mes}`
+    dedup.set(key, rec)
+  }
+  const records = [...dedup.values()]
+
+  // Delete por (unit_id, ref_mes), não só ref_mes — um reimport que traz
+  // só algumas unidades não pode apagar títulos de outras unidades no
+  // mesmo mês (mesmo padrão do import de produtos: delete escopado por
+  // unidade, não só por período).
+  const refMesesSet = new Set<string>()
+  const refMesesPorUnidade = new Map<string, Set<string>>()
+  for (const rec of records) {
+    if (!rec.ref_mes) continue
+    const unitId = rec.unit_id as string
+    const bucket = refMesesPorUnidade.get(unitId) ?? new Set<string>()
+    bucket.add(rec.ref_mes as string)
+    refMesesPorUnidade.set(unitId, bucket)
+    refMesesSet.add(rec.ref_mes as string)
+  }
+
+  for (const [unitId, refMesesDaUnidade] of refMesesPorUnidade) {
+    const { error: delErr } = await db
+      .from("titulos_a_pagar")
+      .delete()
+      .eq("unit_id", unitId)
+      .in("ref_mes", [...refMesesDaUnidade])
     if (delErr) return Response.json({ error: `Erro ao limpar dados: ${delErr.message}` }, { status: 500 })
   }
 
   const BATCH = 200
   let inserted = 0
   for (let i = 0; i < records.length; i += BATCH) {
-    const { error: insErr } = await db.from("titulos_a_pagar").insert(records.slice(i, i + BATCH) as any)
+    const { error: insErr } = await db
+      .from("titulos_a_pagar")
+      .upsert(records.slice(i, i + BATCH) as any, { onConflict: "n_titulo,parcela,fantasia_empresa,ref_mes" })
     if (insErr) return Response.json({ error: `Erro ao inserir lote ${i / BATCH + 1}: ${insErr.message}` }, { status: 500 })
     inserted += Math.min(BATCH, records.length - i)
   }
