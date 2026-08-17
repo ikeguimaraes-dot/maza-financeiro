@@ -1,9 +1,9 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import * as XLSX from "xlsx"
-import { deleteProdutosMes, insertProdutos } from "@/app/financeiro/dre/cmv/actions"
+import { deleteProdutosMes, getProdutoImportUnits, insertProdutos } from "@/app/financeiro/dre/cmv/actions"
 import type { ProdutoInsert } from "@/app/financeiro/dre/cmv/actions"
 
 interface ImportModalProps {
@@ -39,8 +39,33 @@ const COL_MAP: Record<string, keyof ProdutoInsert> = {
 
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null
-  const n = Number(v)
+  const raw = String(v).trim().replace(/[^\d,.-]/g, "")
+  const comma = raw.lastIndexOf(",")
+  const dot = raw.lastIndexOf(".")
+  let normalized = raw
+  if (comma >= 0 && dot >= 0) {
+    normalized = comma > dot ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(/,/g, "")
+  } else {
+    const separator = comma >= 0 ? "," : dot >= 0 ? "." : null
+    if (separator) {
+      const parts = raw.split(separator)
+      normalized = parts.length > 2 || parts[1]?.length === 3
+        ? parts.join("")
+        : separator === "," ? raw.replace(",", ".") : raw
+    }
+  }
+  const n = Number(normalized)
   return isNaN(n) ? null : n
+}
+
+function normalizeUnitName(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ")
+}
+
+function getCol(raw: Record<string, unknown>, ...names: string[]): unknown {
+  const expected = new Set(names.map(name => normalizeUnitName(name.replace(/\./g, " "))))
+  const key = Object.keys(raw).find(name => expected.has(normalizeUnitName(name.replace(/\./g, " "))))
+  return key ? raw[key] : undefined
 }
 
 function toStr(v: unknown): string | null {
@@ -64,12 +89,18 @@ function parseSheet(sheet: XLSX.WorkSheet): Record<string, unknown>[] {
   return raw
 }
 
-function mapRow(raw: Record<string, unknown>, unitId: string): ProdutoInsert | null {
+type MappedRow = { row: ProdutoInsert | null; unknownUnit?: string }
+
+function mapRow(raw: Record<string, unknown>, units: Map<string, string>): MappedRow {
   const mes = toNum(raw["Mês Lançamento"])
   const ano = toNum(raw["Ano Lançamento"])
-  if (!mes || !ano) return null
+  if (!mes || !ano) return { row: null }
 
-  const q_embalagem = toNum(raw["Q. Embalagem"])
+  const fantasia = toStr(raw["Fantasia Empresa"])
+  const unitId = fantasia ? units.get(normalizeUnitName(fantasia)) : null
+  if (!unitId) return { row: null, unknownUnit: fantasia ?? "vazio" }
+
+  const q_embalagem = toNum(raw["Q. Estoque"])
   const v_embalagem = toNum(raw["V. Embalagem"])
   const vtRaw       = toNum(raw["V. Total Embalagem"])
   // Fallback: recalculate when column is absent or zero
@@ -78,11 +109,11 @@ function mapRow(raw: Record<string, unknown>, unitId: string): ProdutoInsert | n
     : q_embalagem != null && v_embalagem != null ? q_embalagem * v_embalagem
     : vtRaw
 
-  return {
+  return { row: {
     unit_id:            unitId,
     fornecedor_nome:    toStr(raw["Fantasia Fornecedor"]),
     nr_danfe:           toStr(raw["Nr. DANFE"]),
-    v_total_danfe:      toNum(raw["V. Total DANFE"]),
+    v_total_danfe:      toNum(getCol(raw, "V Total DANFE", "Vlr Total DANFE", "Valor Total DANFE")),
     dt_emissao:         toStr(raw["D. Emissão"]),
     item_codigo:        toStr(raw["Item"]),
     item_descricao:     toStr(raw["Descrição do Item"]),
@@ -102,7 +133,7 @@ function mapRow(raw: Record<string, unknown>, unitId: string): ProdutoInsert | n
     desc_gerencial:     toStr(raw["Descrição C. Gerencial"]),
     mes_lancamento:     mes,
     ano_lancamento:     ano,
-  }
+  } }
 }
 
 export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
@@ -113,6 +144,13 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
   const [totalRows, setTotalRows] = useState(0)
   const [importedRows, setImportedRows] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [importUnits, setImportUnits] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    getProdutoImportUnits()
+      .then(units => setImportUnits(new Map(units.map(unit => [normalizeUnitName(unit.name), unit.id]))))
+      .catch(error => setErrorMsg(error instanceof Error ? error.message : String(error)))
+  }, [])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -141,14 +179,22 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
       const wb = XLSX.read(buf, { type: "array" })
 
       const allRows: ProdutoInsert[] = []
+      const unknownUnits = new Set<string>()
       for (const sheetName of wb.SheetNames) {
         const sheet = wb.Sheets[sheetName]
         if (!sheet) continue
         const rawRows = parseSheet(sheet)
         for (const raw of rawRows) {
-          const mapped = mapRow(raw, unitId)
-          if (mapped) allRows.push(mapped)
+          const mapped = mapRow(raw, importUnits)
+          if (mapped.row) allRows.push(mapped.row)
+          if (mapped.unknownUnit) unknownUnits.add(mapped.unknownUnit)
         }
+      }
+
+      if (unknownUnits.size) {
+        setErrorMsg(`Importação cancelada. Unidades não reconhecidas: ${[...unknownUnits].join(", ")}`)
+        setStatus("error")
+        return
       }
 
       if (allRows.length === 0) {
@@ -157,10 +203,10 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
         return
       }
 
-      // Group by month so we can delete-then-insert per month (avoids ON CONFLICT duplicates)
+      // Cada unidade e período é reconstruído isoladamente.
       const byMonth = new Map<string, ProdutoInsert[]>()
       for (const row of allRows) {
-        const key = `${row.ano_lancamento}-${row.mes_lancamento}`
+        const key = `${row.unit_id}-${row.ano_lancamento}-${row.mes_lancamento}`
         const bucket = byMonth.get(key) ?? []
         bucket.push(row)
         byMonth.set(key, bucket)
@@ -172,9 +218,9 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
       const BATCH = 500
       let imported = 0
       for (const rows of byMonth.values()) {
-        const { mes_lancamento: mes, ano_lancamento: ano } = rows[0]!
+        const { unit_id: rowUnitId, mes_lancamento: mes, ano_lancamento: ano } = rows[0]!
 
-        const del = await deleteProdutosMes(unitId, mes, ano)
+        const del = await deleteProdutosMes(rowUnitId, mes, ano)
         if (!del.ok) {
           setErrorMsg(del.error ?? "Erro ao limpar mês existente.")
           setStatus("error")

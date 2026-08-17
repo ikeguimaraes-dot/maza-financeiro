@@ -13,6 +13,7 @@ export type ProdutoInsert = {
   dt_emissao: string | null
   item_codigo: string | null
   item_descricao: string | null
+  cfop?: string | null
   unidade_medida: string | null
   tipo_item: string | null
   q_embalagem: number | null
@@ -29,6 +30,17 @@ export type ProdutoInsert = {
   desc_gerencial: string | null
   mes_lancamento: number
   ano_lancamento: number
+}
+
+export type ProdutoImportUnit = { id: string; name: string }
+
+export async function getProdutoImportUnits(): Promise<ProdutoImportUnit[]> {
+  await requireUser()
+  const db = createServiceClient()
+  if (!db) throw new Error("Conexao administrativa com o banco nao configurada")
+  const { data, error } = await db.from("units").select("id,name").order("name")
+  if (error) throw new Error(error.message)
+  return data ?? []
 }
 
 export type NfeImportPayload = {
@@ -202,7 +214,8 @@ export async function deleteProdutosMes(
   ano: number
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServerClient()
+    await requireUser()
+    const supabase = createServiceClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -223,18 +236,25 @@ export async function insertProdutos(
   rows: ProdutoInsert[]
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   try {
-    const supabase = await createSupabaseServerClient()
+    await requireUser()
+    const supabase = createServiceClient()
     if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
+    const deduplicated = new Map<string, ProdutoInsert>()
+    for (const row of rows) {
+      const key = `${row.unit_id}\u0000${row.nr_danfe ?? ""}\u0000${row.item_codigo ?? ""}`
+      deduplicated.set(key, row)
+    }
+    const records = [...deduplicated.values()]
     const { error, count } = await db
       .from("produtos_relatorio")
-      .insert(rows)
+      .upsert(records, { onConflict: "unit_id,nr_danfe,item_codigo" })
       .select("id", { count: "exact", head: true })
 
     if (error) return { ok: false, count: 0, error: error.message }
-    return { ok: true, count: count ?? rows.length }
+    return { ok: true, count: count ?? records.length }
   } catch (e) {
     return { ok: false, count: 0, error: String(e) }
   }
@@ -456,7 +476,7 @@ export async function getAnaliseProdutos(
     const db = supabase as any
     let q = db
       .from("produtos_relatorio")
-      .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,v_custo_compra,mes_lancamento,ano_lancamento")
+      .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,v_custo_compra,v_total_danfe,mes_lancamento,ano_lancamento")
       .eq("calcula_cmv", true)
       .limit(100000)
     if (unitId) q = q.eq("unit_id", unitId)
@@ -503,7 +523,9 @@ export async function getAnaliseProdutos(
       m.qtd   += isFinite(qtd) ? qtd : 0
       m.valor += isFinite(val) ? Math.abs(val) : 0
       // AVG(v_custo_compra): ignora null e zero (não entram na média do mês).
-      if (r.v_custo_compra != null) {
+      const danfe = r.v_total_danfe != null ? Number(r.v_total_danfe) : null
+      const bonificacao = danfe != null && isFinite(danfe) && (danfe === 0 || danfe === 0.01)
+      if (!bonificacao && r.v_custo_compra != null) {
         const cc = Number(r.v_custo_compra)
         if (isFinite(cc) && cc !== 0) { m.custoSum += cc; m.custoN++ }
       }
@@ -534,4 +556,88 @@ export async function getAnaliseProdutos(
   } catch {
     return []
   }
+}
+
+export type ProdutoCompra = {
+  id: number
+  nr_danfe: string | null
+  cfop: string | null
+  dt_emissao: string | null
+  fornecedor_nome: string | null
+  item_descricao: string | null
+  q_embalagem: number | null
+  v_custo_compra: number | null
+  v_total_embalagem: number | null
+  v_total_danfe: number | null
+  calcula_cmv: boolean | null
+  mes_lancamento: number
+  ano_lancamento: number
+}
+
+async function getProdutosDb() {
+  const supabase = await createSupabaseServerClient()
+  if (!supabase) throw new Error("Sem conexao com banco")
+  return supabase as any
+}
+
+export async function getBonificacoes(unitId: string | null): Promise<ProdutoCompra[]> {
+  try {
+    const db = await getProdutosDb()
+    let query = db.from("produtos_relatorio")
+      .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
+      .or("cfop.in.(5910,6910),v_total_danfe.eq.0,v_total_danfe.eq.0.01")
+      .order("id", { ascending: false }).limit(5000)
+    if (unitId) query = query.eq("unit_id", unitId)
+    const { data, error } = await query
+    if (error) throw error
+    return data ?? []
+  } catch { return [] }
+}
+
+export async function getFornecedoresLista(unitId: string | null, mes: number, ano: number): Promise<string[]> {
+  try {
+    const db = await getProdutosDb()
+    let query = db.from("produtos_relatorio").select("fornecedor_nome")
+      .eq("mes_lancamento", mes).eq("ano_lancamento", ano)
+      .not("fornecedor_nome", "is", null).limit(50000)
+    if (unitId) query = query.eq("unit_id", unitId)
+    const { data, error } = await query
+    if (error) throw error
+    return [...new Set<string>((data ?? []).map((row: { fornecedor_nome: string }) => row.fornecedor_nome))]
+      .sort((a, b) => a.localeCompare(b, "pt-BR"))
+  } catch { return [] }
+}
+
+export async function getComprasPorFornecedor(unitId: string | null, fornecedor: string, mes: number, ano: number): Promise<ProdutoCompra[]> {
+  try {
+    const db = await getProdutosDb()
+    let query = db.from("produtos_relatorio")
+      .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
+      .eq("fornecedor_nome", fornecedor).eq("mes_lancamento", mes).eq("ano_lancamento", ano)
+      .order("id", { ascending: false }).limit(10000)
+    if (unitId) query = query.eq("unit_id", unitId)
+    const { data, error } = await query
+    if (error) throw error
+    return data ?? []
+  } catch { return [] }
+}
+
+export async function getNotasARevisar(unitId: string | null): Promise<ProdutoCompra[]> {
+  try {
+    const db = await getProdutosDb()
+    let candidates = db.from("produtos_relatorio").select("nr_danfe")
+      .eq("v_custo_compra", 0).gt("v_total_danfe", 0.01).not("nr_danfe", "is", null).limit(20000)
+    if (unitId) candidates = candidates.eq("unit_id", unitId)
+    const { data: candidateRows, error: candidateError } = await candidates
+    if (candidateError) throw candidateError
+    const danfes = [...new Set<string>((candidateRows ?? []).map((row: { nr_danfe: string }) => row.nr_danfe))]
+    if (!danfes.length) return []
+    let query = db.from("produtos_relatorio")
+      .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
+      .in("nr_danfe", danfes).order("fornecedor_nome").order("nr_danfe").limit(50000)
+    if (unitId) query = query.eq("unit_id", unitId)
+    const { data, error } = await query
+    if (error) throw error
+    return data ?? []
+  } catch { return [] }
 }
