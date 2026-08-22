@@ -9,6 +9,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import { VENDA_PROMPT, parsePdf } from "@/lib/lorean/vendaExtract";
+import { parseSalesSpreadsheets } from "@/lib/vendas/spreadsheet-parser";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -325,13 +326,35 @@ async function processMovimento(supabase: Supa, periodoId: string, file: File) {
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
+async function processSpreadsheets(supabase: Supa, periodoId: string, files: File[]) {
+  const parsed = parseSalesSpreadsheets(await Promise.all(files.map(async (file) => ({ name: file.name, data: await file.arrayBuffer() }))));
+  const sections: Array<[string, Array<Record<string, unknown>>]> = [
+    ["vendas_consolidado_resumo", [{ periodo_id: periodoId, ...parsed.resumo }]],
+    ["vendas_consolidado_mensal", parsed.mensal.map((r) => ({ periodo_id: periodoId, ...r }))],
+    ["vendas_consolidado_turno", parsed.turno.map((r) => ({ periodo_id: periodoId, ...r }))],
+    ["vendas_consolidado_dia_semana", parsed.diaSemana.map((r) => ({ periodo_id: periodoId, ...r }))],
+    ["vendas_consolidado_ambiente", parsed.ambiente.map((r) => ({ periodo_id: periodoId, ...r }))],
+    ["vendas_consolidado_funcionarios", parsed.funcionarios.map((r) => ({ periodo_id: periodoId, ...r }))],
+  ];
+  await Promise.all(sections.map(([table]) => supabase.from(table).delete().eq("periodo_id", periodoId)));
+  for (const [table, rows] of sections) if (rows.length) {
+    const { error } = await supabase.from(table).insert(rows);
+    if (error) throw new Error(`${table}: ${error.message}`);
+  }
+  if (parsed.produtos.length) {
+    await supabase.from("vendas_consolidado_produtos").delete().eq("periodo_id", periodoId);
+    const { error } = await supabase.from("vendas_consolidado_produtos").insert(parsed.produtos.map((r) => ({ periodo_id: periodoId, ...r })));
+    if (error) throw new Error(`vendas_consolidado_produtos: ${error.message}`);
+  }
+  return parsed;
+}
+
 export async function POST(request: Request) {
   console.log("[vendas-consolidado/import] POST called");
   console.log("[vendas-consolidado] ANTHROPIC_API_KEY:", !!process.env.ANTHROPIC_API_KEY);
   console.log("[vendas-consolidado] SERVICE_ROLE:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   try {
-    if (!process.env.ANTHROPIC_API_KEY) return jsonError("ANTHROPIC_API_KEY não configurada no ambiente", 500);
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return jsonError("Supabase (URL/SERVICE_ROLE) não configurado no ambiente", 500);
     }
@@ -350,6 +373,7 @@ export async function POST(request: Request) {
     const vendaFile     = formData.get("venda") as File | null;
     const movimentoFile = formData.get("movimento") as File | null;
     const caixaFile     = formData.get("caixa") as File | null;
+    const spreadsheetFiles = formData.getAll("planilhas").filter((value): value is File => value instanceof File && value.size > 0);
 
     console.log("[vendas-consolidado/import] unit_id:", unitId, "inicio:", dataInicio, "fim:", dataFim,
       "venda:", vendaFile?.name, "movimento:", movimentoFile?.name, "caixa:", caixaFile?.name);
@@ -358,9 +382,10 @@ export async function POST(request: Request) {
       return jsonError("unit_id, data_inicio e data_fim são obrigatórios", 400);
     }
     // Todos os PDFs são opcionais — exige ao menos um.
-    if (!vendaFile && !movimentoFile && !caixaFile) {
-      return jsonError("Selecione ao menos um PDF (Movimento, Venda ou Caixa)", 400);
+    if (!vendaFile && !movimentoFile && !caixaFile && !spreadsheetFiles.length) {
+      return jsonError("Selecione ao menos um PDF ou planilha Excel", 400);
     }
+    if ((vendaFile || movimentoFile) && !process.env.ANTHROPIC_API_KEY) return jsonError("ANTHROPIC_API_KEY não configurada no ambiente", 500);
 
     let supabase: Supa;
     try {
@@ -374,6 +399,14 @@ export async function POST(request: Request) {
     const periodoId = await upsertPeriodo(supabase, unitId, dataInicio, dataFim, label);
 
     const resultado: Record<string, unknown> = { periodo_id: periodoId };
+
+    if (spreadsheetFiles.length) {
+      const excel = await processSpreadsheets(supabase, periodoId, spreadsheetFiles);
+      resultado.planilhas = excel.files;
+      resultado.pedidos = excel.orders;
+      resultado.produtos = excel.products;
+      resultado.movimento = true;
+    }
 
     if (vendaFile) {
       console.log("[vc] processando PDF de Venda");

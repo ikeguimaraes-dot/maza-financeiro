@@ -124,6 +124,7 @@ export default function AnaliseVendasPage() {
   const [movFile, setMovFile] = useState<File | null>(null);
   const [vendaFile, setVendaFile] = useState<File | null>(null);
   const [caixaFile, setCaixaFile] = useState<File | null>(null);
+  const [spreadsheetFiles, setSpreadsheetFiles] = useState<File[]>([]);
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
   const [label, setLabel] = useState("");
@@ -132,6 +133,7 @@ export default function AnaliseVendasPage() {
   const movRef = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
   const caixaRef = useRef<HTMLInputElement>(null);
+  const spreadsheetsRef = useRef<HTMLInputElement>(null);
 
   async function loadData(periodoId?: string | null) {
     if (!unit) return;
@@ -167,11 +169,11 @@ export default function AnaliseVendasPage() {
     loadData(id);
   }
 
-  const algumPdf = !!movFile || !!vendaFile || !!caixaFile;
+  const algumArquivo = !!movFile || !!vendaFile || !!caixaFile || spreadsheetFiles.length > 0;
 
   async function handleImport() {
     if (!unit) return;
-    if (!algumPdf) { setImportMsg({ ok: false, text: "Selecione ao menos um PDF (Movimento, Venda ou Caixa)." }); return; }
+    if (!algumArquivo) { setImportMsg({ ok: false, text: "Selecione ao menos um PDF ou planilha Excel." }); return; }
     if (!dataInicio || !dataFim) { setImportMsg({ ok: false, text: "Informe data de início e fim." }); return; }
     setImporting(true); setImportMsg(null);
     try {
@@ -183,6 +185,7 @@ export default function AnaliseVendasPage() {
       if (vendaFile) fd.append("venda", vendaFile);
       if (movFile) fd.append("movimento", movFile);
       if (caixaFile) fd.append("caixa", caixaFile);
+      spreadsheetFiles.forEach((file) => fd.append("planilhas", file));
       const res = await fetch(`${API_BASE}/api/vendas-consolidado/import`, { method: "POST", body: fd });
       const json = await res.json();
       if (json.success) {
@@ -190,7 +193,7 @@ export default function AnaliseVendasPage() {
         if (json.produtos != null) partes.push(`${json.produtos} produtos`);
         if (json.movimento) partes.push("resumo operacional");
         setImportMsg({ ok: true, text: `Importado: ${partes.join(" + ") || "ok"}.` });
-        setMovFile(null); setVendaFile(null); setCaixaFile(null);
+        setMovFile(null); setVendaFile(null); setCaixaFile(null); setSpreadsheetFiles([]);
         setDataInicio(""); setDataFim(""); setLabel("");
         setShowImport(false);
         await loadData(json.periodo_id);
@@ -366,13 +369,15 @@ export default function AnaliseVendasPage() {
                 style={{ ...selectStyle, cursor: "text", width: "100%" }} />
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 16 }}>
+            <SpreadsheetSlot inputRef={spreadsheetsRef} files={spreadsheetFiles} onChange={setSpreadsheetFiles} />
             <FileSlot label="Movimento (opcional)" inputRef={movRef}   file={movFile}   onChange={setMovFile} />
             <FileSlot label="Venda (opcional)"     inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
             <FileSlot label="Caixa (opcional)"     inputRef={caixaRef} file={caixaFile} onChange={setCaixaFile} />
           </div>
           <p style={{ fontSize: 11, color: C.text3, margin: "0 0 12px" }}>
-            Todos os PDFs são opcionais — selecione ao menos um. Venda → produtos; Movimento → resumo operacional e seções.
+            Selecione várias planilhas de uma vez. O sistema reconhece Relatório Geral de Vendas e relatórios Keeta de pedido/restaurante, elimina arquivos e pedidos repetidos e consolida o período.
+            PDFs continuam opcionais: Venda → produtos; Movimento → resumo operacional e seções.
             Subir um PDF depois anexa ao mesmo período sem apagar o que já foi importado.
           </p>
           {importMsg && (
@@ -385,11 +390,11 @@ export default function AnaliseVendasPage() {
               {importMsg.ok ? "✓ " : "✗ "}{importMsg.text}
             </div>
           )}
-          <button disabled={importing || !algumPdf || !dataInicio || !dataFim} onClick={handleImport} style={{
+          <button disabled={importing || !algumArquivo || !dataInicio || !dataFim} onClick={handleImport} style={{
             padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: importing ? C.surface3 : C.brand, color: importing ? C.text3 : "#fff",
             border: "none", cursor: importing ? "not-allowed" : "pointer",
-            opacity: (!algumPdf || !dataInicio || !dataFim) ? 0.4 : 1,
+            opacity: (!algumArquivo || !dataInicio || !dataFim) ? 0.4 : 1,
           }}>
             {importing ? "Processando…" : "Processar e importar"}
           </button>
@@ -827,6 +832,27 @@ function ParticipacaoCards({ title, rows }: {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function SpreadsheetSlot({ inputRef, files, onChange }: {
+  inputRef: React.RefObject<HTMLInputElement | null>; files: File[]; onChange: (files: File[]) => void;
+}) {
+  return (
+    <div>
+      <label style={labelStyle}>Planilhas de vendas</label>
+      <input ref={inputRef} type="file" accept=".xlsx,.xls" multiple style={{ display: "none" }}
+        onChange={(e) => onChange(Array.from(e.target.files ?? []))} />
+      <button onClick={() => inputRef.current?.click()} style={{
+        width: "100%", padding: "16px 12px", borderRadius: 8, fontSize: 12,
+        background: files.length ? "rgba(52,211,153,0.08)" : C.surface2,
+        color: files.length ? C.receita : C.text3,
+        border: `1px dashed ${files.length ? "rgba(52,211,153,0.4)" : C.border}`,
+        cursor: "pointer", textAlign: "center",
+      }}>
+        {files.length ? `✓ ${files.length} planilha${files.length > 1 ? "s" : ""} selecionada${files.length > 1 ? "s" : ""}` : "Selecionar planilhas Excel"}
+      </button>
     </div>
   );
 }
