@@ -184,9 +184,11 @@ export default function ReceitaPage() {
   const movRef   = useRef<HTMLInputElement>(null);
   const vendaRef = useRef<HTMLInputElement>(null);
   const caixasRef = useRef<HTMLInputElement>(null);
+  const excelRef = useRef<HTMLInputElement>(null);
   const [movFile,   setMovFile]   = useState<File | null>(null);
   const [vendaFile, setVendaFile] = useState<File | null>(null);
   const [caixaFiles, setCaixaFiles] = useState<File[]>([]);
+  const [excelFiles, setExcelFiles] = useState<File[]>([]);
   const [importing,     setImporting]     = useState(false);
   const [importMsg,     setImportMsg]     = useState<{ ok: boolean; text: string } | null>(null);
   const [importProgress, setImportProgress] = useState<string>("");
@@ -260,9 +262,18 @@ export default function ReceitaPage() {
         if (json.errors?.length) allErrors.push(...json.errors);
         if (json.workday_id) workdayId = json.workday_id;
       }
+      if (excelFiles.length) {
+        setImportProgress(`Importando ${excelFiles.length} planilha(s) Excel…`);
+        const fd = new FormData();
+        fd.append("unit_id", unit.id);
+        excelFiles.forEach((file) => fd.append("arquivos", file));
+        const response = await fetch(`${API_BASE}/api/lorean/import-sales-xlsx`, { method: "POST", body: fd });
+        const json = await response.json();
+        if (!response.ok) allErrors.push(json.error ?? `Excel: HTTP ${response.status}`);
+      }
       if (!allErrors.length) {
         setImportMsg({ ok: true, text: "Importado com sucesso!" });
-        setMovFile(null); setVendaFile(null); setCaixaFiles([]); setShowImport(false);
+        setMovFile(null); setVendaFile(null); setCaixaFiles([]); setExcelFiles([]); setShowImport(false);
         await loadData();
       } else { setImportMsg({ ok: false, text: allErrors.join(" | ") }); }
     } catch (e) { setImportMsg({ ok: false, text: String(e) }); }
@@ -425,7 +436,7 @@ export default function ReceitaPage() {
             background: showImport ? C.surface3 : C.brand, color: showImport ? C.text : "#fff",
             border: "none", cursor: "pointer",
           }}>
-            {showImport ? "Fechar" : "Importar PDFs"}
+            {showImport ? "Fechar" : "Importar arquivos"}
           </button>
           <Link href="/financeiro/dre/receita/import-lote" prefetch={false} style={{
             padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
@@ -440,11 +451,14 @@ export default function ReceitaPage() {
       {/* Import panel */}
       {showImport && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Importar relatórios Lorean</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Importar relatórios PDF ou Excel</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
             <FileSlot label="Movimento" accept=".pdf" inputRef={movRef}   file={movFile}   onChange={setMovFile} />
             <FileSlot label="Venda"     accept=".pdf" inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
             <MultiFileSlot label="Caixa(s)" accept=".pdf" inputRef={caixasRef} files={caixaFiles} onChange={setCaixaFiles} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <MultiFileSlot label="Relatório Geral de Vendas (Excel)" accept=".xlsx,.xls" inputRef={excelRef} files={excelFiles} onChange={setExcelFiles} />
           </div>
           {importProgress && <p style={{ fontSize: 13, color: C.text3, marginBottom: 12 }}>⏳ {importProgress}</p>}
           {importMsg && (
@@ -457,11 +471,11 @@ export default function ReceitaPage() {
               {importMsg.ok ? "✓ " : "✗ "}{importMsg.text}
             </div>
           )}
-          <button disabled={importing || (!movFile && !vendaFile && !caixaFiles.length)} onClick={handleImport} style={{
+          <button disabled={importing || (!movFile && !vendaFile && !caixaFiles.length && !excelFiles.length)} onClick={handleImport} style={{
             padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: importing ? C.surface3 : C.brand, color: importing ? C.text3 : "#fff",
             border: "none", cursor: importing ? "not-allowed" : "pointer",
-            opacity: (!movFile && !vendaFile && !caixaFiles.length) ? 0.4 : 1,
+            opacity: (!movFile && !vendaFile && !caixaFiles.length && !excelFiles.length) ? 0.4 : 1,
           }}>
             {importing ? "Processando…" : "Processar e importar"}
           </button>
@@ -473,7 +487,7 @@ export default function ReceitaPage() {
       {!loading && !hasData && (
         <div style={{ textAlign: "center", padding: "60px 0", color: C.text3, fontSize: 14 }}>
           {dbError ? <span style={{ color: C.alerta }}>Erro: {dbError}</span>
-            : <>Sem dados para {mesLabel}. Importe os PDFs do Lorean.</>}
+            : <>Sem dados para {mesLabel}. Importe PDFs do Lorean ou o Relatório Geral de Vendas em Excel.</>}
         </div>
       )}
 
