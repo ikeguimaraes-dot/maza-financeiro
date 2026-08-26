@@ -20,6 +20,20 @@ const API_BASE =
     ? ""
     : "/financeiro";
 
+async function fetchApiJson<T>(path: string, init?: RequestInit): Promise<{ response: Response; json: T }> {
+  const bases = API_BASE ? [API_BASE, ""] : ["", "/financeiro"];
+  let lastError = "API indisponível";
+  for (const base of bases) {
+    const response = await fetch(`${base}${path}`, init);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      return { response, json: await response.json() as T };
+    }
+    lastError = `A API respondeu HTTP ${response.status} em ${base || "direto"}`;
+  }
+  throw new Error(`${lastError}. Atualize a página e tente novamente.`);
+}
+
 // ── Color tokens ─────────────────────────────────────────────────────────────
 const C = {
   receita:  "#34d399",
@@ -203,8 +217,7 @@ export default function ReceitaPage() {
     const end   = new Date(ano, mes, 0).toISOString().split("T")[0]!;
     try {
       const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: `${ano}-${mm}` });
-      const res  = await fetch(`${API_BASE}/api/lorean/workdays?${params}`);
-      const json = await res.json();
+      const { response: res, json } = await fetchApiJson<any>(`/api/lorean/workdays?${params}`);
       if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
       if ((json.workdays?.length ?? 0) === 0 && json.latestDataDate) {
         const [latestYear, latestMonth] = String(json.latestDataDate).split("-").map(Number);
@@ -257,7 +270,7 @@ export default function ReceitaPage() {
         fd.append("tipo", tipo); fd.append("arquivo", arquivo); fd.append("unit_id", unit.id);
         if (workdayId) fd.append("workday_id", workdayId);
         let json: { success: boolean; workday_id?: string | null; errors?: string[] };
-        try { const r = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd }); json = await r.json(); }
+        try { ({ json } = await fetchApiJson<typeof json>("/api/lorean/import", { method: "POST", body: fd })); }
         catch (e) { allErrors.push(`${label}: ${String(e)}`); continue; }
         if (json.errors?.length) allErrors.push(...json.errors);
         if (json.workday_id) workdayId = json.workday_id;
@@ -267,8 +280,7 @@ export default function ReceitaPage() {
         const fd = new FormData();
         fd.append("unit_id", unit.id);
         excelFiles.forEach((file) => fd.append("arquivos", file));
-        const response = await fetch(`${API_BASE}/api/lorean/import-sales-xlsx`, { method: "POST", body: fd });
-        const json = await response.json();
+        const { response, json } = await fetchApiJson<{ error?: string }>("/api/lorean/import-sales-xlsx", { method: "POST", body: fd });
         if (!response.ok) allErrors.push(json.error ?? `Excel: HTTP ${response.status}`);
       }
       if (!allErrors.length) {
@@ -286,11 +298,10 @@ export default function ReceitaPage() {
     setSavingMetas(true); setMetaSaveMsg(null);
     try {
       const overrides = Array.from(metaEdits.entries()).map(([data, meta]) => ({ data, meta }));
-      const res = await fetch(`${API_BASE}/api/lorean/metas`, {
+      const { response: res, json } = await fetchApiJson<{ error?: string }>("/api/lorean/metas", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ unit_id: unit.id, overrides }),
       });
-      const json = await res.json();
       if (!res.ok) { setMetaSaveMsg({ ok: false, text: json.error ?? `HTTP ${res.status}` }); }
       else { setMetaSaveMsg({ ok: true, text: "Metas salvas!" }); setMetaEdits(new Map()); await loadData(); }
     } catch (e) { setMetaSaveMsg({ ok: false, text: String(e) }); }
