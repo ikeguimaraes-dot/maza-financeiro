@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createSupabaseServerClient } from "@kph/db/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,13 +27,6 @@ export function OPTIONS(request: Request) {
   return new Response(null, { headers: corsHeaders(request) });
 }
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  if (!url || !key) throw new Error("Supabase env vars not set");
-  return createClient(url, key);
-}
-
 export async function GET(request: Request) {
   const CORS = corsHeaders(request);
   const { searchParams } = new URL(request.url);
@@ -46,9 +39,11 @@ export async function GET(request: Request) {
     return Response.json({ error: "unit_id, start e end são obrigatórios" }, { status: 400, headers: CORS });
   }
 
-  let db: ReturnType<typeof getServiceClient>;
+  // As tabelas Lorean ainda não constam no tipo Database compartilhado.
+  let db: any;
   try {
-    db = getServiceClient();
+    db = await createSupabaseServerClient();
+    if (!db) throw new Error("Supabase env vars not set");
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500, headers: CORS });
   }
