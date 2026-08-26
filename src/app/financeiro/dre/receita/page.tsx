@@ -12,7 +12,13 @@ import {
 import { useUnit } from "@kph/auth/context";
 import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
 
-const API_BASE = "/financeiro";
+// Pelo shell, as APIs passam pelo rewrite /financeiro/api/*. No domínio direto
+// do sub-app (e no dev :3001), os Route Handlers vivem em /api/*.
+const API_BASE =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "maza-financeiro.vercel.app" || window.location.port === "3001")
+    ? ""
+    : "/financeiro";
 
 // ── Color tokens ─────────────────────────────────────────────────────────────
 const C = {
