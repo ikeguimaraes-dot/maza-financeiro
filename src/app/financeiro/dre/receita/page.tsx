@@ -198,6 +198,14 @@ export default function ReceitaPage() {
       const res  = await fetch(`${API_BASE}/api/lorean/workdays?${params}`);
       const json = await res.json();
       if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
+      if ((json.workdays?.length ?? 0) === 0 && json.latestDataDate) {
+        const [latestYear, latestMonth] = String(json.latestDataDate).split("-").map(Number);
+        if (latestYear && latestMonth && (latestYear !== ano || latestMonth !== mes)) {
+          setAno(latestYear);
+          setMes(latestMonth);
+          return;
+        }
+      }
       setWorkdays(json.workdays         ?? []);
       setPagamentos(json.pagamentos     ?? []);
       setDescontos(json.descontos       ?? []);

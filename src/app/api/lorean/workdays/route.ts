@@ -66,7 +66,14 @@ export async function GET(request: Request) {
   const ids: string[] = (workdays ?? []).map((w: any) => w.id);
 
   if (ids.length === 0) {
-    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], horarios: [], usuarios: [], caixas: [], produtosDia: [], descontosDetalhe: [], cancelamentos: [], cancelamentosDetalhe: [], meta: null, metasDiaSemana: [], metasOverride: [] }, { headers: CORS });
+    const { data: latestWorkday } = await db
+      .from("lorean_workdays")
+      .select("data")
+      .eq("unit_id", unit_id)
+      .order("data", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return Response.json({ workdays: [], pagamentos: [], descontos: [], ambientes: [], turnos: [], grupos: [], horarios: [], usuarios: [], caixas: [], produtosDia: [], descontosDetalhe: [], cancelamentos: [], cancelamentosDetalhe: [], meta: null, metasDiaSemana: [], metasOverride: [], latestDataDate: latestWorkday?.data ?? null }, { headers: CORS });
   }
 
   const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes, prodRes, descDetRes, cancelRes, cancelDetRes] = await Promise.all([

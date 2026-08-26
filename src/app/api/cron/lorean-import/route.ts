@@ -1,8 +1,11 @@
 export const runtime = "nodejs"
 export const maxDuration = 300
 
-const EDGE_FN_URL =
-  "https://iqgrvptrtphvbmvrqntm.supabase.co/functions/v1/process-lorean-emails?limit=1"
+function getEdgeFunctionUrl() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL não configurada")
+  return `${supabaseUrl.replace(/\/$/, "")}/functions/v1/process-lorean-emails?limit=1`
+}
 const MAX_ITERATIONS = 6
 
 export async function GET(req: Request) {
@@ -16,6 +19,13 @@ export async function GET(req: Request) {
 
   console.log("[cron] iniciando loop de processamento")
 
+  let edgeFunctionUrl: string
+  try {
+    edgeFunctionUrl = getEdgeFunctionUrl()
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 500 })
+  }
+
   const detail: object[] = []
   let iterations = 0
   let total_processed = 0
@@ -23,7 +33,7 @@ export async function GET(req: Request) {
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     iterations++
 
-    const res = await fetch(EDGE_FN_URL, {
+    const res = await fetch(edgeFunctionUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
