@@ -261,7 +261,7 @@ export default function ReceitaPage() {
     if (vendaFile) steps.push({ tipo: "venda",     arquivo: vendaFile, label: "Venda" });
     caixaFiles.forEach((f, i) =>
       steps.push({ tipo: "caixa", arquivo: f, label: `Caixa${caixaFiles.length > 1 ? ` ${i + 1}` : ""}` }));
-    const allErrors: string[] = []; let workdayId: string | null = null;
+    const allErrors: string[] = []; const importSummaries: string[] = []; let workdayId: string | null = null;
     try {
       for (let i = 0; i < steps.length; i++) {
         const { tipo, arquivo, label } = steps[i]!;
@@ -280,11 +280,12 @@ export default function ReceitaPage() {
         const fd = new FormData();
         fd.append("unit_id", unit.id);
         excelFiles.forEach((file) => fd.append("arquivos", file));
-        const { response, json } = await fetchApiJson<{ error?: string }>("/api/lorean/import-sales-xlsx", { method: "POST", body: fd });
+        const { response, json } = await fetchApiJson<{ error?: string; pedidos?: number; dias?: number; total_bruto?: number }>("/api/lorean/import-sales-xlsx", { method: "POST", body: fd });
         if (!response.ok) allErrors.push(json.error ?? `Excel: HTTP ${response.status}`);
+        else importSummaries.push(`${json.pedidos ?? 0} pedidos · ${json.dias ?? 0} dias · ${fmt(json.total_bruto ?? 0)}`);
       }
       if (!allErrors.length) {
-        setImportMsg({ ok: true, text: "Importado com sucesso!" });
+        setImportMsg({ ok: true, text: importSummaries.length ? `Importado: ${importSummaries.join(" | ")}` : "Importado com sucesso!" });
         setMovFile(null); setVendaFile(null); setCaixaFiles([]); setExcelFiles([]); setShowImport(false);
         await loadData();
       } else { setImportMsg({ ok: false, text: allErrors.join(" | ") }); }

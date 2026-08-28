@@ -88,7 +88,24 @@ export async function POST(request: Request) {
       if (paymentError) throw new Error(`lorean_pagamentos: ${paymentError.message}`);
     }
     const dates = [...days.keys()].sort();
-    return Response.json({ success: true, arquivos: files.length, pedidos: sales.size, dias: days.size, data_inicio: dates[0], data_fim: dates.at(-1) });
+    return Response.json({
+      success: true,
+      arquivos: files.length,
+      pedidos: sales.size,
+      dias: days.size,
+      data_inicio: dates[0],
+      data_fim: dates.at(-1),
+      total_bruto: rows.reduce((sum, row) => sum + row.receita_bruta, 0),
+      total_faturado: rows.reduce((sum, row) => sum + row.receita_liquida, 0),
+      dados: rows.map((row) => ({
+        data: row.data,
+        receita_bruta: row.receita_bruta,
+        receita_liquida: row.receita_liquida,
+        desconto: row.desconto,
+        clientes: row.clientes,
+        ticket_medio: row.ticket_medio,
+      })),
+    });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
