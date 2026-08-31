@@ -10,7 +10,8 @@ export async function parseFolhaPdf(file: BufferedImportFile): Promise<FolhaExtr
     const pages = result.text.split(/\n-- \d+ of \d+ --\n/)
     const rows: FolhaExtractedRow[] = []
 
-    for (const page of pages) {
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      const page = pages[pageIndex]!
       const name = page.match(/\n([A-ZÀ-Ü][A-ZÀ-Ü '.-]{3,})\nNome do Funcionário CBO/i)?.[1]?.trim()
       const admission = page.match(/Admissão:\s*(\d{2}\/\d{2}\/\d{4})[ \t]+([^\r\n]+)/i)
       const salary = page.match(/([\d.]+,\d{2})\s*\nSalário Base/i)?.[1]
@@ -19,13 +20,33 @@ export async function parseFolhaPdf(file: BufferedImportFile): Promise<FolhaExtr
 
       const role = admission?.[2]?.trim() || "NAO INFORMADO"
       const [day, month, year] = (admission?.[1] ?? "").split("/")
+      const moneyBefore = (labels: RegExp) => {
+        const match = page.match(new RegExp(`([\\d.]+,\\d{2})\\s*\\n(?:${labels.source})`, "i"))
+        return match?.[1] ? numberValue(match[1]) : 0
+      }
+      const moneyNear = (label: RegExp) => {
+        const match = page.match(new RegExp(`${label.source}[^\\n]*(?:\\n[^\\n]*){0,3}?([\\d.]+,\\d{2})`, "i"))
+        return match?.[1] ? numberValue(match[1]) : 0
+      }
+      const gorjeta = moneyNear(/gorjeta(?:s)?/i)
       rows.push({
         nome: name,
         funcao: role,
         divisao: divisionFromRole(role),
         admissao: day && month && year ? `${year}-${month}-${day}` : null,
         salarioBase: numberValue(salary),
-        totalProventos: numberValue(earnings),
+        totalProventos: moneyBefore(/Total\s+(?:de\s+)?(?:Proventos|Vencimentos)/) || numberValue(earnings),
+        totalDescontos: moneyBefore(/Total\s+(?:de\s+)?Descontos/),
+        valorLiquido: moneyBefore(/(?:Valor\s+)?L[ií]quido/),
+        baseInss: moneyBefore(/Base\s+(?:de\s+)?(?:C[aá]lc\.\s+)?INSS/),
+        baseFgts: moneyBefore(/Base\s+(?:de\s+)?(?:C[aá]lc\.\s+)?FGTS/),
+        fgtsMes: moneyBefore(/FGTS\s+(?:do\s+)?M[eê]s/),
+        baseIrrf: moneyBefore(/Base\s+(?:de\s+)?(?:C[aá]lc\.\s+)?IRRF/),
+        gorjeta,
+        verbas: gorjeta > 0 ? [{ descricao: "Gorjeta", provento: gorjeta }] : [],
+        sourceFileName: file.name,
+        sourcePage: pageIndex + 1,
+        sourceText: page,
       })
     }
 

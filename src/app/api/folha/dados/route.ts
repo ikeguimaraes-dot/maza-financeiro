@@ -46,7 +46,7 @@ export async function GET(req: Request) {
 
   const { data: folha, error: errFolha } = await supabase
     .from("dre_folha")
-    .select("id, nome, funcao, divisao, tipo, admissao, salario, custo_total, is_vaga, competencia")
+    .select("id, nome, funcao, divisao, tipo, admissao, salario, custo_total, total_proventos, total_descontos, valor_liquido, base_inss, base_fgts, fgts_mes, base_irrf, gorjeta, verbas, documento_nome, documento_pagina, documento_path, is_vaga, competencia")
     .eq("unit_id", unit_id)
     .eq("competencia", competencia)
     .eq("is_vaga", false)

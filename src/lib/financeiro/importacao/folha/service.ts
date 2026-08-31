@@ -55,7 +55,7 @@ export class ImportFolhaService {
       warnings,
     }
 
-    const imported = await this.repository.replace(document)
+    const imported = await this.repository.replace(document, bufferedFiles)
     return {
       ok: true,
       arquivos: input.files.length,
@@ -103,6 +103,18 @@ export function normalizeFolhaRow(
     admissao: item.admissao || null,
     salario: salary,
     custo_total: Number(item.totalProventos) || salary,
+    total_proventos: Number(item.totalProventos) || salary,
+    total_descontos: Number(item.totalDescontos) || 0,
+    valor_liquido: Number(item.valorLiquido) || Math.max(0, (Number(item.totalProventos) || salary) - (Number(item.totalDescontos) || 0)),
+    base_inss: Number(item.baseInss) || 0,
+    base_fgts: Number(item.baseFgts) || 0,
+    fgts_mes: Number(item.fgtsMes) || 0,
+    base_irrf: Number(item.baseIrrf) || 0,
+    gorjeta: Number(item.gorjeta) || 0,
+    verbas: item.verbas ?? [],
+    documento_nome: item.sourceFileName ?? null,
+    documento_pagina: item.sourcePage ?? null,
+    texto_origem: item.sourceText ?? null,
     is_vaga: item.isVaga ?? false,
   }
 }

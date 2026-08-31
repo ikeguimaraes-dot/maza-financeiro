@@ -22,6 +22,18 @@ interface Colaborador {
   salario: number
   custo_total: number
   is_vaga: boolean
+  total_proventos: number
+  total_descontos: number
+  valor_liquido: number
+  base_inss: number
+  base_fgts: number
+  fgts_mes: number
+  base_irrf: number
+  gorjeta: number
+  verbas: Array<{ codigo?: string; descricao: string; referencia?: string; provento?: number; desconto?: number }>
+  documento_nome: string | null
+  documento_pagina: number | null
+  documento_path: string | null
 }
 
 interface DivisaoItem {
@@ -158,6 +170,9 @@ export default function FolhaPage() {
   const [mes, setMes] = useState(now.getMonth() + 1)
   const [ano, setAno] = useState(now.getFullYear())
   const [data, setData] = useState<FolhaData | null>(null)
+  const [colaboradorAberto, setColaboradorAberto] = useState<Colaborador | null>(null)
+  const [documentoUrl, setDocumentoUrl] = useState<string | null>(null)
+  const [documentoErro, setDocumentoErro] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [buscaColab, setBuscaColab] = useState("")
@@ -233,6 +248,18 @@ export default function FolhaPage() {
   }, [data, buscaColab, sortColab])
 
   const unitLabel = unit?.name ?? "unidade atual"
+
+  useEffect(() => {
+    setDocumentoUrl(null)
+    setDocumentoErro(null)
+    if (!colaboradorAberto?.documento_path) return
+    fetchJsonWithSessionRetry(`${API_BASE}/api/folha/documento/${colaboradorAberto.id}`)
+      .then((result: { url?: string; pagina?: number; error?: string }) => {
+        if (!result.url) throw new Error(result.error ?? "PDF não encontrado")
+        setDocumentoUrl(`${result.url}#page=${result.pagina ?? 1}`)
+      })
+      .catch((error: Error) => setDocumentoErro(error.message))
+  }, [colaboradorAberto])
 
   // ── Upload de recibos em PDF ────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -666,7 +693,9 @@ export default function FolhaPage() {
                         className={`border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-gray-800/10"}`}
                       >
                         <td className="px-4 py-2.5 text-gray-200 font-medium">
-                          {c.nome}
+                          <button type="button" onClick={() => setColaboradorAberto(c)} className="text-left text-purple-300 hover:text-purple-200 hover:underline underline-offset-2">
+                            {c.nome}
+                          </button>
                         </td>
                         <td className="px-4 py-2.5 text-gray-400 max-w-[160px] truncate">
                           {c.funcao}
@@ -717,6 +746,52 @@ export default function FolhaPage() {
             </div>
           </div>
         </>
+      )}
+      {colaboradorAberto && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-5" onMouseDown={() => setColaboradorAberto(null)}>
+          <div className="w-full max-w-6xl h-[90vh] bg-[#151514] border border-gray-700 rounded-2xl overflow-hidden flex flex-col" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700/60">
+              <div>
+                <h2 className="text-base font-semibold text-gray-100">{colaboradorAberto.nome}</h2>
+                <p className="text-xs text-gray-500">{colaboradorAberto.funcao} · competência {ano}-{String(mes).padStart(2, "0")}</p>
+              </div>
+              <button type="button" onClick={() => setColaboradorAberto(null)} className="text-gray-400 hover:text-white text-xl">×</button>
+            </div>
+            <div className="grid grid-cols-[340px_1fr] min-h-0 flex-1">
+              <aside className="overflow-y-auto p-5 border-r border-gray-700/60 space-y-5">
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ["Salário base", colaboradorAberto.salario], ["Proventos", colaboradorAberto.total_proventos],
+                    ["Descontos", colaboradorAberto.total_descontos], ["Líquido", colaboradorAberto.valor_liquido],
+                    ["Gorjeta", colaboradorAberto.gorjeta], ["Base INSS", colaboradorAberto.base_inss],
+                    ["Base FGTS", colaboradorAberto.base_fgts], ["FGTS mês", colaboradorAberto.fgts_mes],
+                    ["Base IRRF", colaboradorAberto.base_irrf],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="rounded-lg bg-gray-800/50 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-gray-500">{label}</p>
+                      <p className={`mt-1 text-sm font-medium ${label === "Gorjeta" ? "text-purple-300" : "text-gray-100"}`}>{fmt(Number(value ?? 0))}</p>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">Verbas mapeadas</p>
+                  {colaboradorAberto.verbas?.length ? colaboradorAberto.verbas.map((verba, index) => (
+                    <div key={`${verba.codigo ?? verba.descricao}-${index}`} className="py-2 border-b border-gray-800 text-xs">
+                      <p className="text-gray-300">{verba.codigo ? `${verba.codigo} · ` : ""}{verba.descricao}</p>
+                      <p className="text-gray-500">{verba.provento ? `Provento ${fmt(verba.provento)}` : ""}{verba.desconto ? `Desconto ${fmt(verba.desconto)}` : ""}</p>
+                    </div>
+                  )) : <p className="text-xs text-gray-600">Sem rubricas detalhadas neste arquivo.</p>}
+                </div>
+              </aside>
+              <section className="min-w-0 bg-[#0d0d0c] flex items-center justify-center">
+                {documentoUrl ? <iframe title={`Folha de ${colaboradorAberto.nome}`} src={documentoUrl} className="w-full h-full border-0" />
+                  : documentoErro ? <p className="text-sm text-amber-400 px-6 text-center">{documentoErro}. Reimporte o PDF desta competência para vinculá-lo.</p>
+                  : colaboradorAberto.documento_path ? <p className="text-sm text-gray-500">Carregando PDF…</p>
+                  : <p className="text-sm text-gray-500 px-6 text-center">Este registro veio de planilha ou de uma importação antiga. Reimporte os PDFs para anexar o documento.</p>}
+              </section>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

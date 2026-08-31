@@ -1,19 +1,31 @@
 import "server-only"
-import { createClient } from "@supabase/supabase-js"
+import { createSupabaseServerClient } from "@kph/db/supabase/server"
 import type { FolhaImportDocument } from "./types"
+import type { BufferedImportFile } from "../core/types"
 
 export interface FolhaImportRepository {
-  replace(document: FolhaImportDocument): Promise<number>
+  replace(document: FolhaImportDocument, files: BufferedImportFile[]): Promise<number>
 }
 
 export class SupabaseFolhaImportRepository implements FolhaImportRepository {
-  async replace(document: FolhaImportDocument): Promise<number> {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !serviceRoleKey) throw new Error("Banco da Folha nao configurado.")
-
-    const supabase = createClient(url, serviceRoleKey)
+  async replace(document: FolhaImportDocument, files: BufferedImportFile[]): Promise<number> {
+    const supabase: any = await createSupabaseServerClient()
+    if (!supabase) throw new Error("Banco da Folha nao configurado.")
     const { unitId, competence, payload } = document
+
+    const documentPaths = new Map<string, string>()
+    for (const file of files.filter((item) => item.format === "pdf")) {
+      const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "-")
+      const path = `${unitId}/${competence}/${Date.now()}-${safeName}`
+      const { error: uploadError } = await supabase.storage.from("folha-documentos").upload(path, file.bytes, { contentType: file.mimeType, upsert: false })
+      if (uploadError) throw new Error(`PDF ${file.name}: ${uploadError.message}`)
+      documentPaths.set(file.name, path)
+    }
+
+    const rows = payload.rows.map((row) => ({
+      ...row,
+      documento_path: row.documento_nome ? documentPaths.get(row.documento_nome) ?? null : null,
+    }))
 
     // Mantem a semantica atual. A troca atomica sera feita por RPC em uma
     // migration separada para nao introduzir risco de banco nesta etapa.
@@ -26,7 +38,7 @@ export class SupabaseFolhaImportRepository implements FolhaImportRepository {
 
     const { data: inserted, error: insertError } = await supabase
       .from("dre_folha")
-      .insert(payload.rows)
+      .insert(rows)
       .select("id")
     if (insertError) throw new Error(insertError.message)
     if ((inserted?.length ?? 0) !== payload.rows.length) {
