@@ -141,7 +141,7 @@ export function normalizeFolhaRow(
   return {
     unit_id: unitId,
     competencia: competence,
-    tipo: item.tipo || "CLT",
+    tipo: (item.tipo || "CLT").slice(0, 10),
     nome: item.nome?.trim() || "NAO INFORMADO",
     funcao: item.funcao?.trim() || "NAO INFORMADO",
     divisao: item.divisao?.trim().toUpperCase() || "NAO INFORMADO",

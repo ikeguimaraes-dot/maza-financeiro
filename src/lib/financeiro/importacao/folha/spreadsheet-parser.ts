@@ -70,7 +70,7 @@ function parsePaymentControl(workbook: XLSX.WorkBook, fileName: string, competen
       if (typeof row[0] !== "number" || !nome) continue
       const key = normalize(nome)
       const current = employees.get(key) ?? {
-        nome, tipo: "FOLHA INTERNA", salarioBase: 0, totalProventos: 0,
+        nome, tipo: "INTERNO", salarioBase: 0, totalProventos: 0,
         totalDescontos: 0, valorLiquido: 0, verbas: [], sourceFileName: fileName,
       }
       const valorLiquido = numberValue(row[2]), presente = numberValue(row[3])
