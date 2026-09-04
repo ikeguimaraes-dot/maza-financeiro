@@ -147,7 +147,9 @@ export async function getTitulosAPagar(
   competencia: string,
   unitId?: string | null,
 ): Promise<TituloComUnidade[]> {
-  const ops = createOperationsClient();
+  // Esta tabela possui RLS por unidade. A consulta deve carregar a sessão do
+  // usuário para que kph_has_role_for_unit(unit_id) seja avaliada corretamente.
+  const ops = await createSupabaseServerClient();
   if (!ops) return [];
 
   let query = ops
