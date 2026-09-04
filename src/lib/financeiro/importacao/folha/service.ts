@@ -83,8 +83,34 @@ export class ImportFolhaService {
         })
       }
     }
-    return results.flatMap((result) => result.rows)
+    const unique = new Map<string, FolhaExtractedRow>()
+    for (const row of results.flatMap((result) => result.rows)) {
+      const key = normalizeEmployeeName(row.nome ?? "")
+      const current = unique.get(key)
+      if (!current) {
+        unique.set(key, row)
+        continue
+      }
+
+      const existingCodes = new Set((current.verbas ?? []).map((item) => `${item.codigo ?? ""}|${item.descricao}|${item.provento ?? ""}|${item.desconto ?? ""}`))
+      const extraVerbas = (row.verbas ?? []).filter((item) => !existingCodes.has(`${item.codigo ?? ""}|${item.descricao}|${item.provento ?? ""}|${item.desconto ?? ""}`))
+      current.verbas = [...(current.verbas ?? []), ...extraVerbas]
+      current.salarioBase = Math.max(current.salarioBase ?? 0, row.salarioBase ?? 0)
+      current.gorjeta = Math.max(current.gorjeta ?? 0, row.gorjeta ?? 0)
+      current.totalProventos = Math.max(current.totalProventos ?? 0, row.totalProventos ?? 0)
+      current.totalDescontos = Math.max(current.totalDescontos ?? 0, row.totalDescontos ?? 0)
+      current.valorLiquido = Math.max(current.valorLiquido ?? 0, row.valorLiquido ?? 0)
+      current.baseInss = Math.max(current.baseInss ?? 0, row.baseInss ?? 0)
+      current.baseFgts = Math.max(current.baseFgts ?? 0, row.baseFgts ?? 0)
+      current.fgtsMes = Math.max(current.fgtsMes ?? 0, row.fgtsMes ?? 0)
+      current.baseIrrf = Math.max(current.baseIrrf ?? 0, row.baseIrrf ?? 0)
+    }
+    return [...unique.values()]
   }
+}
+
+function normalizeEmployeeName(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase()
 }
 
 export function normalizeFolhaRow(

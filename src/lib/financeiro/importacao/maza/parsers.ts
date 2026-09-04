@@ -1,0 +1,107 @@
+import type * as XLSX from "xlsx"
+import { isoDate, matrix, money, normalized, text } from "./normalizers"
+import type { ContaPagarRow, ImportWarning, NfEntradaRow, ReceitaCaixaRow } from "./types"
+
+export function parseNfEntrada(wb: XLSX.WorkBook, file: string, warnings: ImportWarning[]): NfEntradaRow[] {
+  const result: NfEntradaRow[] = []
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName]; if (!sheet) continue
+    for (const [index, row] of matrix(sheet).entries()) {
+      const fornecedor = text(row[0]), dataEntrada = isoDate(row[1]), produto = text(row[3])
+      if (!fornecedor || !dataEntrada || !produto || normalized(fornecedor) === "FORNECEDOR") continue
+      const valorTotal = money(row[4])
+      if (valorTotal <= 0) {
+        warnings.push({ code: "NF_WITHOUT_VALUE", message: "Entrada ignorada por não possuir valor positivo.", file, sheet: sheetName, row: index + 1 })
+        continue
+      }
+      result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada, numeroNf: text(row[2]) || null,
+        produto, valorTotal, observacao: text(row[5]) || null, desconto: money(row[6]), pedido: text(row[7]) || null })
+    }
+  }
+  return result
+}
+
+export function parseContasPagar(wb: XLSX.WorkBook, file: string, warnings: ImportWarning[]): ContaPagarRow[] {
+  const result: ContaPagarRow[] = []
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName]; if (!sheet) continue
+    for (const [index, row] of matrix(sheet).entries()) {
+      const fornecedor = text(row[0]), vencimento = isoDate(row[6])
+      if (!fornecedor || !vencimento || normalized(fornecedor).startsWith("FORNECEDOR")) continue
+      const valorParcela = money(row[7])
+      if (valorParcela <= 0) {
+        warnings.push({ code: "PAYABLE_WITHOUT_VALUE", message: "Conta ignorada por não possuir valor de parcela positivo.", file, sheet: sheetName, row: index + 1 })
+        continue
+      }
+      result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada: isoDate(row[1]), numeroNf: text(row[2]) || null,
+        categoria: text(row[3]) || null, valorTotalNf: money(row[4]), parcela: text(row[5]) || null,
+        vencimento, valorParcela, liquidacao: text(row[8]) || null })
+    }
+  }
+  return result
+}
+
+function shift(value: unknown): ReceitaCaixaRow["turno"] {
+  const key = normalized(value)
+  if (key.includes("ALMOCO")) return "almoco"
+  if (key.includes("JANT")) return "jantar"
+  return "nao_informado"
+}
+
+function expectedPeriod(file: string): string | null {
+  const key = normalized(file)
+  const months: Array<[string, string]> = [["JANEIRO", "01"], ["FEVEREIRO", "02"], ["MARCO", "03"], ["ABRIL", "04"],
+    ["MAIO", "05"], ["JUNHO", "06"], ["JULHO", "07"], ["AGOSTO", "08"], ["SETEMBRO", "09"], ["OUTUBRO", "10"],
+    ["NOVEMBRO", "11"], ["DEZEMBRO", "12"]]
+  const month = months.find(([name]) => key.includes(name))?.[1]
+  const year = key.match(/20\d{2}/)?.[0]
+  return month && year ? `${year}-${month}` : null
+}
+
+export function parseReceita(wb: XLSX.WorkBook, file: string, warnings: ImportWarning[]): ReceitaCaixaRow[] {
+  const result: ReceitaCaixaRow[] = []
+  const period = expectedPeriod(file)
+  for (const sheetName of wb.SheetNames.filter((name) => normalized(name) !== "RESUMO")) {
+    const sheet = wb.Sheets[sheetName]; if (!sheet) continue
+    const rows = matrix(sheet)
+    for (let start = 0; start < rows.length; start++) {
+      let data = isoDate(rows[start]?.[0]); if (!data) continue
+      let end = start + 1
+      while (end < rows.length && !isoDate(rows[end]?.[0])) end++
+      const block = rows.slice(start, end)
+      if (period && !data.startsWith(period)) {
+        const corrected = `${period}-${data.slice(-2)}`
+        const parsed = new Date(`${corrected}T12:00:00Z`)
+        if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== corrected) {
+          warnings.push({ code: "INVALID_DATE_FOR_PERIOD", message: `Data ${data} não pode ser ajustada para a competência ${period}; turno ignorado.`, file, sheet: sheetName, row: start + 1 })
+          start = end - 1
+          continue
+        }
+        warnings.push({ code: "DATE_PERIOD_CORRECTED", message: `Competência da data corrigida de ${data} para ${corrected} conforme o nome do arquivo.`, file, sheet: sheetName, row: start + 1 })
+        data = corrected
+      }
+      const total = (label: RegExp) => {
+        const row = block.find((item) => label.test(normalized(item[3])))
+        return row ? money(row[2]) : 0
+      }
+      const serviceRow = block.find((item) => /TOTAL VENDA S\/ EXTRAS/.test(normalized(item[3])))
+      const pagamentos = block
+        .filter((item) => /^VENDA /.test(normalized(item[1])) && money(item[2]) !== 0)
+        .map((item) => ({ descricao: text(item[1]), valor: money(item[2]) }))
+      const receitaBruta = total(/^TOTAL GERAL VENDA \(COM DELIVERY\)$/)
+      const receitaLiquida = total(/^TOTAL VENDA \(FAT\. \+ DELIVERY\)$/)
+      if (!receitaBruta && !receitaLiquida) {
+        warnings.push({ code: "REVENUE_WITHOUT_TOTAL", message: "Turno ignorado porque os totais não foram encontrados.", file, sheet: sheetName, row: start + 1 })
+        start = end - 1
+        continue
+      }
+      const sistemaIndex = block.findIndex((item) => normalized(item[0]) === "SISTEMA")
+      const clientes = sistemaIndex >= 0 ? Number(text(block[sistemaIndex + 1]?.[0]).replace(/\D/g, "")) || null : null
+      result.push({ file, sheet: sheetName, row: start + 1, data, turno: shift(block[1]?.[0]), clientes,
+        receitaBruta, receitaLiquida, taxaServico: money(serviceRow?.[4]), taxaColaborador: money(serviceRow?.[5]),
+        taxaCasa: money(serviceRow?.[6]), taxaTerceiro: money(serviceRow?.[7]), pagamentos })
+      start = end - 1
+    }
+  }
+  return result
+}

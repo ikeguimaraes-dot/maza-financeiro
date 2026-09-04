@@ -125,13 +125,14 @@ async function fetchJsonWithSessionRetry(url: string) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const fmt = (v: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(v)
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v)
 
-const fmtK = (v: number) => {
-  if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1_000) return `R$ ${(v / 1_000).toFixed(0)}k`
-  return fmt(v)
-}
+const fmtK = (v: number) => fmt(v)
 
 const labelMes = (periodo: string) => {
   const [ano, mes] = periodo.split("-") as [string, string]
