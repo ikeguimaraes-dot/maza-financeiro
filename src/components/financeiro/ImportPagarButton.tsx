@@ -25,6 +25,8 @@ export function ImportPagarButton() {
     const fd = new FormData()
     fd.append("file", file)
     if (mode === "diagnostico") fd.append("mode", "diagnostico")
+    const isMaza = /CONTAS\s+A\s+PAGAR.*MAZA/i.test(file.name)
+    if (isMaza && mode === "import") fd.append("commit", "true")
 
     setBusy(mode)
     setStatus(null)
@@ -32,16 +34,21 @@ export function ImportPagarButton() {
 
     try {
       const apiBase = "/financeiro"
-      const res = await fetch(`${apiBase}/api/financeiro/pagar/import`, { method: "POST", body: fd })
+      const endpoint = isMaza ? "/api/financeiro/importacao-maza/preview" : "/api/financeiro/pagar/import"
+      const res = await fetch(`${apiBase}${endpoint}`, { method: "POST", body: fd })
       const json = await res.json()
 
       if (mode === "diagnostico") {
-        setDiagOutput(json.ok ? JSON.stringify(json, null, 2) : `Erro: ${json.error ?? "desconhecido"}`)
+        setDiagOutput(res.ok ? JSON.stringify(json, null, 2) : `Erro: ${json.error ?? "desconhecido"}`)
       } else if (json.ok) {
-        setStatus({ ok: true, msg: `${json.inserted} títulos importados` })
+        const imported = json.imported ?? json.inserted ?? 0
+        setStatus({ ok: true, msg: `${imported} títulos importados` })
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
-        startTransition(() => router.refresh())
+        const latest = isMaza
+          ? (json.preview?.records ?? []).map((row: { vencimento?: string }) => row.vencimento?.slice(0, 7)).filter(Boolean).sort().at(-1)
+          : null
+        startTransition(() => latest ? router.push(`?competencia=${latest}-01`) : router.refresh())
       } else {
         setStatus({ ok: false, msg: json.error ?? "Erro desconhecido" })
       }

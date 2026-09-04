@@ -3,7 +3,7 @@ export const maxDuration = 120
 
 import { requireUser } from "@kph/auth/server"
 import { getCurrentUnit } from "@kph/auth/unit"
-import { previewMazaArchive } from "@/lib/financeiro/importacao/maza/archive"
+import { previewMazaArchive, previewMazaSpreadsheet } from "@/lib/financeiro/importacao/maza/archive"
 import { ImportConflictError, persistMazaArchive } from "@/lib/financeiro/importacao/maza/repository"
 
 export async function POST(request: Request) {
@@ -13,11 +13,11 @@ export async function POST(request: Request) {
   try {
     const form = await request.formData()
     const file = form.get("file")
-    if (!(file instanceof File) || !/\.zip$/i.test(file.name)) {
-      return Response.json({ error: "Envie um arquivo ZIP válido." }, { status: 400 })
+    if (!(file instanceof File) || !/\.(zip|xlsx)$/i.test(file.name)) {
+      return Response.json({ error: "Envie um arquivo ZIP ou Excel (.xlsx) válido." }, { status: 400 })
     }
     const bytes = Buffer.from(await file.arrayBuffer())
-    const preview = await previewMazaArchive(file.name, bytes)
+    const preview = /\.zip$/i.test(file.name) ? await previewMazaArchive(file.name, bytes) : previewMazaSpreadsheet(file.name, bytes)
     if (form.get("commit") !== "true") return Response.json(preview)
     const unit = await getCurrentUnit()
     if (!unit) return Response.json({ error: "Selecione uma unidade antes de importar." }, { status: 400 })

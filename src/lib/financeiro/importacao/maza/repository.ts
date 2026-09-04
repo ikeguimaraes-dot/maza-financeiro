@@ -22,7 +22,8 @@ export async function persistMazaArchive(input: {
 
   const safeName = input.fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "-")
   const storagePath = `${input.unitId}/${checksum.slice(0, 16)}-${safeName}`
-  const { error: uploadError } = await db.storage.from("financeiro-importacoes").upload(storagePath, input.bytes, { contentType: "application/zip", upsert: true })
+  const contentType = /\.zip$/i.test(input.fileName) ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  const { error: uploadError } = await db.storage.from("financeiro-importacoes").upload(storagePath, input.bytes, { contentType, upsert: true })
   if (uploadError) throw new Error(`Falha ao preservar arquivo original: ${uploadError.message}`)
   const audit = { unit_id: input.unitId, tipo: input.preview.kind, arquivo: input.fileName, checksum_sha256: checksum, storage_path: storagePath,
     registros: input.preview.records.length, totais: input.preview.totals, avisos: input.preview.warnings, status: "processando", criado_por: input.userId }
