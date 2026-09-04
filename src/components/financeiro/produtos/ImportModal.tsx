@@ -178,6 +178,41 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
       const buf = await f.arrayBuffer()
       const wb = XLSX.read(buf, { type: "array" })
 
+      // Planilhas internas de NF-e Entrada têm um layout diferente do
+      // Relatório de Produtos do ERP. Detecta pelo cabeçalho e encaminha ao
+      // importador financeiro controlado, mantendo este mesmo botão para o usuário.
+      const isControlledNf = wb.SheetNames.some((sheetName) => {
+        const sheet = wb.Sheets[sheetName]
+        if (!sheet) return false
+        const sample = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false }).slice(0, 10)
+        return sample.some((row) => {
+          const cells = row.map((cell) => normalizeUnitName(String(cell ?? "")))
+          return cells.some((cell) => cell.startsWith("FORNECEDOR"))
+            && cells.some((cell) => cell.includes("DATA ENTRADA"))
+            && cells.some((cell) => cell === "PRODUTO")
+            && cells.some((cell) => cell.includes("VALOR TOTAL"))
+        })
+      })
+      if (isControlledNf) {
+        setStatus("uploading")
+        const body = new FormData()
+        body.append("file", f)
+        body.append("commit", "true")
+        const response = await fetch("/financeiro/api/financeiro/importacao-maza/preview", { method: "POST", body })
+        const responseText = await response.text()
+        let result: { error?: string; imported?: number; preview?: { records?: unknown[] } }
+        try { result = JSON.parse(responseText) }
+        catch { throw new Error(`O servidor respondeu em formato inválido (HTTP ${response.status}).`) }
+        if (!response.ok) throw new Error(result.error ?? "Erro ao importar NF-e Entrada.")
+        const imported = result.imported ?? result.preview?.records?.length ?? 0
+        setTotalRows(imported)
+        setImportedRows(imported)
+        setProgress(100)
+        setStatus("done")
+        setTimeout(() => { onSuccess(); onClose() }, 1500)
+        return
+      }
+
       const allRows: ProdutoInsert[] = []
       const unknownUnits = new Set<string>()
       for (const sheetName of wb.SheetNames) {

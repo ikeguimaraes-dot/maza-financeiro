@@ -5,7 +5,7 @@ import type { ImportWarning, MazaBatchPreview } from "./types"
 
 function sourceKind(name: string): MazaBatchPreview["kind"] {
   const key = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()
-  return key.includes("NF ENTRADA") || key.includes("NF PEDIDOS") ? "nf_entrada"
+  return key.includes("NF ENTRADA") || key.includes("NF DE ENTRADA") || key.includes("NF PEDIDOS") ? "nf_entrada"
     : key.includes("CONTAS A PAGAR") ? "contas_pagar"
       : key.includes("RECEITA") || key.includes("FATURAMENTO") ? "receita"
         : key.includes("FOLHA") ? "folha" : "unknown"
