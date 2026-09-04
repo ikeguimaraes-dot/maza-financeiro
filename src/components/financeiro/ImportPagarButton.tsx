@@ -25,7 +25,9 @@ export function ImportPagarButton() {
     const fd = new FormData()
     fd.append("file", file)
     if (mode === "diagnostico") fd.append("mode", "diagnostico")
-    const isMaza = /CONTAS\s+A\s+PAGAR.*MAZA/i.test(file.name)
+    // As planilhas controladas têm o mesmo layout em todas as unidades; o
+    // nome não precisa conter "MAZA" (ex.: CONTAS A PAGAR.xlsx da IKY).
+    const isMaza = /CONTAS\s+A\s+PAGAR/i.test(file.name)
     if (isMaza && mode === "import") fd.append("commit", "true")
 
     setBusy(mode)
@@ -36,7 +38,10 @@ export function ImportPagarButton() {
       const apiBase = "/financeiro"
       const endpoint = isMaza ? "/api/financeiro/importacao-maza/preview" : "/api/financeiro/pagar/import"
       const res = await fetch(`${apiBase}${endpoint}`, { method: "POST", body: fd })
-      const json = await res.json()
+      const responseText = await res.text()
+      let json: Record<string, any>
+      try { json = JSON.parse(responseText) }
+      catch { throw new Error(`O servidor respondeu em formato inválido (HTTP ${res.status}).`) }
 
       if (mode === "diagnostico") {
         setDiagOutput(res.ok ? JSON.stringify(json, null, 2) : `Erro: ${json.error ?? "desconhecido"}`)
@@ -46,7 +51,7 @@ export function ImportPagarButton() {
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
         const latest = isMaza
-          ? (json.preview?.records ?? []).map((row: { vencimento?: string }) => row.vencimento?.slice(0, 7)).filter(Boolean).sort().at(-1)
+          ? (json.preview?.records ?? []).map((row: { competencia?: string }) => row.competencia?.slice(0, 7)).filter(Boolean).sort().at(-1)
           : null
         startTransition(() => latest ? router.push(`?competencia=${latest}-01`) : router.refresh())
       } else {

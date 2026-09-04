@@ -119,6 +119,9 @@ export async function POST(req: Request) {
     dedup.set(key, rec)
   }
   const records = [...dedup.values()]
+  if (records.length === 0) {
+    return Response.json({ error: "Nenhum título válido foi reconhecido. Confira se a planilha possui o layout esperado." }, { status: 422 })
+  }
 
   // Delete por (unit_id, ref_mes), não só ref_mes — um reimport que traz
   // só algumas unidades não pode apagar títulos de outras unidades no
