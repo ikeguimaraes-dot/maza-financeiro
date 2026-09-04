@@ -11,6 +11,7 @@ export type SourceRef = { file: string; sheet: string; row: number }
 export type NfEntradaRow = SourceRef & {
   fornecedor: string
   dataEntrada: string
+  competencia: string
   numeroNf: string | null
   produto: string
   valorTotal: number

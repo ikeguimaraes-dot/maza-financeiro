@@ -45,11 +45,22 @@ export async function persistMazaArchive(input: {
 }
 
 async function persistNf(db: any, importId: string, unitId: string, rows: NfEntradaRow[]) {
+  // Cada aba mensal representa a competência contábil do relatório. Uma nova
+  // planilha substitui integralmente as entradas desses meses, como ocorre na
+  // importação tradicional da tela, evitando somar cargas antigas.
+  const periods = [...new Set(rows.map((row) => row.competencia))]
+  for (const period of periods) {
+    const [year, month] = period.split("-").map(Number)
+    const { error } = await db.from("produtos_relatorio").delete()
+      .eq("unit_id", unitId).eq("ano_lancamento", year).eq("mes_lancamento", month)
+      .or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+    if (error) throw new Error(`Notas de entrada: ${error.message}`)
+  }
   const records = rows.map((row) => {
     // A posição no arquivo identifica a ocorrência. Compras diferentes podem
     // ter fornecedor, data, produto e valor idênticos.
     const identity = hash(`${unitId}|${row.file}|${row.sheet}|${row.row}`).slice(0, 24)
-    const [year, month] = row.dataEntrada.split("-").map(Number)
+    const [year, month] = row.competencia.split("-").map(Number)
     return { unit_id: unitId, importacao_id: importId, fornecedor_nome: row.fornecedor, nr_danfe: row.numeroNf ?? `SEM-NF-${identity}`,
       v_total_danfe: row.valorTotal, dt_emissao: row.dataEntrada, item_codigo: `MAZA-${identity}`, item_descricao: row.produto,
       v_total_embalagem: row.valorTotal, v_custo_total: row.valorTotal, calcula_cmv: true, desc_gerencial: row.produto.split(" - ")[0] || "SEM CLASSIFICAÇÃO",

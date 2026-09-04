@@ -11,6 +11,7 @@ export function parseNfEntrada(wb: XLSX.WorkBook, file: string, warnings: Import
     const year = validDates[0]?.slice(0, 4)
     const months: Record<string, string> = { JANEIRO: "01", FEVEREIRO: "02", MARCO: "03", ABRIL: "04", MAIO: "05", JUNHO: "06",
       JULHO: "07", AGOSTO: "08", SETEMBRO: "09", OUTUBRO: "10", NOVEMBRO: "11", DEZEMBRO: "12" }
+    const sheetMonth = months[normalized(sheetName)]
     const dateFromLabel = (value: unknown) => {
       if (!year) return null
       if (value instanceof Date && !Number.isNaN(value.getTime()) && value.getUTCFullYear() > 2100) {
@@ -30,7 +31,8 @@ export function parseNfEntrada(wb: XLSX.WorkBook, file: string, warnings: Import
         warnings.push({ code: "NF_WITHOUT_VALUE", message: "Entrada ignorada por não possuir valor positivo.", file, sheet: sheetName, row: index + 1 })
         continue
       }
-      result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada, numeroNf: text(row[2]) || null,
+      const competencia = year && sheetMonth ? `${year}-${sheetMonth}-01` : `${dataEntrada.slice(0, 7)}-01`
+      result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada, competencia, numeroNf: text(row[2]) || null,
         produto, valorTotal, observacao: text(row[5]) || null, desconto: money(row[6]), pedido: text(row[7]) || null })
     }
   }
