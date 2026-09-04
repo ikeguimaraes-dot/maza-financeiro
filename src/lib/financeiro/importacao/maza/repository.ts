@@ -60,6 +60,7 @@ async function persistNf(db: any, importId: string, unitId: string, rows: NfEntr
 }
 
 async function persistPayables(db: any, importId: string, unitId: string, unitName: string, rows: ContaPagarRow[]) {
+  const today = new Date().toISOString().slice(0, 10)
   const referenceMonths = [...new Set(rows.map((row) => `${row.vencimento.slice(0, 7)}-01`))]
   // Arquivos corrigidos substituem somente dados anteriormente trazidos por
   // este adaptador, na mesma unidade e competências. Dados do ERP são mantidos.
@@ -73,11 +74,12 @@ async function persistPayables(db: any, importId: string, unitId: string, unitNa
     const identity = hash(`${unitId}|${row.file}|${row.sheet}|${row.row}`)
     const settled = /\bOK\b|PAG|LIQUID/i.test(row.liquidacao ?? "")
     return { id: identity, unit_id: unitId, importacao_id: importId, origem: "PLANILHA MAZA", empresa: unitName, fantasia_empresa: unitName,
-      fornecedor: row.fornecedor, fantasia_fornecedor: row.fornecedor, n_nota_fiscal: row.numeroNf,
+      fornecedor: row.fornecedor, razao_fornecedor: row.fornecedor, fantasia_fornecedor: row.fornecedor, n_nota_fiscal: row.numeroNf,
       n_titulo: row.numeroNf ? `${row.numeroNf}-${identity.slice(0, 8)}` : identity.slice(0, 16),
       parcela: row.parcela, documento: row.categoria, d_lancamento: row.dataEntrada, d_competencia: row.dataEntrada, d_vencimento: row.vencimento,
       v_titulo: row.valorParcela, v_original: row.valorParcela, v_saldo_atual: settled ? 0 : row.valorParcela, v_pagamento: settled ? row.valorParcela : 0,
-      situacao_atual: settled ? "LIQUIDADO" : "ATIVO", d_liquidacao: null, posicao: settled ? "PAGO" : "A PAGAR", dre: "Sim",
+      situacao_atual: settled ? "LIQUIDADO" : "ATIVO", d_liquidacao: null,
+      posicao: settled ? "PAGO" : row.vencimento < today ? "VENCIDO" : "A VENCER", dre: "Sim",
       ref_mes: `${row.vencimento.slice(0, 7)}-01`, ano: Number(row.vencimento.slice(0, 4)), valor_total_nf_origem: row.valorTotalNf, liquidacao_origem: row.liquidacao }
   })
   for (const part of chunks(records, 200)) {

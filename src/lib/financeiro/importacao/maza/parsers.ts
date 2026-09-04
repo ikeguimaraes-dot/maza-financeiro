@@ -26,12 +26,16 @@ export function parseContasPagar(wb: XLSX.WorkBook, file: string, warnings: Impo
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName]; if (!sheet) continue
     for (const [index, row] of matrix(sheet).entries()) {
-      const fornecedor = text(row[0]), vencimento = isoDate(row[6])
-      if (!fornecedor || !vencimento || normalized(fornecedor).startsWith("FORNECEDOR")) continue
+      const fornecedorInformado = text(row[0]), vencimento = isoDate(row[6])
+      if (!vencimento || normalized(fornecedorInformado).startsWith("FORNECEDOR")) continue
       const valorParcela = money(row[7])
       if (valorParcela <= 0) {
         warnings.push({ code: "PAYABLE_WITHOUT_VALUE", message: "Conta ignorada por não possuir valor de parcela positivo.", file, sheet: sheetName, row: index + 1 })
         continue
+      }
+      const fornecedor = fornecedorInformado || "NÃO INFORMADO"
+      if (!fornecedorInformado) {
+        warnings.push({ code: "PAYABLE_WITHOUT_SUPPLIER", message: "Conta importada com fornecedor NÃO INFORMADO.", file, sheet: sheetName, row: index + 1 })
       }
       result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada: isoDate(row[1]), numeroNf: text(row[2]) || null,
         categoria: text(row[3]) || null, valorTotalNf: money(row[4]), parcela: text(row[5]) || null,

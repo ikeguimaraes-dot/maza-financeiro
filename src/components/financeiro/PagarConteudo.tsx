@@ -60,7 +60,13 @@ function situacao(t: TituloComUnidade): string {
   return (t.situacao_atual ?? "").trim().toUpperCase()
 }
 function posicao(t: TituloComUnidade): string {
-  return (t.posicao ?? "").trim().toUpperCase()
+  const informada = (t.posicao ?? "").trim().toUpperCase()
+  if (informada === "VENCIDO" || informada === "A VENCER" || informada === "PAGO") return informada
+  if (situacao(t) !== "ATIVO" || !t.d_vencimento) return informada
+
+  const agora = new Date()
+  const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`
+  return t.d_vencimento < hoje ? "VENCIDO" : "A VENCER"
 }
 
 export function PagarConteudo({ titulos, competenciaLabel, unitId, mes, ano }: Props) {
