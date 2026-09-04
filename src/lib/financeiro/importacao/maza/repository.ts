@@ -46,7 +46,9 @@ export async function persistMazaArchive(input: {
 
 async function persistNf(db: any, importId: string, unitId: string, rows: NfEntradaRow[]) {
   const records = rows.map((row) => {
-    const identity = hash(`${row.fornecedor}|${row.dataEntrada}|${row.numeroNf ?? ""}|${row.produto}|${row.valorTotal}`).slice(0, 24)
+    // A posição no arquivo identifica a ocorrência. Compras diferentes podem
+    // ter fornecedor, data, produto e valor idênticos.
+    const identity = hash(`${unitId}|${row.file}|${row.sheet}|${row.row}`).slice(0, 24)
     const [year, month] = row.dataEntrada.split("-").map(Number)
     return { unit_id: unitId, importacao_id: importId, fornecedor_nome: row.fornecedor, nr_danfe: row.numeroNf ?? `SEM-NF-${identity}`,
       v_total_danfe: row.valorTotal, dt_emissao: row.dataEntrada, item_codigo: `MAZA-${identity}`, item_descricao: row.produto,

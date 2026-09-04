@@ -6,8 +6,24 @@ export function parseNfEntrada(wb: XLSX.WorkBook, file: string, warnings: Import
   const result: NfEntradaRow[] = []
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName]; if (!sheet) continue
-    for (const [index, row] of matrix(sheet).entries()) {
-      const fornecedor = text(row[0]), dataEntrada = isoDate(row[1]), produto = text(row[3])
+    const rows = matrix(sheet)
+    const validDates = rows.map((row) => isoDate(row[1])).filter((date): date is string => !!date)
+    const year = validDates[0]?.slice(0, 4)
+    const months: Record<string, string> = { JANEIRO: "01", FEVEREIRO: "02", MARCO: "03", ABRIL: "04", MAIO: "05", JUNHO: "06",
+      JULHO: "07", AGOSTO: "08", SETEMBRO: "09", OUTUBRO: "10", NOVEMBRO: "11", DEZEMBRO: "12" }
+    const dateFromLabel = (value: unknown) => {
+      if (!year) return null
+      if (value instanceof Date && !Number.isNaN(value.getTime()) && value.getUTCFullYear() > 2100) {
+        return `${String(value.getUTCFullYear()).slice(0, 4)}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`
+      }
+      const label = normalized(value)
+      if (months[label]) return `${year}-${months[label]}-01`
+      const range = label.match(/\d{1,2}\/\d{1,2}\s*A\s*(\d{1,2})\/(\d{1,2})/)
+      const endDay = range?.[1], endMonth = range?.[2]
+      return endDay && endMonth ? `${year}-${endMonth.padStart(2, "0")}-${endDay.padStart(2, "0")}` : null
+    }
+    for (const [index, row] of rows.entries()) {
+      const fornecedor = text(row[0]), dataEntrada = isoDate(row[1]) ?? dateFromLabel(row[1]), produto = text(row[3])
       if (!fornecedor || !dataEntrada || !produto || normalized(fornecedor) === "FORNECEDOR") continue
       const valorTotal = money(row[4])
       if (valorTotal <= 0) {
