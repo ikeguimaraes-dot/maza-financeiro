@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
-import { formatBRL, formatBRLCompact } from "@/lib/financeiro/utils"
+import { formatBRL } from "@/lib/financeiro/utils"
 import { KpiCard } from "@kph/ui/kpi-card"
 import type { TituloComUnidade } from "@/app/financeiro/actions-operations"
 import { ConciliacaoTab } from "./ConciliacaoTab"
@@ -260,15 +260,15 @@ export function PagarConteudo({ titulos, competenciaLabel, unitId, mes, ano }: P
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 12 }}>
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-3)", margin: 0 }}>Já pago</p>
-              <p style={{ fontSize: 18, fontWeight: 700, color: "#22C55E", margin: "2px 0 0" }}>{formatBRLCompact(fluxoMes.pago)}</p>
+              <p style={{ fontSize: 18, fontWeight: 700, color: "#22C55E", margin: "2px 0 0" }}>{formatBRL(fluxoMes.pago)}</p>
             </div>
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-3)", margin: 0 }}>Em aberto</p>
-              <p style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", margin: "2px 0 0" }}>{formatBRLCompact(fluxoMes.aberto)}</p>
+              <p style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", margin: "2px 0 0" }}>{formatBRL(fluxoMes.aberto)}</p>
             </div>
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-3)", margin: 0 }}>Total do mês</p>
-              <p style={{ fontSize: 18, fontWeight: 700, color: "var(--brand, #D4A574)", margin: "2px 0 0" }}>{formatBRLCompact(fluxoMes.total)}</p>
+              <p style={{ fontSize: 18, fontWeight: 700, color: "var(--brand, #D4A574)", margin: "2px 0 0" }}>{formatBRL(fluxoMes.total)}</p>
             </div>
           </div>
           <div style={{ height: 8, borderRadius: 99, background: "var(--surface-2)", overflow: "hidden", display: "flex" }}>
@@ -395,33 +395,33 @@ export function PagarConteudo({ titulos, competenciaLabel, unitId, mes, ano }: P
           />
           <KpiCard
             label="Total em aberto"
-            value={formatBRLCompact(kpis.total_aberto_valor)}
+            value={formatBRL(kpis.total_aberto_valor)}
             sub="Vencidos + a vencer (ATIVO)"
           />
           <KpiCard
             label="Vencidos"
             value={
               <span style={{ color: kpis.vencidos_count > 0 ? "#EF4444" : "var(--text)" }}>
-                {formatBRLCompact(kpis.vencidos_valor)}
+                {formatBRL(kpis.vencidos_valor)}
               </span>
             }
             sub={`${kpis.vencidos_count} título${kpis.vencidos_count !== 1 ? "s" : ""} · ATIVO + VENCIDO`}
           />
           <KpiCard
             label="A vencer"
-            value={formatBRLCompact(kpis.a_vencer_valor)}
+            value={formatBRL(kpis.a_vencer_valor)}
             sub={`${kpis.a_vencer_count} título${kpis.a_vencer_count !== 1 ? "s" : ""} · ATIVO + A VENCER`}
           />
           <KpiCard
             label="Pago"
             value={
-              <span style={{ color: "#22C55E" }}>{formatBRLCompact(kpis.pagos_valor)}</span>
+              <span style={{ color: "#22C55E" }}>{formatBRL(kpis.pagos_valor)}</span>
             }
             sub={`${kpis.pagos_count} título${kpis.pagos_count !== 1 ? "s" : ""} · LIQUIDADO`}
           />
           <KpiCard
             label="Fluxo de caixa"
-            value={formatBRLCompact(kpis.fluxo_caixa_valor)}
+            value={formatBRL(kpis.fluxo_caixa_valor)}
             sub="Marcados no FC"
           />
         </section>

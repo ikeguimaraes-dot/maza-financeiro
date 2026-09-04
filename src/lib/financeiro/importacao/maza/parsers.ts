@@ -25,7 +25,13 @@ export function parseContasPagar(wb: XLSX.WorkBook, file: string, warnings: Impo
   const result: ContaPagarRow[] = []
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName]; if (!sheet) continue
-    for (const [index, row] of matrix(sheet).entries()) {
+    const rows = matrix(sheet)
+    const years = rows.map((row) => isoDate(row[6])?.slice(0, 4)).filter((year): year is string => !!year)
+    const year = [...new Set(years)].sort((a, b) => years.filter((value) => value === b).length - years.filter((value) => value === a).length)[0]
+    const monthNames: Record<string, string> = { JANEIRO: "01", FEVEREIRO: "02", MARCO: "03", ABRIL: "04", MAIO: "05", JUNHO: "06",
+      JULHO: "07", AGOSTO: "08", SETEMBRO: "09", OUTUBRO: "10", NOVEMBRO: "11", DEZEMBRO: "12" }
+    const sheetMonth = monthNames[normalized(sheetName)]
+    for (const [index, row] of rows.entries()) {
       const fornecedorInformado = text(row[0]), vencimento = isoDate(row[6])
       if (!vencimento || normalized(fornecedorInformado).startsWith("FORNECEDOR")) continue
       const valorParcela = money(row[7])
@@ -39,7 +45,8 @@ export function parseContasPagar(wb: XLSX.WorkBook, file: string, warnings: Impo
       }
       result.push({ file, sheet: sheetName, row: index + 1, fornecedor, dataEntrada: isoDate(row[1]), numeroNf: text(row[2]) || null,
         categoria: text(row[3]) || null, valorTotalNf: money(row[4]), parcela: text(row[5]) || null,
-        vencimento, valorParcela, liquidacao: text(row[8]) || null })
+        vencimento, competencia: year && sheetMonth ? `${year}-${sheetMonth}-01` : `${vencimento.slice(0, 7)}-01`,
+        valorParcela, liquidacao: text(row[8]) || null })
     }
   }
   return result

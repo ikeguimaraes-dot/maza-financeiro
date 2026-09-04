@@ -131,11 +131,10 @@ export async function getMetasMes(
 // ── Contas a Pagar ────────────────────────────────────────────────────────────
 
 /**
- * Todos os títulos a pagar cujo d_vencimento cai dentro do mês da
- * competência informada — visão de "contas a pagar" (o que vence naquele
- * mês), não de ref_mes (mês de competência do Everest, usado pra
- * dedup/upsert no import e em outras telas como o DRE — não mexido aqui,
- * só o filtro de exibição desta página). Filtra também por unit_id, se
+ * Todos os títulos a pagar da competência informada. A competência vem de
+ * ref_mes e, nas planilhas Maza, corresponde à aba mensal de origem.
+ * O vencimento permanece preservado para classificar vencidos/a vencer.
+ * Filtra também por unit_id, se
  * informada — mesma unidade selecionada na shell (padrão do resto do
  * módulo: unitId resolvido via getCurrentUnit() na page e passado pra cá,
  * aplicado como .eq("unit_id", unitId) igual DRE/CMV). Retorna com o nome
@@ -151,13 +150,10 @@ export async function getTitulosAPagar(
   const ops = createOperationsClient();
   if (!ops) return [];
 
-  const { dateFrom, dateTo } = competenciaToRange(competencia);
-
   let query = ops
     .from("titulos_a_pagar")
     .select("*")
-    .gte("d_vencimento", dateFrom)
-    .lte("d_vencimento", dateTo);
+    .eq("ref_mes", competencia.slice(0, 7) + "-01");
   if (unitId) query = query.eq("unit_id", unitId);
 
   const { data, error } = await query.order("d_vencimento", { ascending: true, nullsFirst: false });

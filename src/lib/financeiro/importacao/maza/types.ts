@@ -27,6 +27,7 @@ export type ContaPagarRow = SourceRef & {
   valorTotalNf: number
   parcela: string | null
   vencimento: string
+  competencia: string
   valorParcela: number
   liquidacao: string | null
 }

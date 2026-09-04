@@ -61,7 +61,7 @@ async function persistNf(db: any, importId: string, unitId: string, rows: NfEntr
 
 async function persistPayables(db: any, importId: string, unitId: string, unitName: string, rows: ContaPagarRow[]) {
   const today = new Date().toISOString().slice(0, 10)
-  const referenceMonths = [...new Set(rows.map((row) => `${row.vencimento.slice(0, 7)}-01`))]
+  const referenceMonths = [...new Set(rows.map((row) => row.competencia))]
   // Arquivos corrigidos substituem somente dados anteriormente trazidos por
   // este adaptador, na mesma unidade e competências. Dados do ERP são mantidos.
   const { error: cleanupError } = await db.from("titulos_a_pagar").delete()
@@ -76,11 +76,11 @@ async function persistPayables(db: any, importId: string, unitId: string, unitNa
     return { id: identity, unit_id: unitId, importacao_id: importId, origem: "PLANILHA MAZA", empresa: unitName, fantasia_empresa: unitName,
       fornecedor: row.fornecedor, razao_fornecedor: row.fornecedor, fantasia_fornecedor: row.fornecedor, n_nota_fiscal: row.numeroNf,
       n_titulo: row.numeroNf ? `${row.numeroNf}-${identity.slice(0, 8)}` : identity.slice(0, 16),
-      parcela: row.parcela, documento: row.categoria, d_lancamento: row.dataEntrada, d_competencia: row.dataEntrada, d_vencimento: row.vencimento,
+      parcela: row.parcela, documento: row.categoria, d_lancamento: row.dataEntrada, d_competencia: row.competencia, d_vencimento: row.vencimento,
       v_titulo: row.valorParcela, v_original: row.valorParcela, v_saldo_atual: settled ? 0 : row.valorParcela, v_pagamento: settled ? row.valorParcela : 0,
       situacao_atual: settled ? "LIQUIDADO" : "ATIVO", d_liquidacao: null,
       posicao: settled ? "PAGO" : row.vencimento < today ? "VENCIDO" : "A VENCER", dre: "Sim",
-      ref_mes: `${row.vencimento.slice(0, 7)}-01`, ano: Number(row.vencimento.slice(0, 4)), valor_total_nf_origem: row.valorTotalNf, liquidacao_origem: row.liquidacao }
+      ref_mes: row.competencia, ano: Number(row.competencia.slice(0, 4)), valor_total_nf_origem: row.valorTotalNf, liquidacao_origem: row.liquidacao }
   })
   for (const part of chunks(records, 200)) {
     const { error } = await db.from("titulos_a_pagar").upsert(part, { onConflict: "n_titulo,parcela,fantasia_empresa,ref_mes" })
