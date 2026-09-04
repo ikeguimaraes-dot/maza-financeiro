@@ -285,14 +285,19 @@ export default function FolhaPage() {
       const result = await res.json()
       if (!res.ok) throw new Error(result.error ?? "Erro no upload")
       // Recarrega dados após import
+      const [resultYear, resultMonth] = String(result.competencia ?? `${ano}-${mes}`).split("-").map(Number)
+      const reloadYear = resultYear || ano
+      const reloadMonth = resultMonth || mes
       const reloadResponse = await fetch(
-        `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`
+        `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${reloadMonth}&ano=${reloadYear}`
       )
       const novo = await reloadResponse.json()
       if (!reloadResponse.ok || novo.error) throw new Error(novo.error ?? "Erro ao recarregar a folha")
       if (!Array.isArray(novo.colaboradores) || novo.colaboradores.length !== result.colaboradores) {
         throw new Error(`Foram gravados ${result.colaboradores} colaboradores, mas a página recebeu ${novo.colaboradores?.length ?? 0}.`)
       }
+      setMes(reloadMonth)
+      setAno(reloadYear)
       setData(novo)
       alert(`${result.importados} funcionário${result.importados === 1 ? "" : "s"} importado${result.importados === 1 ? "" : "s"} com sucesso.`)
     } catch (err: unknown) {

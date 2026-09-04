@@ -2,7 +2,7 @@ import { bufferImportFile } from "../core/files"
 import { ImportError } from "../core/errors"
 import type { BufferedImportFile, ImportWarning } from "../core/types"
 import { parseFolhaPdf } from "./pdf-parser"
-import { parseFolhaSpreadsheet } from "./spreadsheet-parser"
+import { folhaSpreadsheetCompetences, parseFolhaSpreadsheet } from "./spreadsheet-parser"
 import type {
   FolhaExtractedRow,
   FolhaImportDocument,
@@ -31,9 +31,28 @@ export class ImportFolhaService {
     const competence = validateCompetence(input.month, input.year)
     const bufferedFiles = await Promise.all(input.files.map(bufferImportFile))
     const warnings: ImportWarning[] = []
+    if (mode === "spreadsheet") {
+      const detectedCompetences = folhaSpreadsheetCompetences(bufferedFiles[0]!)
+      if (detectedCompetences.length > 0) {
+        let imported = 0, collaborators = 0
+        for (const detectedCompetence of detectedCompetences) {
+          const extractedRows = parseFolhaSpreadsheet(bufferedFiles[0]!, detectedCompetence)
+          const normalizedRows = extractedRows.map((row) => normalizeFolhaRow(row, input.unitId, detectedCompetence))
+          const spreadsheetDocument: FolhaImportDocument = {
+            schemaVersion: 1, documentType: "payroll", sourceFormat: bufferedFiles[0]!.format,
+            unitId: input.unitId, competence: detectedCompetence,
+            sourceFiles: bufferedFiles.map(({ bytes: _bytes, format: _format, ...file }) => file),
+            payload: { rows: normalizedRows }, warnings: [],
+          }
+          imported += await this.repository.replace(spreadsheetDocument, bufferedFiles)
+          collaborators = normalizedRows.filter((row) => !row.is_vaga).length
+        }
+        return { ok: true, arquivos: input.files.length, importados: imported, colaboradores: collaborators, competencia: detectedCompetences.at(-1)! }
+      }
+    }
     const extracted = mode === "pdf-batch"
       ? await this.parsePdfBatch(bufferedFiles, warnings)
-      : parseFolhaSpreadsheet(bufferedFiles[0]!)
+      : parseFolhaSpreadsheet(bufferedFiles[0]!, competence)
 
     if (extracted.length === 0) {
       throw new ImportError(

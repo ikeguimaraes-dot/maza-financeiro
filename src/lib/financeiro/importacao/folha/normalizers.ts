@@ -7,8 +7,8 @@ export function textValue(value: unknown): string | undefined {
 
 export function numberValue(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value
-  const raw = String(value ?? "").trim()
-  if (!raw) return 0
+  const raw = String(value ?? "").replace(/R\$/gi, "").replace(/\s/g, "").trim()
+  if (!raw || raw === "-") return 0
   const normalized = raw.includes(",")
     ? raw.replace(/\./g, "").replace(",", ".")
     : raw
