@@ -1,6 +1,6 @@
 import "server-only"
 import { createHash } from "node:crypto"
-import { createServiceClient } from "@kph/db/supabase/server"
+import { createSupabaseServerClient } from "@kph/db/supabase/server"
 import type { MazaBatchPreview, NfEntradaRow, ContaPagarRow, ReceitaCaixaRow } from "./types"
 
 export class ImportConflictError extends Error {
@@ -13,7 +13,7 @@ const chunks = <T>(rows: T[], size = 300) => Array.from({ length: Math.ceil(rows
 export async function persistMazaArchive(input: {
   unitId: string; unitName: string; userId: string; fileName: string; bytes: Buffer; preview: MazaBatchPreview; replaceExisting: boolean
 }) {
-  const db = createServiceClient() as any
+  const db = await createSupabaseServerClient() as any
   if (!db) throw new Error("Banco de dados indisponível.")
   if (input.preview.kind === "unknown" || input.preview.kind === "folha" || !input.preview.records.length) throw new Error("Pacote sem registros válidos para importar.")
   const checksum = hash(input.bytes.toString("base64"))
