@@ -53,7 +53,16 @@ export function ImportPagarButton() {
         const latest = isMaza
           ? (json.preview?.records ?? []).map((row: { competencia?: string }) => row.competencia?.slice(0, 7)).filter(Boolean).sort().at(-1)
           : null
-        startTransition(() => latest ? router.push(`?competencia=${latest}-01`) : router.refresh())
+        startTransition(() => {
+          if (latest) {
+            // Recarrega a rota na última competência importada. A navegação
+            // completa evita manter em cache o mês que estava aberto (por
+            // exemplo setembro ao importar uma planilha até agosto).
+            window.location.assign(`${window.location.pathname}?competencia=${latest}-01`)
+          } else {
+            router.refresh()
+          }
+        })
       } else {
         setStatus({ ok: false, msg: json.error ?? "Erro desconhecido" })
       }
