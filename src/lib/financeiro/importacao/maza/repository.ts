@@ -91,6 +91,8 @@ async function persistPayables(db: any, importId: string, unitId: string, unitNa
 }
 
 async function persistRevenue(db: any, importId: string, unitId: string, rows: ReceitaCaixaRow[], replaceExisting: boolean) {
+  const workdayNumber = (row: ReceitaCaixaRow) => 960_000_000 + Number(row.data.slice(2).replaceAll("-", "")) * 10
+    + (row.turno === "jantar" ? 2 : row.turno === "almoco" ? 1 : 0)
   const unique = new Map<string, ReceitaCaixaRow>()
   for (const row of rows) {
     const key = `${row.data}|${row.turno}`
@@ -112,7 +114,7 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
     for (const part of chunks(ids, 200)) { const { error } = await db.from("lorean_workdays").delete().in("id", part); if (error) throw new Error(error.message) }
   }
   const workdays = [...unique.values()].map((row) => ({ unit_id: unitId, importacao_id: importId,
-    workday_id: 96_000_000_000 + Number(row.data.replaceAll("-", "")) * 10 + (row.turno === "jantar" ? 2 : row.turno === "almoco" ? 1 : 0),
+    workday_id: workdayNumber(row),
     data: row.data, turno: row.turno, receita_bruta: row.receitaBruta, previsto: row.receitaBruta,
     desconto: Math.max(0, row.receitaBruta - row.receitaLiquida), gorjeta: row.taxaServico, gorjeta_colaborador: row.taxaColaborador,
     gorjeta_casa: row.taxaCasa, gorjeta_terceiro: row.taxaTerceiro, receita_liquida: row.receitaLiquida, clientes: row.clientes,
@@ -125,7 +127,7 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
   }
   const ids = new Map(inserted.map((row) => [String(row.workday_id), row.id]))
   const payments = [...unique.values()].flatMap((row) => {
-    const workdayId = 96_000_000_000 + Number(row.data.replaceAll("-", "")) * 10 + (row.turno === "jantar" ? 2 : row.turno === "almoco" ? 1 : 0)
+    const workdayId = workdayNumber(row)
     const id = ids.get(String(workdayId)); if (!id) return []
     return row.pagamentos.map((payment) => ({ workday_id_fk: id, forma: payment.descricao, valor_fechado: payment.valor, valor_recebido: payment.valor }))
   })

@@ -91,11 +91,14 @@ export function parseReceita(wb: XLSX.WorkBook, file: string, warnings: ImportWa
   for (const sheetName of wb.SheetNames.filter((name) => normalized(name) !== "RESUMO")) {
     const sheet = wb.Sheets[sheetName]; if (!sheet) continue
     const rows = matrix(sheet)
+    const isShiftStart = (index: number) => !!isoDate(rows[index]?.[0]) && shift(rows[index + 1]?.[0]) !== "nao_informado"
     for (let start = 0; start < rows.length; start++) {
+      if (!isShiftStart(start)) continue
       let data = isoDate(rows[start]?.[0]); if (!data) continue
       let end = start + 1
-      while (end < rows.length && !isoDate(rows[end]?.[0])) end++
+      while (end < rows.length && !isShiftStart(end)) end++
       const block = rows.slice(start, end)
+      const turno = shift(block[1]?.[0])
       if (period && !data.startsWith(period)) {
         const corrected = `${period}-${data.slice(-2)}`
         const parsed = new Date(`${corrected}T12:00:00Z`)
@@ -124,7 +127,7 @@ export function parseReceita(wb: XLSX.WorkBook, file: string, warnings: ImportWa
       }
       const sistemaIndex = block.findIndex((item) => normalized(item[0]) === "SISTEMA")
       const clientes = sistemaIndex >= 0 ? Number(text(block[sistemaIndex + 1]?.[0]).replace(/\D/g, "")) || null : null
-      result.push({ file, sheet: sheetName, row: start + 1, data, turno: shift(block[1]?.[0]), clientes,
+      result.push({ file, sheet: sheetName, row: start + 1, data, turno, clientes,
         receitaBruta, receitaLiquida, taxaServico: money(serviceRow?.[4]), taxaColaborador: money(serviceRow?.[5]),
         taxaCasa: money(serviceRow?.[6]), taxaTerceiro: money(serviceRow?.[7]), pagamentos })
       start = end - 1

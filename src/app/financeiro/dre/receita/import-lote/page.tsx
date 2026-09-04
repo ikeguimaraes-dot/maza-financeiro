@@ -175,7 +175,7 @@ function Dropzone({ label, sub, accept, onFiles }: {
 
 type ProcessState = "pendente" | "processando" | "sucesso" | "erro";
 
-type XlsxTipo = "movimento" | "venda";
+type XlsxTipo = "movimento" | "venda" | "faturamento";
 
 type ParsedXlsxFile = {
   file: File;
@@ -194,11 +194,14 @@ function parseXlsxFilename(file: File): ParsedXlsxFile {
   const lower = name.toLowerCase();
   const tipo: XlsxTipo | null =
     lower.includes("movimento") ? "movimento" :
-    lower.includes("venda")     ? "venda" : null;
+    lower.includes("faturamento") ? "faturamento" :
+    lower.includes("venda") ? "venda" : null;
+  const periodMatch = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").match(/(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+(20\d{2})/i);
+  const monthNumber: Record<string, string> = { JANEIRO: "01", FEVEREIRO: "02", MARCO: "03", ABRIL: "04", MAIO: "05", JUNHO: "06", JULHO: "07", AGOSTO: "08", SETEMBRO: "09", OUTUBRO: "10", NOVEMBRO: "11", DEZEMBRO: "12" };
   return {
     file,
     key: `${name}::${file.size}`,
-    data: dateMatch ? `20${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null,
+    data: dateMatch ? `20${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : periodMatch ? `${periodMatch[2]}-${monthNumber[periodMatch[1]!.toUpperCase()]}-01` : null,
     tipo,
     loreanCode: codeMatch ? codeMatch[1]! : null,
   };
@@ -208,9 +211,17 @@ function parseXlsxFilename(file: File): ParsedXlsxFile {
 // importado, a API responde com erro ("Workday não encontrado") — esperado
 // e aceitável: o arquivo fica marcado como erro no relatório, sem travar o lote.
 async function enviarArquivoXlsx(
-  file: File, unitId: string,
+  file: File, unitId: string, tipo: XlsxTipo,
 ): Promise<{ resumo?: Record<string, unknown> }> {
   const fd = new FormData();
+  if (tipo === "faturamento") {
+    fd.append("file", file);
+    fd.append("commit", "true");
+    const res = await fetch(`${API_BASE}/api/financeiro/importacao-maza/preview`, { method: "POST", body: fd });
+    const json = await res.json().catch(() => null) as { error?: string; imported?: number; preview?: { totals?: Record<string, number> } } | null;
+    if (!res.ok || !json) throw new Error(json?.error ?? `HTTP ${res.status}`);
+    return { resumo: { registros: json.imported, ...json.preview?.totals } };
+  }
   fd.append("unit_id", unitId);
   fd.append("arquivos", file);
   const res = await fetch(`${API_BASE}/api/lorean/import-xlsx`, { method: "POST", body: fd });
@@ -273,7 +284,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
       setProgressLabel(`Processando ${i + 1}/${reconhecidos.length} — ${unitLabel} ${f.file.name}…`);
       setStatus((prev) => ({ ...prev, [f.key]: { state: "processando" } }));
       try {
-        const res = await enviarArquivoXlsx(f.file, selectedUnitId);
+        const res = await enviarArquivoXlsx(f.file, selectedUnitId, f.tipo!);
         setStatus((prev) => ({ ...prev, [f.key]: { state: "sucesso", resumo: res.resumo } }));
       } catch (e) {
         setStatus((prev) => ({ ...prev, [f.key]: { state: "erro", mensagem: String(e instanceof Error ? e.message : e) } }));
@@ -302,7 +313,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
         st?.state === "processando" ? "Processando" :
         f.tipo ? "Não processado" : "Tipo não reconhecido (pulado)";
       return [
-        f.file.name, f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : "—",
+        f.file.name, f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : f.tipo === "faturamento" ? "Faturamento Maza" : "—",
         f.data ? fmtDateBR(f.data) : "—", statusLabel, st?.mensagem ?? "",
       ];
     });
@@ -314,7 +325,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
       {fase === "selecao" && (
         <Dropzone
           label="Arraste os arquivos Excel (.xlsx) aqui"
-          sub="Movimento e Venda do Lorean, separados ou misturados, em qualquer ordem — sem chamar IA"
+          sub="Movimento e Venda do Lorean ou Faturamento Maza — sem chamar IA"
           accept=".xlsx"
           onFiles={addFiles}
         />
@@ -361,7 +372,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
           {naoReconhecidos.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
-                Arquivos sem tipo reconhecível no nome (esperado "Movimento" ou "Venda") — não serão processados
+                Arquivos sem tipo reconhecível no nome (esperado "Movimento", "Venda" ou "Faturamento") — não serão processados
               </p>
               {naoReconhecidos.map((f) => (
                 <p key={f.key} style={{ fontSize: 12, color: C.text3, margin: "2px 0" }}>{f.file.name}</p>
@@ -395,7 +406,7 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
                     <tr key={f.key} style={{ borderTop: `1px solid ${C.border}` }} title={live?.mensagem}>
                       <td style={{ padding: "8px 12px", color: C.text2, maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file.name}</td>
                       <td style={{ padding: "8px 12px", color: C.text2, whiteSpace: "nowrap" }}>
-                        {f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : "—"}
+                        {f.tipo === "movimento" ? "Movimento" : f.tipo === "venda" ? "Venda" : f.tipo === "faturamento" ? "Faturamento Maza" : "—"}
                       </td>
                       <td style={{ padding: "8px 12px", color: C.text2, whiteSpace: "nowrap" }}>{f.data ? fmtDateBR(f.data) : "—"}</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: cell.color }}>{cell.label}</td>
