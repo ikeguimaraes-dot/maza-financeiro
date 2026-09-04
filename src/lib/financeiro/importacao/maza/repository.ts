@@ -60,8 +60,17 @@ async function persistNf(db: any, importId: string, unitId: string, rows: NfEntr
 }
 
 async function persistPayables(db: any, importId: string, unitId: string, unitName: string, rows: ContaPagarRow[]) {
+  const referenceMonths = [...new Set(rows.map((row) => `${row.vencimento.slice(0, 7)}-01`))]
+  // Arquivos corrigidos substituem somente dados anteriormente trazidos por
+  // este adaptador, na mesma unidade e competências. Dados do ERP são mantidos.
+  const { error: cleanupError } = await db.from("titulos_a_pagar").delete()
+    .eq("unit_id", unitId).not("importacao_id", "is", null).in("ref_mes", referenceMonths)
+  if (cleanupError) throw new Error(`Contas a pagar: ${cleanupError.message}`)
+
   const records = rows.map((row) => {
-    const identity = hash(`${unitId}|${row.fornecedor}|${row.numeroNf ?? ""}|${row.vencimento}|${row.parcela ?? ""}|${row.valorParcela}`)
+    // Cada ocorrência da planilha é um título próprio. Duas compras podem ter
+    // fornecedor, data e valor iguais; arquivo + aba + linha é a identidade.
+    const identity = hash(`${unitId}|${row.file}|${row.sheet}|${row.row}`)
     const settled = /\bOK\b|PAG|LIQUID/i.test(row.liquidacao ?? "")
     return { id: identity, unit_id: unitId, importacao_id: importId, origem: "PLANILHA MAZA", empresa: unitName, fantasia_empresa: unitName,
       fornecedor: row.fornecedor, fantasia_fornecedor: row.fornecedor, n_nota_fiscal: row.numeroNf,
