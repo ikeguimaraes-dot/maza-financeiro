@@ -11,7 +11,8 @@ export class SupabaseFolhaImportRepository implements FolhaImportRepository {
   async replace(document: FolhaImportDocument, files: BufferedImportFile[]): Promise<number> {
     const supabase: any = await createSupabaseServerClient()
     if (!supabase) throw new Error("Banco da Folha nao configurado.")
-    const { unitId, competence, payload } = document
+    const { unitId, payload } = document
+    const competence = document.competence.slice(0, 7)
 
     const documentPaths = new Map<string, string>()
     for (const file of files.filter((item) => item.format === "pdf")) {

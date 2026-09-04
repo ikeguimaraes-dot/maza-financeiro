@@ -14,7 +14,7 @@ export function folhaSpreadsheetCompetences(file: BufferedImportFile): string[] 
     const match = title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().match(/(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\/(20\d{2})/)
     if (!match) continue
     const month = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"].indexOf(match[1]!) + 1
-    if (month > 0) competences.add(`${match[2]}-${String(month).padStart(2, "0")}-01`)
+    if (month > 0) competences.add(`${match[2]}-${String(month).padStart(2, "0")}`)
   }
   return [...competences].sort()
 }
