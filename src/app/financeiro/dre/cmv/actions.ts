@@ -541,6 +541,24 @@ function paraHistoricoRow(r: HistoricoRowBruto): HistoricoRow {
 // Com produtoId: histórico do PRODUTO do catálogo — todas as variações de
 // descrição e todos os fornecedores vinculados a ele, não só este item_codigo.
 // Sem produtoId (ou sem vínculo): comportamento anterior, por item_codigo.
+// perc_variacao em produtos_relatorio é sempre null (importNfe nunca grava esse
+// campo) — precisa ser CALCULADO contra a compra anterior real, na ordem
+// cronológica, nunca lido do banco.
+function comVariacaoCalculada(rowsDesc: HistoricoRow[]): HistoricoRow[] {
+  const asc = [...rowsDesc].reverse()
+  let anterior: number | null = null
+  const comVariacao = asc.map(r => {
+    const atual = r.v_custo_medio
+    let perc: number | null = null
+    if (atual != null && anterior != null && anterior !== 0) {
+      perc = ((atual - anterior) / Math.abs(anterior)) * 100
+    }
+    if (atual != null) anterior = atual
+    return { ...r, perc_variacao: perc }
+  })
+  return comVariacao.reverse()
+}
+
 export async function getHistoricoProduto(
   unitId: string | null,
   itemCodigo: string,
@@ -575,9 +593,11 @@ export async function getHistoricoProduto(
           return q
         }) as HistoricoRowBruto[]
 
-        return rows
-          .filter(r => paresValidos.has(`${r.fornecedor_codigo} ${r.item_codigo}`))
-          .map(paraHistoricoRow)
+        return comVariacaoCalculada(
+          rows
+            .filter(r => paresValidos.has(`${r.fornecedor_codigo} ${r.item_codigo}`))
+            .map(paraHistoricoRow)
+        )
       }
     }
 
@@ -591,7 +611,7 @@ export async function getHistoricoProduto(
       if (unitId) q = q.eq("unit_id", unitId)
       return q
     }) as HistoricoRowBruto[]
-    return rows.map(paraHistoricoRow)
+    return comVariacaoCalculada(rows.map(paraHistoricoRow))
   } catch {
     return []
   }
@@ -1672,3 +1692,172 @@ export async function getNotaCompleta(chaveNfe: string): Promise<NotaCompletaRes
     return vazio
   }
 }
+
+export type CompraProduto = {
+  data: string | null
+  fornecedor: string | null
+  nrDanfe: string | null
+  chaveNfe: string | null
+  custoUnitario: number | null
+  qtd: number | null
+  varPct: number | null
+  varAbs: number | null
+  trocouFornecedor: boolean
+}
+
+export type ProdutoEvolucao = {
+  produtoId: string
+  codigo: string
+  nome: string
+  ncm: string | null
+  unidade: string | null
+  compras: CompraProduto[]
+  ultimaVarPct: number | null
+  ultimaVarAbs: number | null
+  totalCompras: number
+  precoAtual: number | null
+  precoMinimo: number
+  precoMaximo: number
+  precoMedio: number
+}
+
+type LinhaCompraBruta = {
+  fornecedor_codigo: string | null
+  fornecedor_nome: string | null
+  item_codigo: string | null
+  dt_emissao: string | null
+  nr_danfe: string | null
+  chave_nfe: string | null
+  v_custo_compra: number | null
+  q_embalagem: number | null
+  v_total_danfe: number | null
+}
+
+// Analisa a variação de preço de cada produto do catálogo ao longo de suas
+// compras reais (uma por chave_nfe+item_codigo), comparando sempre com a
+// compra cronologicamente anterior — nunca com o mês anterior.
+export async function getEvolucaoPorCompra(unitId: string | null): Promise<ProdutoEvolucao[]> {
+  try {
+    const db = await getProdutosDb()
+
+    const linhas = await fetchAllPaginado((from, to) => {
+      let q = db.from("produtos_relatorio")
+        .select("fornecedor_codigo,fornecedor_nome,item_codigo,dt_emissao,nr_danfe,chave_nfe,v_custo_compra,q_embalagem,v_total_danfe")
+        .eq("direcao_nfe", "entrada")
+        .not("chave_nfe", "is", null)
+        .order("dt_emissao", { ascending: true })
+        .range(from, to)
+      if (unitId) q = q.eq("unit_id", unitId)
+      return q
+    }) as LinhaCompraBruta[]
+
+    // Bonificação (item de brinde/promocional) não é compra real: v_total_danfe 0 ou 0.01.
+    const validas = linhas.filter(r =>
+      r.fornecedor_codigo && r.item_codigo &&
+      r.v_total_danfe !== 0 && r.v_total_danfe !== 0.01
+    )
+
+    // Uma nota = uma compra: um ponto por (chave_nfe, item_codigo).
+    const porChaveItem = new Map<string, LinhaCompraBruta>()
+    for (const r of validas) {
+      const chave = `${r.chave_nfe}|${r.item_codigo}`
+      if (!porChaveItem.has(chave)) porChaveItem.set(chave, r)
+    }
+    const compras = [...porChaveItem.values()]
+    if (compras.length === 0) return []
+
+    const cnpjs = [...new Set(compras.map(r => r.fornecedor_codigo!))]
+    const itemCodigos = [...new Set(compras.map(r => r.item_codigo!))]
+
+    const deparaRows = await fetchAllPaginado((from, to) =>
+      db.from("produtos_depara")
+        .select("fornecedor_cnpj,item_codigo,produto_id")
+        .in("fornecedor_cnpj", cnpjs)
+        .in("item_codigo", itemCodigos)
+        .range(from, to)
+    ) as Array<{ fornecedor_cnpj: string; item_codigo: string; produto_id: string | null }>
+
+    const produtoIdPorPar = new Map<string, string>()
+    for (const d of deparaRows) {
+      if (d.produto_id) produtoIdPorPar.set(`${d.fornecedor_cnpj}|${d.item_codigo}`, d.produto_id)
+    }
+    const produtoIds = [...new Set(produtoIdPorPar.values())]
+    if (produtoIds.length === 0) return []
+
+    const catalogoRows = await fetchAllPaginado((from, to) =>
+      db.from("produtos_catalogo")
+        .select("id,codigo,nome,ncm,unidade_padrao")
+        .in("id", produtoIds)
+        .range(from, to)
+    ) as Array<{ id: string; codigo: string; nome: string; ncm: string | null; unidade_padrao: string | null }>
+    const catalogoPorId = new Map(catalogoRows.map(c => [c.id, c]))
+
+    const comprasPorProduto = new Map<string, LinhaCompraBruta[]>()
+    for (const r of compras) {
+      const produtoId = produtoIdPorPar.get(`${r.fornecedor_codigo}|${r.item_codigo}`)
+      if (!produtoId || !catalogoPorId.has(produtoId)) continue
+      const lista = comprasPorProduto.get(produtoId) ?? []
+      lista.push(r)
+      comprasPorProduto.set(produtoId, lista)
+    }
+
+    const resultado: ProdutoEvolucao[] = []
+    for (const [produtoId, lista] of comprasPorProduto) {
+      if (lista.length < 2) continue
+      const catalogo = catalogoPorId.get(produtoId)!
+      const ordenadas = [...lista].sort((a, b) => (a.dt_emissao ?? "").localeCompare(b.dt_emissao ?? ""))
+
+      let anterior: LinhaCompraBruta | null = null
+      const comprasCalculadas: CompraProduto[] = ordenadas.map(r => {
+        const custoUnitario = r.v_custo_compra
+        let varPct: number | null = null
+        let varAbs: number | null = null
+        let trocouFornecedor = false
+        if (anterior) {
+          trocouFornecedor = anterior.fornecedor_codigo !== r.fornecedor_codigo
+          if (custoUnitario != null && anterior.v_custo_compra != null && anterior.v_custo_compra !== 0) {
+            varAbs = custoUnitario - anterior.v_custo_compra
+            varPct = (varAbs / Math.abs(anterior.v_custo_compra)) * 100
+          }
+        }
+        anterior = r
+        return {
+          data: r.dt_emissao,
+          fornecedor: r.fornecedor_nome,
+          nrDanfe: r.nr_danfe,
+          chaveNfe: r.chave_nfe,
+          custoUnitario,
+          qtd: r.q_embalagem,
+          varPct,
+          varAbs,
+          trocouFornecedor,
+        }
+      })
+
+      const precos = comprasCalculadas.map(c => c.custoUnitario).filter((v): v is number => v != null)
+      if (precos.length === 0) continue
+
+      const ultima = comprasCalculadas[comprasCalculadas.length - 1]!
+      resultado.push({
+        produtoId,
+        codigo: catalogo.codigo,
+        nome: catalogo.nome,
+        ncm: catalogo.ncm,
+        unidade: catalogo.unidade_padrao,
+        compras: comprasCalculadas,
+        ultimaVarPct: ultima.varPct,
+        ultimaVarAbs: ultima.varAbs,
+        totalCompras: comprasCalculadas.length,
+        precoAtual: ultima.custoUnitario,
+        precoMinimo: Math.min(...precos),
+        precoMaximo: Math.max(...precos),
+        precoMedio: precos.reduce((s, v) => s + v, 0) / precos.length,
+      })
+    }
+
+    return resultado
+  } catch {
+    return []
+  }
+}
+

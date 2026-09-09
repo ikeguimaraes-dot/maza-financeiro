@@ -116,6 +116,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
   }
 
   function irParaNota(chaveNfe: string) {
+    setTab("tabela")
     setTableDrawerItem(null)
     setTableHistorico([])
     setExpandedChaves(prev => new Set(prev).add(chaveNfe))
@@ -805,9 +806,9 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
         <RankingTab unitId={unitId} mes={mes} ano={ano} />
       )}
 
-      {/* ── Análise tab (evolução de preço por produto, todos os meses) ── */}
+      {/* ── Análise tab (variação de preço por compra, histórico completo) ── */}
       {hasData && tab === "analise" && (
-        <AnaliseTab unitId={unitId} />
+        <AnaliseTab unitId={unitId} onSelecionarNota={irParaNota} />
       )}
 
       {/* ── CMV tab ── */}
