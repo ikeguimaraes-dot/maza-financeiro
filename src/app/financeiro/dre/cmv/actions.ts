@@ -6,6 +6,30 @@ import { requireUser } from "@kph/auth/server"
 import { createServiceClient } from "@kph/db/supabase/server"
 import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
 
+// Categorias de desc_gerencial que são despesa administrativa/financeira/folha,
+// não produto comprado. Usada só para linhas SEM NCM (planilha) na geração
+// automática do catálogo — linhas COM NCM já são filtradas pela faixa de
+// capítulo 02-23 (alimentos/bebidas/preparações), sem precisar de lista manual.
+const CATEGORIAS_NAO_PRODUTO = new Set([
+  "IMPOSTOS", "IMPOSTO", "IMPOSTOS FGTS DIGITAL **IKY**", "IMPOSTO DCTF WEB **IKY**",
+  "MOTOBOY",
+  "CONSUMO DE ENERGIA", "CONSUMO ÁGUA", "CONSUMO GÁS",
+  "RESCISÃO", "FERIAS",
+  "LAVANDERIA",
+  "PGTO 1ª QUINZENA", "PGTO 2ª QUINZENA",
+  "CONTABILIDADE",
+  "INTERNET", "SISTEMA", "TI",
+  "ACORDO", "ACORDO AÇÃO TRABALHISTA",
+  "EXAMES", "EXAMES ADMISSIONAIS",
+  "ALARME",
+  "MANUTENÇÃO",
+  "RENOVAÇÃO SEGURO",
+  "GALPÃO GUARULHOS",
+  "LOCAÇÃO PRESHH",
+  "AROMATIZAÇÃO DE AMBIENTES",
+  "AMOSTRAS LABORATORIAIS",
+])
+
 export type ProdutoInsert = {
   unit_id: string
   fornecedor_nome: string | null
@@ -963,6 +987,420 @@ export async function desvincularProduto(
     const { error } = await db
       .from("produtos_depara")
       .delete()
+      .eq("fornecedor_cnpj", fornecedorCnpj)
+      .eq("item_codigo", itemCodigo)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+// ── Geração automática do catálogo ───────────────────────────────────────────
+// Chave de agrupamento = ncm + descrição-núcleo + calibre. Estritamente aditivo:
+// nunca toca um par (fornecedor_cnpj, item_codigo) que já tenha produtos_depara
+// (manual ou de uma geração anterior) — é isso que garante idempotência e
+// preserva correções feitas via mesclarProdutos/renomearProduto/moverVinculo.
+
+const CATEGORIA_PREFIXO_MAX_LEN = 30
+const CATEGORIA_MIN_OCORRENCIAS = 5
+const SUFIXOS_CERTIFICACAO = ["ASC", "ISP", "S/M"]
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+async function getCategoriasConhecidas(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any
+): Promise<Set<string>> {
+  const { data } = await db
+    .from("produtos_relatorio")
+    .select("desc_gerencial")
+    .not("desc_gerencial", "is", null)
+    .limit(200000)
+  const contagem = new Map<string, number>()
+  for (const row of (data ?? []) as Array<{ desc_gerencial: string }>) {
+    const v = row.desc_gerencial.trim().replace(/-+$/, "").trim().toUpperCase()
+    if (v.length === 0 || v.length > CATEGORIA_PREFIXO_MAX_LEN) continue
+    if (/[-*()0-9]/.test(v)) continue
+    contagem.set(v, (contagem.get(v) ?? 0) + 1)
+  }
+  const set = new Set<string>()
+  for (const [v, n] of contagem) if (n >= CATEGORIA_MIN_OCORRENCIAS) set.add(v)
+  return set
+}
+
+function removerPrefixoCategoria(texto: string, categorias: Set<string>): string {
+  for (const cat of categorias) {
+    const regex = new RegExp(`^${escapeRegExp(cat)}\\s*-+\\s*`, "i")
+    if (regex.test(texto)) return texto.replace(regex, "")
+  }
+  return texto
+}
+
+// Repete até estabilizar — sufixos empilhados ("... 14-16 LB S/M ISP") só
+// removem um por vez da direita pra esquerda.
+function removerSufixoCertificacao(texto: string): string {
+  let out = texto
+  let mudou = true
+  while (mudou) {
+    mudou = false
+    for (const suf of SUFIXOS_CERTIFICACAO) {
+      const regex = new RegExp(`\\s+${escapeRegExp(suf)}$`, "i")
+      if (regex.test(out)) { out = out.replace(regex, ""); mudou = true }
+    }
+  }
+  return out
+}
+
+// Só remove parêntese no fim quando contém dígito — "(SALMO SALAR)" nunca é
+// removido (sem dígito, é nome de espécie); "(1,8 KG)" é removido (peso).
+function removerPesoEntreParenteses(texto: string): string {
+  return texto.replace(/\(([^()]*\d[^()]*)\)\s*$/, "").trimEnd()
+}
+
+// Fronteira de palavra só à esquerda: "10-20U/LB" precisa capturar "10-20"
+// mesmo com "U" colado logo depois, sem espaço.
+function extrairCalibre(texto: string): { texto: string; calibre: string | null } {
+  const match = texto.match(/\b(\d{1,3})\s*[-/]\s*(\d{1,3})/)
+  if (!match || match.index === undefined) return { texto, calibre: null }
+  const calibre = `${match[1]}-${match[2]}`
+  const semCalibre = texto.slice(0, match.index) + texto.slice(match.index + match[0].length)
+  return { texto: semCalibre, calibre }
+}
+
+function calcularNucleoECalibre(
+  itemDescricao: string,
+  categorias: Set<string>
+): { nucleo: string; calibre: string | null } {
+  let texto = itemDescricao.toUpperCase()
+  texto = removerPrefixoCategoria(texto, categorias)
+  texto = removerSufixoCertificacao(texto)
+  texto = removerPesoEntreParenteses(texto)
+  const { texto: semCalibre, calibre } = extrairCalibre(texto)
+  const nucleo = normalizeDescricao(semCalibre)
+  return { nucleo, calibre }
+}
+
+export type GerarCatalogoResultado = {
+  ok: boolean
+  produtosCriados: number
+  itensVinculados: number
+  excluidosPorNcm: number
+  excluidosPorCategoria: number
+  error?: string
+}
+
+// Capítulos 02-23 da NBM/NCM = animais/carnes, peixes, laticínios, hortifruti,
+// café/chá, cereais, gorduras, preparações alimentícias, bebidas, resíduos
+// alimentares. Um freezer (84xxxxx) ou embalagem plástica (39xxxxx) nunca cai
+// nessa faixa, então não precisa de lista manual pra excluí-los.
+function ncmEmFaixaAlimentar(ncm: string): boolean {
+  const capitulo = parseInt(ncm.slice(0, 2), 10)
+  return Number.isFinite(capitulo) && capitulo >= 2 && capitulo <= 23
+}
+
+type LinhaEntrada = {
+  fornecedor_codigo: string | null
+  fornecedor_nome: string | null
+  item_codigo: string
+  item_descricao: string
+  tipo_item: string | null
+  desc_gerencial: string | null
+  unidade_medida: string | null
+  v_total_embalagem: number | null
+}
+
+type ParPendente = {
+  fornecedorCnpj: string
+  fornecedorNome: string | null
+  itemCodigo: string
+  itemDescricao: string
+  ncmOriginal: string | null
+  unidadeMedida: string | null
+  valorTotal: number
+}
+
+type GrupoCatalogo = {
+  ncm: string | null
+  nucleo: string
+  calibre: string | null
+  valorTotal: number
+  unidadeFreq: Map<string, number>
+  pares: ParPendente[]
+}
+
+export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado> {
+  const empty = { ok: false, produtosCriados: 0, itensVinculados: 0, excluidosPorNcm: 0, excluidosPorCategoria: 0 }
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ...empty, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+
+    const categorias = await getCategoriasConhecidas(db)
+
+    // Pares já vinculados (manual ou geração anterior) ficam intocados — é
+    // isso que torna a função aditiva e idempotente.
+    const { data: existentes, error: existentesError } = await db
+      .from("produtos_depara")
+      .select("fornecedor_cnpj,item_codigo,produto_id,item_descricao,ncm")
+      .limit(200000)
+    if (existentesError) return { ...empty, error: existentesError.message }
+
+    const { data: ativos, error: ativosError } = await db.from("produtos_catalogo").select("id").eq("ativo", true)
+    if (ativosError) return { ...empty, error: ativosError.message }
+    const ativosSet = new Set((ativos ?? []).map((p: { id: string }) => p.id))
+
+    const jaVinculados = new Set<string>()
+    const grupoParaProdutoId = new Map<string, string>()
+    for (const row of (existentes ?? []) as Array<{
+      fornecedor_cnpj: string; item_codigo: string; produto_id: string | null
+      item_descricao: string | null; ncm: string | null
+    }>) {
+      jaVinculados.add(`${row.fornecedor_cnpj} ${row.item_codigo}`)
+      if (row.produto_id && ativosSet.has(row.produto_id) && row.item_descricao) {
+        const { nucleo, calibre } = calcularNucleoECalibre(row.item_descricao, categorias)
+        const chave = `${row.ncm ?? ""} ${nucleo} ${calibre ?? ""}`
+        if (!grupoParaProdutoId.has(chave)) grupoParaProdutoId.set(chave, row.produto_id)
+      }
+    }
+
+    const { data: rows, error: rowsError } = await db
+      .from("produtos_relatorio")
+      .select("fornecedor_codigo,fornecedor_nome,item_codigo,item_descricao,tipo_item,desc_gerencial,unidade_medida,v_total_embalagem")
+      .eq("direcao_nfe", "entrada")
+      .not("item_codigo", "is", null)
+      .not("item_descricao", "is", null)
+      .limit(200000)
+    if (rowsError) return { ...empty, error: rowsError.message }
+
+    // Agrega por (fornecedor, item_codigo) primeiro — evita recalcular o
+    // núcleo pra cada compra individual do mesmo item.
+    let excluidosPorNcm = 0
+    let excluidosPorCategoria = 0
+    const pendentesPorPar = new Map<string, ParPendente>()
+    for (const r of (rows ?? []) as LinhaEntrada[]) {
+      const fornecedorCnpj = r.fornecedor_codigo
+        ? r.fornecedor_codigo
+        : `NOME:${normalizeDescricao(r.fornecedor_nome ?? "")}`
+      const parKey = `${fornecedorCnpj} ${r.item_codigo}`
+      if (jaVinculados.has(parKey)) continue
+
+      if (r.tipo_item) {
+        if (!ncmEmFaixaAlimentar(r.tipo_item)) { excluidosPorNcm++; continue }
+      } else {
+        const categoria = (r.desc_gerencial ?? "").trim().toUpperCase()
+        if (CATEGORIAS_NAO_PRODUTO.has(categoria)) { excluidosPorCategoria++; continue }
+      }
+
+      const acc = pendentesPorPar.get(parKey) ?? {
+        fornecedorCnpj,
+        fornecedorNome: r.fornecedor_nome,
+        itemCodigo: r.item_codigo,
+        itemDescricao: r.item_descricao,
+        ncmOriginal: r.tipo_item,
+        unidadeMedida: r.unidade_medida,
+        valorTotal: 0,
+      }
+      const v = r.v_total_embalagem != null ? Number(r.v_total_embalagem) : 0
+      acc.valorTotal += isFinite(v) ? Math.abs(v) : 0
+      if (!acc.ncmOriginal && r.tipo_item) acc.ncmOriginal = r.tipo_item
+      if (!acc.unidadeMedida && r.unidade_medida) acc.unidadeMedida = r.unidade_medida
+      pendentesPorPar.set(parKey, acc)
+    }
+
+    if (pendentesPorPar.size === 0) return { ok: true, produtosCriados: 0, itensVinculados: 0, excluidosPorNcm, excluidosPorCategoria }
+
+    // Agrupa os pares pendentes por (ncm, núcleo, calibre).
+    const grupos = new Map<string, GrupoCatalogo>()
+    for (const p of pendentesPorPar.values()) {
+      const { nucleo, calibre } = calcularNucleoECalibre(p.itemDescricao, categorias)
+      if (!nucleo) continue // descrição vazia após normalizar — não dá pra agrupar com segurança
+      const chave = `${p.ncmOriginal ?? ""} ${nucleo} ${calibre ?? ""}`
+      let g = grupos.get(chave)
+      if (!g) {
+        g = { ncm: p.ncmOriginal, nucleo, calibre, valorTotal: 0, unidadeFreq: new Map(), pares: [] }
+        grupos.set(chave, g)
+      }
+      g.valorTotal += p.valorTotal
+      g.pares.push(p)
+      if (p.unidadeMedida) g.unidadeFreq.set(p.unidadeMedida, (g.unidadeFreq.get(p.unidadeMedida) ?? 0) + 1)
+    }
+
+    // Próximo código sequencial livre — só considera códigos já no formato 0000-9999
+    // (códigos manuais tipo "SAL-ATL-1416" da FASE 2 não entram nessa contagem).
+    const { data: codigosExistentes, error: codigosError } = await db.from("produtos_catalogo").select("codigo")
+    if (codigosError) return { ...empty, error: codigosError.message }
+    let proximoCodigo = 1
+    for (const row of (codigosExistentes ?? []) as Array<{ codigo: string }>) {
+      if (/^\d{4}$/.test(row.codigo)) {
+        const n = parseInt(row.codigo, 10)
+        if (n >= proximoCodigo) proximoCodigo = n + 1
+      }
+    }
+
+    // Separa: grupos que já batem com um produto ativo existente (só ganham
+    // novos vínculos) dos que precisam de produto novo.
+    const paresParaVincular: Array<{ pendente: ParPendente; produtoId: string }> = []
+    const gruposNovos: GrupoCatalogo[] = []
+    for (const [chave, grupo] of grupos) {
+      const produtoExistente = grupoParaProdutoId.get(chave)
+      if (produtoExistente) {
+        for (const p of grupo.pares) paresParaVincular.push({ pendente: p, produtoId: produtoExistente })
+      } else {
+        gruposNovos.push(grupo)
+      }
+    }
+    gruposNovos.sort((a, b) => b.valorTotal - a.valorTotal)
+
+    let produtosCriados = 0
+    for (const grupo of gruposNovos) {
+      const unidadePadrao = [...grupo.unidadeFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+      const codigo = String(proximoCodigo).padStart(4, "0")
+      proximoCodigo += 1
+      const nome = grupo.calibre ? `${grupo.nucleo} ${grupo.calibre}` : grupo.nucleo
+      const { data: novo, error: novoError } = await db
+        .from("produtos_catalogo")
+        .insert({ codigo, nome, ncm: grupo.ncm || null, unidade_padrao: unidadePadrao, categoria: null })
+        .select("id")
+        .single()
+      if (novoError) return { ok: false, produtosCriados, itensVinculados: 0, excluidosPorNcm, excluidosPorCategoria, error: novoError.message }
+      produtosCriados += 1
+      for (const p of grupo.pares) paresParaVincular.push({ pendente: p, produtoId: novo.id })
+    }
+
+    let itensVinculados = 0
+    for (let i = 0; i < paresParaVincular.length; i += 500) {
+      const chunk = paresParaVincular.slice(i, i + 500).map(({ pendente, produtoId }) => ({
+        produto_id: produtoId,
+        fornecedor_cnpj: pendente.fornecedorCnpj,
+        fornecedor_nome: pendente.fornecedorNome,
+        item_codigo: pendente.itemCodigo,
+        item_descricao: pendente.itemDescricao,
+        ncm: pendente.ncmOriginal,
+      }))
+      const { error } = await db
+        .from("produtos_depara")
+        .upsert(chunk, { onConflict: "fornecedor_cnpj,item_codigo" })
+      if (error) return { ok: false, produtosCriados, itensVinculados, excluidosPorNcm, excluidosPorCategoria, error: error.message }
+      itensVinculados += chunk.length
+    }
+
+    return { ok: true, produtosCriados, itensVinculados, excluidosPorNcm, excluidosPorCategoria }
+  } catch (e) {
+    return { ...empty, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export type CatalogoItem = {
+  id: string
+  codigo: string
+  nome: string
+  ncm: string | null
+  unidadePadrao: string | null
+  categoria: string | null
+  ativo: boolean
+  itensVinculados: number
+}
+
+export async function getCatalogoGerado(): Promise<CatalogoItem[]> {
+  try {
+    const db = await getProdutosDb()
+    const { data: produtos, error } = await db
+      .from("produtos_catalogo")
+      .select("id,codigo,nome,ncm,unidade_padrao,categoria,ativo")
+      .order("codigo")
+      .limit(20000)
+    if (error) throw error
+    if (!produtos || produtos.length === 0) return []
+
+    const { data: depara } = await db.from("produtos_depara").select("produto_id").limit(200000)
+    const contagem = new Map<string, number>()
+    for (const row of (depara ?? []) as Array<{ produto_id: string | null }>) {
+      if (!row.produto_id) continue
+      contagem.set(row.produto_id, (contagem.get(row.produto_id) ?? 0) + 1)
+    }
+
+    return (produtos as Array<{
+      id: string; codigo: string; nome: string; ncm: string | null
+      unidade_padrao: string | null; categoria: string | null; ativo: boolean
+    }>).map(p => ({
+      id: p.id, codigo: p.codigo, nome: p.nome, ncm: p.ncm,
+      unidadePadrao: p.unidade_padrao, categoria: p.categoria, ativo: p.ativo,
+      itensVinculados: contagem.get(p.id) ?? 0,
+    }))
+  } catch {
+    return []
+  }
+}
+
+export async function mesclarProdutos(
+  produtoIdOrigem: string,
+  produtoIdDestino: string
+): Promise<{ ok: boolean; movidos?: number; error?: string }> {
+  try {
+    await requireUser()
+    if (produtoIdOrigem === produtoIdDestino) return { ok: false, error: "Origem e destino são o mesmo produto." }
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+
+    const { data: movidos, error: moveError } = await db
+      .from("produtos_depara")
+      .update({ produto_id: produtoIdDestino })
+      .eq("produto_id", produtoIdOrigem)
+      .select("id")
+    if (moveError) return { ok: false, error: moveError.message }
+
+    const { error: desativaError } = await db
+      .from("produtos_catalogo")
+      .update({ ativo: false })
+      .eq("id", produtoIdOrigem)
+    if (desativaError) return { ok: false, error: desativaError.message }
+
+    return { ok: true, movidos: movidos?.length ?? 0 }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function renomearProduto(
+  produtoId: string,
+  nome: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireUser()
+    if (!nome.trim()) return { ok: false, error: "Nome não pode ser vazio." }
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db.from("produtos_catalogo").update({ nome: nome.trim() }).eq("id", produtoId)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function moverVinculo(
+  fornecedorCnpj: string,
+  itemCodigo: string,
+  novoProdutoId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db
+      .from("produtos_depara")
+      .update({ produto_id: novoProdutoId })
       .eq("fornecedor_cnpj", fornecedorCnpj)
       .eq("item_codigo", itemCodigo)
     if (error) return { ok: false, error: error.message }
