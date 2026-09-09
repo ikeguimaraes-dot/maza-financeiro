@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@kph/db/supabase/server"
 import { getCurrentUnit } from "@kph/auth/unit"
 import { requireUser } from "@kph/auth/server"
 import { createServiceClient } from "@kph/db/supabase/server"
+import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
 
 export type ProdutoInsert = {
   unit_id: string
@@ -729,4 +730,244 @@ export async function getNotasARevisar(unitId: string | null): Promise<ProdutoCo
     if (error) throw error
     return data ?? []
   } catch { return [] }
+}
+
+// ── Catálogo de produtos e de-para de fornecedor ─────────────────────────────
+// produtos_depara é a fonte de verdade do vínculo (fornecedor_cnpj, item_codigo)
+// → produto_id. produtos_relatorio.produto_id não é escrito nesta fase.
+
+export type ProdutoPendente = {
+  fornecedorCnpj: string
+  fornecedorNome: string | null
+  itemCodigo: string
+  itemDescricao: string | null
+  ncm: string | null
+  compras: number
+  valorTotal: number
+}
+
+export type CatalogoCandidato = {
+  id: string
+  codigo: string
+  nome: string
+  ncm: string | null
+  similaridade: number
+}
+
+export type ProdutoCatalogo = {
+  id: string
+  codigo: string
+  nome: string
+  ncm: string | null
+  unidadePadrao: string | null
+  categoria: string | null
+}
+
+function bigramas(s: string): Set<string> {
+  const set = new Set<string>()
+  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2))
+  return set
+}
+
+// Dice coefficient sobre bigramas — sem dependência externa.
+function similaridade(a: string, b: string): number {
+  if (!a || !b) return 0
+  if (a === b) return 1
+  const A = bigramas(a)
+  const B = bigramas(b)
+  if (A.size === 0 || B.size === 0) return 0
+  let intersecao = 0
+  for (const bg of A) if (B.has(bg)) intersecao++
+  return (2 * intersecao) / (A.size + B.size)
+}
+
+export async function getProdutosPendentes(): Promise<ProdutoPendente[]> {
+  try {
+    const db = await getProdutosDb()
+
+    const { data: mapeados, error: mapeadosError } = await db
+      .from("produtos_depara")
+      .select("fornecedor_cnpj,item_codigo")
+      .limit(50000)
+    if (mapeadosError) throw mapeadosError
+    const mapeadosSet = new Set(
+      (mapeados ?? []).map((m: { fornecedor_cnpj: string; item_codigo: string }) =>
+        `${m.fornecedor_cnpj} ${m.item_codigo}`
+      )
+    )
+
+    const { data, error } = await db
+      .from("produtos_relatorio")
+      .select("fornecedor_codigo,fornecedor_nome,item_codigo,item_descricao,tipo_item,v_total_embalagem")
+      .not("chave_nfe", "is", null)
+      .eq("calcula_cmv", true)
+      .not("fornecedor_codigo", "is", null)
+      .not("item_codigo", "is", null)
+      .limit(100000)
+    if (error) throw error
+    if (!data || data.length === 0) return []
+
+    const map = new Map<string, ProdutoPendente>()
+    for (const r of data as Array<{
+      fornecedor_codigo: string; fornecedor_nome: string | null
+      item_codigo: string; item_descricao: string | null
+      tipo_item: string | null; v_total_embalagem: number | null
+    }>) {
+      const key = `${r.fornecedor_codigo} ${r.item_codigo}`
+      if (mapeadosSet.has(key)) continue
+      const acc = map.get(key) ?? {
+        fornecedorCnpj: r.fornecedor_codigo,
+        fornecedorNome: r.fornecedor_nome,
+        itemCodigo: r.item_codigo,
+        itemDescricao: r.item_descricao,
+        ncm: r.tipo_item,
+        compras: 0,
+        valorTotal: 0,
+      }
+      acc.compras += 1
+      const v = r.v_total_embalagem != null ? Number(r.v_total_embalagem) : 0
+      acc.valorTotal += isFinite(v) ? Math.abs(v) : 0
+      if (!acc.itemDescricao && r.item_descricao) acc.itemDescricao = r.item_descricao
+      if (!acc.ncm && r.tipo_item) acc.ncm = r.tipo_item
+      if (!acc.fornecedorNome && r.fornecedor_nome) acc.fornecedorNome = r.fornecedor_nome
+      map.set(key, acc)
+    }
+
+    return [...map.values()].sort((a, b) => b.valorTotal - a.valorTotal)
+  } catch {
+    return []
+  }
+}
+
+export async function getCandidatosProduto(
+  fornecedorCnpj: string,
+  itemCodigo: string
+): Promise<CatalogoCandidato[]> {
+  try {
+    const db = await getProdutosDb()
+
+    const { data: item } = await db
+      .from("produtos_relatorio")
+      .select("item_descricao,tipo_item")
+      .eq("fornecedor_codigo", fornecedorCnpj)
+      .eq("item_codigo", itemCodigo)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const ncm = item?.tipo_item ?? null
+    if (!ncm) return []
+
+    const { data: candidatos, error } = await db
+      .from("produtos_catalogo")
+      .select("id,codigo,nome,ncm")
+      .eq("ncm", ncm)
+      .eq("ativo", true)
+      .limit(200)
+    if (error) throw error
+    if (!candidatos || candidatos.length === 0) return []
+
+    const alvo = normalizeDescricao(item?.item_descricao ?? "")
+    return (candidatos as Array<{ id: string; codigo: string; nome: string; ncm: string | null }>)
+      .map(c => ({
+        id: c.id,
+        codigo: c.codigo,
+        nome: c.nome,
+        ncm: c.ncm,
+        similaridade: similaridade(alvo, normalizeDescricao(c.nome)),
+      }))
+      .sort((a, b) => b.similaridade - a.similaridade)
+  } catch {
+    return []
+  }
+}
+
+export async function criarProdutoCatalogo(
+  codigo: string,
+  nome: string,
+  ncm: string | null,
+  unidadePadrao: string | null,
+  categoria: string | null
+): Promise<{ ok: boolean; produto?: ProdutoCatalogo; error?: string }> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { data, error } = await db
+      .from("produtos_catalogo")
+      .insert({ codigo, nome, ncm, unidade_padrao: unidadePadrao, categoria })
+      .select("id,codigo,nome,ncm,unidade_padrao,categoria")
+      .single()
+    if (error) return { ok: false, error: error.message }
+    return {
+      ok: true,
+      produto: {
+        id: data.id, codigo: data.codigo, nome: data.nome, ncm: data.ncm,
+        unidadePadrao: data.unidade_padrao, categoria: data.categoria,
+      },
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function vincularProduto(
+  fornecedorCnpj: string,
+  itemCodigo: string,
+  produtoId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+
+    const { data: item } = await db
+      .from("produtos_relatorio")
+      .select("fornecedor_nome,item_descricao,tipo_item")
+      .eq("fornecedor_codigo", fornecedorCnpj)
+      .eq("item_codigo", itemCodigo)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const { error } = await db
+      .from("produtos_depara")
+      .upsert({
+        fornecedor_cnpj: fornecedorCnpj,
+        fornecedor_nome: item?.fornecedor_nome ?? null,
+        item_codigo: itemCodigo,
+        item_descricao: item?.item_descricao ?? null,
+        ncm: item?.tipo_item ?? null,
+        produto_id: produtoId,
+      }, { onConflict: "fornecedor_cnpj,item_codigo" })
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function desvincularProduto(
+  fornecedorCnpj: string,
+  itemCodigo: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { error } = await db
+      .from("produtos_depara")
+      .delete()
+      .eq("fornecedor_cnpj", fornecedorCnpj)
+      .eq("item_codigo", itemCodigo)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }

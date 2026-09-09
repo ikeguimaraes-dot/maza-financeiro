@@ -15,6 +15,9 @@ node_modules/
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 
+# Supabase CLI
+supabase/.temp/
+
 # Misc
 .DS_Store
 *.pem

@@ -14,6 +14,7 @@ import { NfeImportModal } from "./NfeImportModal"
 import { HistoricoDrawer, RankingTab } from "./RankingTab"
 import { AnaliseTab } from "./AnaliseTab"
 import { ARevisarTab, BonificacaoTab, FornecedorTab } from "./ProdutosExtraTabs"
+import { CatalogoTab } from "./CatalogoTab"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -63,7 +64,7 @@ const PAGE_SIZE = 50
 // ── Main component ─────────────────────────────────────────────────────────────
 export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise" | "bonificacao" | "fornecedor" | "arevisar" | "planilha">(direcao === "entrada" ? "analise" : "tabela")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise" | "bonificacao" | "fornecedor" | "arevisar" | "planilha" | "catalogo">(direcao === "entrada" ? "analise" : "tabela")
   const [showImport, setShowImport] = useState(false)
   const [showNfeImport, setShowNfeImport] = useState(false)
   const [tableDrawerItem, setTableDrawerItem] = useState<RankingItem | null>(null)
@@ -311,8 +312,8 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
-        {(["analise", "cmv", "ranking", "tabela", "bonificacao", "fornecedor", "arevisar", "planilha"] as const).map(t => {
-          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise", bonificacao: "Bonificação", fornecedor: "Fornecedor", arevisar: "A Revisar", planilha: "Planilha" }
+        {(["analise", "cmv", "ranking", "tabela", "bonificacao", "fornecedor", "arevisar", "planilha", "catalogo"] as const).map(t => {
+          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise", bonificacao: "Bonificação", fornecedor: "Fornecedor", arevisar: "A Revisar", planilha: "Planilha", catalogo: "Catálogo" }
           if (direcao === "saida" && t !== "tabela") return null
           const active = tab === t
           return (
@@ -697,6 +698,9 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
           )}
         </div>
       )}
+
+      {/* ── Catálogo tab (de-para de fornecedor) ── */}
+      {hasData && tab === "catalogo" && <CatalogoTab />}
 
       {/* ── Ranking tab ── */}
       {hasData && tab === "ranking" && (
