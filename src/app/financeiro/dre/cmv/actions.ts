@@ -272,6 +272,7 @@ export async function getProdutosMeses(
       .from("produtos_relatorio")
       .select("mes_lancamento, ano_lancamento")
       .eq("unit_id", unitId)
+      .not("chave_nfe", "is", null)
       .limit(10000)
     if (!data) return []
     const map = new Map<string, number>()
@@ -326,6 +327,7 @@ export async function getRankingProdutos(
       .eq("mes_lancamento", mes)
       .eq("ano_lancamento", ano)
       .eq("calcula_cmv", true)
+      .not("chave_nfe", "is", null)
       .limit(10000)
     if (unitId) q = q.eq("unit_id", unitId)
     const { data } = await q
@@ -425,6 +427,7 @@ export async function getHistoricoProduto(
       .from("produtos_relatorio")
       .select("mes_lancamento,ano_lancamento,fornecedor_nome,q_estoque,v_custo_medio,v_custo_total,perc_variacao,desc_gerencial,item_descricao")
       .eq("item_codigo", itemCodigo)
+      .not("chave_nfe", "is", null)
       .order("ano_lancamento", { ascending: true })
       .order("mes_lancamento", { ascending: true })
       .limit(120)
@@ -478,6 +481,7 @@ export async function getAnaliseProdutos(
       .from("produtos_relatorio")
       .select("item_codigo,item_descricao,unidade_medida,desc_gerencial,q_embalagem,v_total_embalagem,v_custo_compra,v_total_danfe,mes_lancamento,ano_lancamento")
       .eq("calcula_cmv", true)
+      .not("chave_nfe", "is", null)
       .limit(100000)
     if (unitId) q = q.eq("unit_id", unitId)
     const { data } = await q
@@ -586,6 +590,7 @@ export async function getBonificacoes(unitId: string | null): Promise<ProdutoCom
     let query = db.from("produtos_relatorio")
       .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
       .or("cfop.in.(5910,6910),v_total_danfe.eq.0,v_total_danfe.eq.0.01")
+      .not("chave_nfe", "is", null)
       .order("id", { ascending: false }).limit(5000)
     if (unitId) query = query.eq("unit_id", unitId)
     const { data, error } = await query
@@ -599,7 +604,7 @@ export async function getFornecedoresLista(unitId: string | null, mes: number, a
     const db = await getProdutosDb()
     let query = db.from("produtos_relatorio").select("fornecedor_nome")
       .eq("mes_lancamento", mes).eq("ano_lancamento", ano)
-      .not("fornecedor_nome", "is", null).limit(50000)
+      .not("fornecedor_nome", "is", null).not("chave_nfe", "is", null).limit(50000)
     if (unitId) query = query.eq("unit_id", unitId)
     const { data, error } = await query
     if (error) throw error
@@ -614,6 +619,7 @@ export async function getComprasPorFornecedor(unitId: string | null, fornecedor:
     let query = db.from("produtos_relatorio")
       .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
       .eq("fornecedor_nome", fornecedor).eq("mes_lancamento", mes).eq("ano_lancamento", ano)
+      .not("chave_nfe", "is", null)
       .order("id", { ascending: false }).limit(10000)
     if (unitId) query = query.eq("unit_id", unitId)
     const { data, error } = await query
@@ -626,7 +632,8 @@ export async function getNotasARevisar(unitId: string | null): Promise<ProdutoCo
   try {
     const db = await getProdutosDb()
     let candidates = db.from("produtos_relatorio").select("nr_danfe")
-      .eq("v_custo_compra", 0).gt("v_total_danfe", 0.01).not("nr_danfe", "is", null).limit(20000)
+      .eq("v_custo_compra", 0).gt("v_total_danfe", 0.01).not("nr_danfe", "is", null)
+      .not("chave_nfe", "is", null).limit(20000)
     if (unitId) candidates = candidates.eq("unit_id", unitId)
     const { data: candidateRows, error: candidateError } = await candidates
     if (candidateError) throw candidateError
@@ -634,6 +641,7 @@ export async function getNotasARevisar(unitId: string | null): Promise<ProdutoCo
     if (!danfes.length) return []
     let query = db.from("produtos_relatorio")
       .select("id,nr_danfe,cfop,dt_emissao,fornecedor_nome,item_descricao,q_embalagem,v_custo_compra,v_total_embalagem,v_total_danfe,calcula_cmv,mes_lancamento,ano_lancamento")
+      .not("chave_nfe", "is", null)
       .in("nr_danfe", danfes).order("fornecedor_nome").order("nr_danfe").limit(50000)
     if (unitId) query = query.eq("unit_id", unitId)
     const { data, error } = await query

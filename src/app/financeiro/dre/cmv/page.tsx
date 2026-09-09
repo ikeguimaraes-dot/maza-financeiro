@@ -65,7 +65,6 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
 
   const unit = await getCurrentUnit()
   const unitId = unit?.id ?? null
-  console.log('[produtos] unitId:', unitId)
 
   const supabase = await createSupabaseServerClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,16 +73,24 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const uq = (qb: any) => unitId ? qb.eq("unit_id", unitId) : qb
 
-  const rows = await fetchAll((from, to) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseProdutosQuery = () => {
     let query = uq(db.from("produtos_relatorio").select("*"))
       .eq("mes_lancamento", mes)
       .eq("ano_lancamento", ano)
       .order("id")
-    query = direcao === "entrada"
+    return direcao === "entrada"
       ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
       : query.eq("direcao_nfe", "saida")
-    return query.range(from, to)
-  })
+  }
+
+  // chave_nfe IS NOT NULL = veio de XML; chave_nfe IS NULL = veio de planilha/Excel.
+  const rows = await fetchAll((from, to) =>
+    baseProdutosQuery().not("chave_nfe", "is", null).range(from, to)
+  )
+  const rowsPlanilha = direcao === "entrada"
+    ? await fetchAll((from, to) => baseProdutosQuery().is("chave_nfe", null).range(from, to))
+    : []
 
   // Previous month for MoM comparison
   const prevMes = mes === 1 ? 12 : mes - 1
@@ -93,6 +100,7 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
       .select("id,v_custo_total,calcula_cmv,desc_gerencial"))
       .eq("mes_lancamento", prevMes)
       .eq("ano_lancamento", prevAno)
+      .not("chave_nfe", "is", null)
       .order("id")
     query = direcao === "entrada"
       ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
@@ -160,6 +168,7 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
 
       <ProdutosClient
         rows={(rows ?? []) as ProdutoRow[]}
+        rowsPlanilha={(rowsPlanilha ?? []) as ProdutoRow[]}
         prevRows={(prevRows ?? []) as Pick<ProdutoRow, "id" | "v_custo_total" | "calcula_cmv" | "desc_gerencial">[]}
         mes={mes}
         ano={ano}

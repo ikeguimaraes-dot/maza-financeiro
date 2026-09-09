@@ -47,6 +47,7 @@ type PrevRow = Pick<ProdutoRow, "id" | "v_custo_total" | "calcula_cmv" | "desc_g
 
 type Props = {
   rows: ProdutoRow[]
+  rowsPlanilha: ProdutoRow[]
   prevRows: PrevRow[]
   mes: number
   ano: number
@@ -60,9 +61,9 @@ type Props = {
 const PAGE_SIZE = 50
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos }: Props) {
+export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise" | "bonificacao" | "fornecedor" | "arevisar">(direcao === "entrada" ? "analise" : "tabela")
+  const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise" | "bonificacao" | "fornecedor" | "arevisar" | "planilha">(direcao === "entrada" ? "analise" : "tabela")
   const [showImport, setShowImport] = useState(false)
   const [showNfeImport, setShowNfeImport] = useState(false)
   const [tableDrawerItem, setTableDrawerItem] = useState<RankingItem | null>(null)
@@ -140,6 +141,52 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
 
   function handleFilterChange() { setPage(0) }
 
+  // ── Planilha filters (linhas sem chave_nfe, item_codigo é hash) ──────────────
+  const [localQPlanilha, setLocalQPlanilha] = useState("")
+  const [filterCatPlanilha, setFilterCatPlanilha] = useState("")
+  const [filterCmvPlanilha, setFilterCmvPlanilha] = useState<"all" | "cmv" | "no_cmv">("all")
+  const [pagePlanilha, setPagePlanilha] = useState(0)
+  const [sortColPlanilha, setSortColPlanilha] = useState<SortCol>("fornecedor_nome")
+  const [sortDirPlanilha, setSortDirPlanilha] = useState<SortDir>("asc")
+
+  const categoriasPlanilha = useMemo(() =>
+    [...new Set(rowsPlanilha.map(r => r.desc_gerencial).filter(Boolean))].sort() as string[]
+  , [rowsPlanilha])
+
+  const filteredPlanilha = useMemo(() => {
+    let r = rowsPlanilha
+    if (localQPlanilha.trim())
+      r = r.filter(x =>
+        (x.fornecedor_nome ?? "").toLowerCase().includes(localQPlanilha.toLowerCase()) ||
+        (x.item_descricao ?? "").toLowerCase().includes(localQPlanilha.toLowerCase()) ||
+        (x.nr_danfe ?? "").toLowerCase().includes(localQPlanilha.toLowerCase())
+      )
+    if (filterCatPlanilha) r = r.filter(x => x.desc_gerencial === filterCatPlanilha)
+    if (filterCmvPlanilha === "cmv")    r = r.filter(x => x.calcula_cmv === true)
+    if (filterCmvPlanilha === "no_cmv") r = r.filter(x => x.calcula_cmv !== true)
+    if (sortColPlanilha) {
+      r = [...r].sort((a, b) => {
+        const av = a[sortColPlanilha] ?? ""
+        const bv = b[sortColPlanilha] ?? ""
+        if (av < bv) return sortDirPlanilha === "asc" ? -1 : 1
+        if (av > bv) return sortDirPlanilha === "asc" ? 1 : -1
+        return 0
+      })
+    }
+    return r
+  }, [rowsPlanilha, localQPlanilha, filterCatPlanilha, filterCmvPlanilha, sortColPlanilha, sortDirPlanilha])
+
+  const totalPagesPlanilha = Math.ceil(filteredPlanilha.length / PAGE_SIZE)
+  const pageRowsPlanilha   = filteredPlanilha.slice(pagePlanilha * PAGE_SIZE, (pagePlanilha + 1) * PAGE_SIZE)
+
+  function handleSortPlanilha(col: SortCol) {
+    if (sortColPlanilha === col) setSortDirPlanilha(d => d === "asc" ? "desc" : "asc")
+    else { setSortColPlanilha(col); setSortDirPlanilha("asc") }
+    setPagePlanilha(0)
+  }
+
+  function handleFilterChangePlanilha() { setPagePlanilha(0) }
+
   // ── CMV data ────────────────────────────────────────────────────────────────
   const cmvRows      = rows.filter(r => r.calcula_cmv === true)
   const totalCmv     = cmvRows.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0)
@@ -173,7 +220,7 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
     return map
   }, [prevCmvRows])
 
-  const hasData       = rows.length > 0
+  const hasData       = rows.length > 0 || rowsPlanilha.length > 0
   const totalComprado = rows.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0)
   const fornUnicos    = new Set(rows.map(r => r.fornecedor_nome).filter(Boolean)).size
 
@@ -264,8 +311,8 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
 
       {/* ── Tab nav ── */}
       <nav style={{ display:"flex", gap:2, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
-        {(["analise", "cmv", "ranking", "tabela", "bonificacao", "fornecedor", "arevisar"] as const).map(t => {
-          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise", bonificacao: "Bonificação", fornecedor: "Fornecedor", arevisar: "A Revisar" }
+        {(["analise", "cmv", "ranking", "tabela", "bonificacao", "fornecedor", "arevisar", "planilha"] as const).map(t => {
+          const labels = { tabela: "Tabela", ranking: "Ranking", cmv: "CMV", analise: "Análise", bonificacao: "Bonificação", fornecedor: "Fornecedor", arevisar: "A Revisar", planilha: "Planilha" }
           if (direcao === "saida" && t !== "tabela") return null
           const active = tab === t
           return (
@@ -472,6 +519,177 @@ export function ProdutosClient({ rows, prevRows, mes, ano, meses, unitId, q = ""
                 <button onClick={() => setPage(totalPages-1)} disabled={page===totalPages-1}
                   style={{ padding:"5px 10px",borderRadius:6,fontSize:11,border:"1px solid var(--border)",
                     background:"var(--surface)",color:page===totalPages-1?"var(--text-3)":"var(--text)",cursor:page===totalPages-1?"default":"pointer" }}>
+                  »
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Planilha tab (linhas sem chave_nfe — importação por Excel) ── */}
+      {hasData && tab === "planilha" && (
+        <div style={{ display:"grid", gap:16 }}>
+          {/* Filters */}
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+            <input
+              placeholder="Buscar NF, fornecedor ou item…"
+              value={localQPlanilha}
+              onChange={e => { setLocalQPlanilha(e.target.value); setPagePlanilha(0) }}
+              style={{
+                padding:"7px 12px", borderRadius:8, fontSize:12,
+                background:"var(--surface)", color:"var(--text)",
+                border:"1px solid var(--border)", minWidth:220, flex:1,
+              }}
+            />
+            <select
+              value={filterCatPlanilha}
+              onChange={e => { setFilterCatPlanilha(e.target.value); handleFilterChangePlanilha() }}
+              style={{
+                padding:"7px 12px", borderRadius:8, fontSize:12,
+                background:"var(--surface)", color:"var(--text)",
+                border:"1px solid var(--border)", minWidth:180,
+              }}
+            >
+              <option value="">Todas as categorias</option>
+              {categoriasPlanilha.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div style={{ display:"flex", borderRadius:8, border:"1px solid var(--border)", overflow:"hidden" }}>
+              {([["all","Todos"],["cmv","CMV"],["no_cmv","Sem CMV"]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => { setFilterCmvPlanilha(v); handleFilterChangePlanilha() }} style={{
+                  padding:"7px 14px", fontSize:12, fontWeight:filterCmvPlanilha===v?700:500,
+                  background:filterCmvPlanilha===v?"var(--brand, #C4622D)":"var(--surface)",
+                  color:filterCmvPlanilha===v?"var(--primary-foreground)":"var(--text-3)",
+                  border:"none", cursor:"pointer", whiteSpace:"nowrap",
+                }}>{label}</button>
+              ))}
+            </div>
+            <span style={{ fontSize:11, color:"var(--text-3)", marginLeft:"auto" }}>
+              {filteredPlanilha.length.toLocaleString("pt-BR")} item{filteredPlanilha.length!==1?"s":""}
+            </span>
+          </div>
+
+          {/* Table */}
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12,
+              background:"var(--surface)", border:"1px solid var(--border)", borderRadius:10 }}>
+              <thead>
+                <tr style={{ background:"var(--surface-2)" }}>
+                  {([
+                    ["dt_emissao","Data","left"],
+                    ["nr_danfe","Número NF","left"],
+                    ["fornecedor_nome","Fornecedor","left"],
+                    ["item_descricao","Item","left"],
+                    ["desc_gerencial","Categoria","left"],
+                    ["q_estoque","Qtd Estoque","right"],
+                    ["unidade_medida","Unidade","right"],
+                    ["v_total_embalagem","V. Total Emb.","right"],
+                    ["v_custo_medio","Custo Médio","right"],
+                    ["v_custo_compra","Custo Compra","right"],
+                    ["v_custo_total","Custo Total","right"],
+                    ["perc_variacao","% Variação","right"],
+                    ["calcula_cmv","CMV","right"],
+                  ] as [keyof ProdutoRow, string, string][]).map(([col, label, align]) => (
+                    <th key={col} onClick={() => handleSortPlanilha(col)} style={{
+                      padding:"8px 12px", textAlign:align as "left"|"right",
+                      fontSize:10, fontWeight:700, letterSpacing:0.4,
+                      textTransform:"uppercase", color:"var(--text-3)",
+                      borderBottom:"1px solid var(--border)", whiteSpace:"nowrap",
+                      cursor:"pointer", userSelect:"none",
+                    }}>
+                      {label}{sortColPlanilha===col ? (sortDirPlanilha==="asc"?" ↑":" ↓") : ""}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageRowsPlanilha.map(r => (
+                  <tr key={r.id} style={{ borderTop:"1px solid var(--border)", cursor:"default" }}>
+                    <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                      {fmtDate(r.dt_emissao)}
+                    </td>
+                    <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:600, whiteSpace:"nowrap" }}>
+                      {r.nr_danfe ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:500, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {r.fornecedor_nome ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", color:"var(--text)", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {r.item_descricao ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                      {r.desc_gerencial ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                      {fmtQty(r.q_estoque)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text-3)" }}>
+                      {r.unidade_medida ?? "—"}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                      {fmtBRL(r.v_total_embalagem)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                      {fmtBRL(r.v_custo_medio)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                      {fmtBRL(r.v_custo_compra)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right", fontWeight:600, color:"var(--text)" }}>
+                      {fmtBRL(r.v_custo_total)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right",
+                      color:r.perc_variacao==null?"var(--text-3)":r.perc_variacao>0?"#EF4444":"#22C55E" }}>
+                      {fmtPct(r.perc_variacao)}
+                    </td>
+                    <td style={{ padding:"7px 12px", textAlign:"right" }}>
+                      {r.calcula_cmv === true
+                        ? <span style={{ fontSize:10,fontWeight:700,color:"#22C55E",background:"rgba(34,197,94,0.12)",padding:"2px 8px",borderRadius:99 }}>SIM</span>
+                        : <span style={{ fontSize:10,color:"var(--text-3)" }}>NÃO</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop:"2px solid var(--border)", background:"var(--surface-2)" }}>
+                  <td colSpan={7} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
+                    {filterCatPlanilha ? `Total ${filterCatPlanilha}` : "Total geral"}
+                  </td>
+                  <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
+                    {fmtBRL(filteredPlanilha.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0))}
+                  </td>
+                  <td colSpan={5} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPagesPlanilha > 1 && (
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"var(--text-3)" }}>
+              <span>
+                Página {pagePlanilha + 1} de {totalPagesPlanilha} · {filteredPlanilha.length.toLocaleString("pt-BR")} itens
+              </span>
+              <div style={{ display:"flex", gap:4 }}>
+                <button onClick={() => setPagePlanilha(0)} disabled={pagePlanilha===0}
+                  style={{ padding:"5px 10px",borderRadius:6,fontSize:11,border:"1px solid var(--border)",
+                    background:"var(--surface)",color:pagePlanilha===0?"var(--text-3)":"var(--text)",cursor:pagePlanilha===0?"default":"pointer" }}>
+                  «
+                </button>
+                <button onClick={() => setPagePlanilha(p => Math.max(0, p-1))} disabled={pagePlanilha===0}
+                  style={{ padding:"5px 10px",borderRadius:6,fontSize:11,border:"1px solid var(--border)",
+                    background:"var(--surface)",color:pagePlanilha===0?"var(--text-3)":"var(--text)",cursor:pagePlanilha===0?"default":"pointer" }}>
+                  ‹ Anterior
+                </button>
+                <button onClick={() => setPagePlanilha(p => Math.min(totalPagesPlanilha-1, p+1))} disabled={pagePlanilha===totalPagesPlanilha-1}
+                  style={{ padding:"5px 10px",borderRadius:6,fontSize:11,border:"1px solid var(--border)",
+                    background:"var(--surface)",color:pagePlanilha===totalPagesPlanilha-1?"var(--text-3)":"var(--text)",cursor:pagePlanilha===totalPagesPlanilha-1?"default":"pointer" }}>
+                  Próximo ›
+                </button>
+                <button onClick={() => setPagePlanilha(totalPagesPlanilha-1)} disabled={pagePlanilha===totalPagesPlanilha-1}
+                  style={{ padding:"5px 10px",borderRadius:6,fontSize:11,border:"1px solid var(--border)",
+                    background:"var(--surface)",color:pagePlanilha===totalPagesPlanilha-1?"var(--text-3)":"var(--text)",cursor:pagePlanilha===totalPagesPlanilha-1?"default":"pointer" }}>
                   »
                 </button>
               </div>
