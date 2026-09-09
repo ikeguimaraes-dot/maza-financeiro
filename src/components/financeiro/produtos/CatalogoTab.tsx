@@ -1,13 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { gerarCatalogoAutomatico, getCatalogoGerado } from "@/app/financeiro/dre/cmv/actions"
+import { gerarCatalogoAutomatico, getCatalogoGerado, limparCatalogo } from "@/app/financeiro/dre/cmv/actions"
 import type { GerarCatalogoResultado, CatalogoItem } from "@/app/financeiro/dre/cmv/actions"
 
 export function CatalogoTab() {
   const [itens, setItens] = useState<CatalogoItem[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [gerando, setGerando] = useState(false)
+  const [limpando, setLimpando] = useState(false)
   const [resultado, setResultado] = useState<GerarCatalogoResultado | null>(null)
   const [erro, setErro] = useState("")
 
@@ -29,6 +30,15 @@ export function CatalogoTab() {
     await carregar()
   }
 
+  async function handleLimpar() {
+    if (!window.confirm("Isso apaga TODO o catálogo gerado e todos os vínculos. produtos_relatorio não é afetado. Confirmar?")) return
+    setLimpando(true); setErro(""); setResultado(null)
+    const r = await limparCatalogo()
+    setLimpando(false)
+    if (!r.ok) { setErro(r.error ?? "Falha ao limpar catálogo."); return }
+    await carregar()
+  }
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
@@ -38,16 +48,25 @@ export function CatalogoTab() {
             Catálogo de produtos
           </p>
           <p style={{ fontSize: 11, color: "var(--text-3)", margin: "2px 0 0" }}>
-            Gera automaticamente a partir das compras (XML e planilha) que ainda não têm produto.
+            Gera automaticamente a partir das compras por XML que ainda não têm produto.
           </p>
         </div>
-        <button disabled={gerando} onClick={() => void handleGerar()} style={{
-          padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-          background: "var(--brand, #C4622D)", color: "var(--primary-foreground)", border: "none",
-          cursor: gerando ? "default" : "pointer", whiteSpace: "nowrap",
-        }}>
-          {gerando ? "Gerando…" : "Gerar catálogo"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button disabled={gerando || limpando} onClick={() => void handleLimpar()} style={{
+            padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+            background: "var(--surface-2)", color: "#ef4444", border: "1px solid var(--border)",
+            cursor: (gerando || limpando) ? "default" : "pointer", whiteSpace: "nowrap",
+          }}>
+            {limpando ? "Limpando…" : "Limpar catálogo"}
+          </button>
+          <button disabled={gerando || limpando} onClick={() => void handleGerar()} style={{
+            padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+            background: "var(--brand, #C4622D)", color: "var(--primary-foreground)", border: "none",
+            cursor: (gerando || limpando) ? "default" : "pointer", whiteSpace: "nowrap",
+          }}>
+            {gerando ? "Gerando…" : "Gerar catálogo"}
+          </button>
+        </div>
       </div>
 
       {erro && (
@@ -59,7 +78,7 @@ export function CatalogoTab() {
       {resultado && (
         <div style={{ padding: "9px 12px", borderRadius: 7, background: "rgba(34,197,94,.1)",
           color: "#22c55e", fontSize: 12 }}>
-          {resultado.produtosCriados} produto{resultado.produtosCriados !== 1 ? "s" : ""} criado{resultado.produtosCriados !== 1 ? "s" : ""} · {resultado.itensVinculados} ite{resultado.itensVinculados !== 1 ? "ns" : "m"} vinculado{resultado.itensVinculados !== 1 ? "s" : ""}
+          {resultado.linhasLidas.toLocaleString("pt-BR")} linhas lidas · {resultado.itensDistintos.toLocaleString("pt-BR")} itens distintos · {resultado.produtosCriados} produto{resultado.produtosCriados !== 1 ? "s" : ""} criado{resultado.produtosCriados !== 1 ? "s" : ""} · {resultado.vinculosCriados} vínculo{resultado.vinculosCriados !== 1 ? "s" : ""} criado{resultado.vinculosCriados !== 1 ? "s" : ""}
           {(resultado.excluidosPorNcm > 0 || resultado.excluidosPorCategoria > 0) && (
             <> · {resultado.excluidosPorNcm} ignorado{resultado.excluidosPorNcm !== 1 ? "s" : ""} por NCM fora da faixa alimentar · {resultado.excluidosPorCategoria} ignorado{resultado.excluidosPorCategoria !== 1 ? "s" : ""} por categoria não-produto</>
           )}

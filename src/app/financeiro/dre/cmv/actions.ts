@@ -1010,17 +1010,34 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+// Blocos de 1000 via .range() -- o Supabase/PostgREST aplica um teto de
+// linhas por request independente do .limit() pedido no client, entao um
+// .limit(200000) sozinho e' silenciosamente truncado sem erro nenhum.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAllPaginado(buildQuery: (from: number, to: number) => any): Promise<any[]> {
+  const pageSize = 1000
+  const result: any[] = []
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1)
+    if (error) throw new Error(error.message)
+    const page = data ?? []
+    result.push(...page)
+    if (page.length < pageSize) return result
+  }
+}
+
 async function getCategoriasConhecidas(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any
 ): Promise<Set<string>> {
-  const { data } = await db
-    .from("produtos_relatorio")
-    .select("desc_gerencial")
-    .not("desc_gerencial", "is", null)
-    .limit(200000)
+  const data = await fetchAllPaginado((from, to) =>
+    db.from("produtos_relatorio")
+      .select("desc_gerencial")
+      .not("desc_gerencial", "is", null)
+      .range(from, to)
+  )
   const contagem = new Map<string, number>()
-  for (const row of (data ?? []) as Array<{ desc_gerencial: string }>) {
+  for (const row of data as Array<{ desc_gerencial: string }>) {
     const v = row.desc_gerencial.trim().replace(/-+$/, "").trim().toUpperCase()
     if (v.length === 0 || v.length > CATEGORIA_PREFIXO_MAX_LEN) continue
     if (/[-*()0-9]/.test(v)) continue
@@ -1085,8 +1102,10 @@ function calcularNucleoECalibre(
 
 export type GerarCatalogoResultado = {
   ok: boolean
+  linhasLidas: number
+  itensDistintos: number
   produtosCriados: number
-  itensVinculados: number
+  vinculosCriados: number
   excluidosPorNcm: number
   excluidosPorCategoria: number
   error?: string
@@ -1132,7 +1151,10 @@ type GrupoCatalogo = {
 }
 
 export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado> {
-  const empty = { ok: false, produtosCriados: 0, itensVinculados: 0, excluidosPorNcm: 0, excluidosPorCategoria: 0 }
+  const empty = {
+    ok: false, linhasLidas: 0, itensDistintos: 0, produtosCriados: 0, vinculosCriados: 0,
+    excluidosPorNcm: 0, excluidosPorCategoria: 0,
+  }
   try {
     await requireUser()
     const supabase = createServiceClient()
@@ -1144,22 +1166,33 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
 
     // Pares já vinculados (manual ou geração anterior) ficam intocados — é
     // isso que torna a função aditiva e idempotente.
-    const { data: existentes, error: existentesError } = await db
-      .from("produtos_depara")
-      .select("fornecedor_cnpj,item_codigo,produto_id,item_descricao,ncm")
-      .limit(200000)
-    if (existentesError) return { ...empty, error: existentesError.message }
+    let existentes: Array<{
+      fornecedor_cnpj: string; item_codigo: string; produto_id: string | null
+      item_descricao: string | null; ncm: string | null
+    }>
+    try {
+      existentes = await fetchAllPaginado((from, to) =>
+        db.from("produtos_depara")
+          .select("fornecedor_cnpj,item_codigo,produto_id,item_descricao,ncm")
+          .range(from, to)
+      )
+    } catch (e) {
+      return { ...empty, error: e instanceof Error ? e.message : String(e) }
+    }
 
-    const { data: ativos, error: ativosError } = await db.from("produtos_catalogo").select("id").eq("ativo", true)
-    if (ativosError) return { ...empty, error: ativosError.message }
-    const ativosSet = new Set((ativos ?? []).map((p: { id: string }) => p.id))
+    let ativos: Array<{ id: string }>
+    try {
+      ativos = await fetchAllPaginado((from, to) =>
+        db.from("produtos_catalogo").select("id").eq("ativo", true).range(from, to)
+      )
+    } catch (e) {
+      return { ...empty, error: e instanceof Error ? e.message : String(e) }
+    }
+    const ativosSet = new Set(ativos.map((p: { id: string }) => p.id))
 
     const jaVinculados = new Set<string>()
     const grupoParaProdutoId = new Map<string, string>()
-    for (const row of (existentes ?? []) as Array<{
-      fornecedor_cnpj: string; item_codigo: string; produto_id: string | null
-      item_descricao: string | null; ncm: string | null
-    }>) {
+    for (const row of existentes) {
       jaVinculados.add(`${row.fornecedor_cnpj} ${row.item_codigo}`)
       if (row.produto_id && ativosSet.has(row.produto_id) && row.item_descricao) {
         const { nucleo, calibre } = calcularNucleoECalibre(row.item_descricao, categorias)
@@ -1168,24 +1201,30 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
       }
     }
 
-    const { data: rows, error: rowsError } = await db
-      .from("produtos_relatorio")
-      .select("fornecedor_codigo,fornecedor_nome,item_codigo,item_descricao,tipo_item,desc_gerencial,unidade_medida,v_total_embalagem")
-      .eq("direcao_nfe", "entrada")
-      .not("item_codigo", "is", null)
-      .not("item_descricao", "is", null)
-      .limit(200000)
-    if (rowsError) return { ...empty, error: rowsError.message }
+    let rows: LinhaEntrada[]
+    try {
+      rows = await fetchAllPaginado((from, to) =>
+        db.from("produtos_relatorio")
+          .select("fornecedor_codigo,fornecedor_nome,item_codigo,item_descricao,tipo_item,desc_gerencial,unidade_medida,v_total_embalagem")
+          .eq("direcao_nfe", "entrada")
+          .not("chave_nfe", "is", null)
+          .not("fornecedor_codigo", "is", null)
+          .not("item_codigo", "is", null)
+          .not("item_descricao", "is", null)
+          .range(from, to)
+      )
+    } catch (e) {
+      return { ...empty, error: e instanceof Error ? e.message : String(e) }
+    }
+    const linhasLidas = rows.length
 
     // Agrega por (fornecedor, item_codigo) primeiro — evita recalcular o
     // núcleo pra cada compra individual do mesmo item.
     let excluidosPorNcm = 0
     let excluidosPorCategoria = 0
     const pendentesPorPar = new Map<string, ParPendente>()
-    for (const r of (rows ?? []) as LinhaEntrada[]) {
-      const fornecedorCnpj = r.fornecedor_codigo
-        ? r.fornecedor_codigo
-        : `NOME:${normalizeDescricao(r.fornecedor_nome ?? "")}`
+    for (const r of rows) {
+      const fornecedorCnpj = r.fornecedor_codigo as string
       const parKey = `${fornecedorCnpj} ${r.item_codigo}`
       if (jaVinculados.has(parKey)) continue
 
@@ -1212,7 +1251,11 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
       pendentesPorPar.set(parKey, acc)
     }
 
-    if (pendentesPorPar.size === 0) return { ok: true, produtosCriados: 0, itensVinculados: 0, excluidosPorNcm, excluidosPorCategoria }
+    const itensDistintos = pendentesPorPar.size
+
+    if (itensDistintos === 0) {
+      return { ok: true, linhasLidas, itensDistintos, produtosCriados: 0, vinculosCriados: 0, excluidosPorNcm, excluidosPorCategoria }
+    }
 
     // Agrupa os pares pendentes por (ncm, núcleo, calibre).
     const grupos = new Map<string, GrupoCatalogo>()
@@ -1232,10 +1275,16 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
 
     // Próximo código sequencial livre — só considera códigos já no formato 0000-9999
     // (códigos manuais tipo "SAL-ATL-1416" da FASE 2 não entram nessa contagem).
-    const { data: codigosExistentes, error: codigosError } = await db.from("produtos_catalogo").select("codigo")
-    if (codigosError) return { ...empty, error: codigosError.message }
+    let codigosExistentes: Array<{ codigo: string }>
+    try {
+      codigosExistentes = await fetchAllPaginado((from, to) =>
+        db.from("produtos_catalogo").select("codigo").range(from, to)
+      )
+    } catch (e) {
+      return { ...empty, linhasLidas, itensDistintos, error: e instanceof Error ? e.message : String(e) }
+    }
     let proximoCodigo = 1
-    for (const row of (codigosExistentes ?? []) as Array<{ codigo: string }>) {
+    for (const row of codigosExistentes) {
       if (/^\d{4}$/.test(row.codigo)) {
         const n = parseInt(row.codigo, 10)
         if (n >= proximoCodigo) proximoCodigo = n + 1
@@ -1267,12 +1316,14 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
         .insert({ codigo, nome, ncm: grupo.ncm || null, unidade_padrao: unidadePadrao, categoria: null })
         .select("id")
         .single()
-      if (novoError) return { ok: false, produtosCriados, itensVinculados: 0, excluidosPorNcm, excluidosPorCategoria, error: novoError.message }
+      if (novoError) {
+        return { ok: false, linhasLidas, itensDistintos, produtosCriados, vinculosCriados: 0, excluidosPorNcm, excluidosPorCategoria, error: novoError.message }
+      }
       produtosCriados += 1
       for (const p of grupo.pares) paresParaVincular.push({ pendente: p, produtoId: novo.id })
     }
 
-    let itensVinculados = 0
+    let vinculosCriados = 0
     for (let i = 0; i < paresParaVincular.length; i += 500) {
       const chunk = paresParaVincular.slice(i, i + 500).map(({ pendente, produtoId }) => ({
         produto_id: produtoId,
@@ -1285,13 +1336,50 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
       const { error } = await db
         .from("produtos_depara")
         .upsert(chunk, { onConflict: "fornecedor_cnpj,item_codigo" })
-      if (error) return { ok: false, produtosCriados, itensVinculados, excluidosPorNcm, excluidosPorCategoria, error: error.message }
-      itensVinculados += chunk.length
+      if (error) {
+        return { ok: false, linhasLidas, itensDistintos, produtosCriados, vinculosCriados, excluidosPorNcm, excluidosPorCategoria, error: error.message }
+      }
+      vinculosCriados += chunk.length
     }
 
-    return { ok: true, produtosCriados, itensVinculados, excluidosPorNcm, excluidosPorCategoria }
+    return { ok: true, linhasLidas, itensDistintos, produtosCriados, vinculosCriados, excluidosPorNcm, excluidosPorCategoria }
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export type LimparCatalogoResultado = {
+  ok: boolean
+  produtosRemovidos: number
+  vinculosRemovidos: number
+  error?: string
+}
+
+// Apaga produtos_catalogo e produtos_depara. Seguro: produtos_relatorio nao e'
+// tocado (produto_id continua null la), so o catalogo gerado e' descartado.
+export async function limparCatalogo(): Promise<LimparCatalogoResultado> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, produtosRemovidos: 0, vinculosRemovidos: 0, error: "Sem conexao com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+
+    const NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+    const { data: depara, error: deparaError } = await db
+      .from("produtos_depara").delete().neq("id", NIL_UUID).select("id")
+    if (deparaError) return { ok: false, produtosRemovidos: 0, vinculosRemovidos: 0, error: deparaError.message }
+
+    const { data: catalogo, error: catalogoError } = await db
+      .from("produtos_catalogo").delete().neq("id", NIL_UUID).select("id")
+    if (catalogoError) {
+      return { ok: false, produtosRemovidos: 0, vinculosRemovidos: depara?.length ?? 0, error: catalogoError.message }
+    }
+
+    return { ok: true, produtosRemovidos: catalogo?.length ?? 0, vinculosRemovidos: depara?.length ?? 0 }
+  } catch (e) {
+    return { ok: false, produtosRemovidos: 0, vinculosRemovidos: 0, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
