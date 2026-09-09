@@ -24,9 +24,6 @@ const fmtPct = (v: number | null | undefined) =>
 const fmtQty = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(v)
 
-const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-const mesLabel = (m: number, a: number) => `${MESES[(m - 1) % 12]} ${a}`
-
 // ── Rank colors ──────────────────────────────────────────────────────────────
 const rankColor = (i: number) => {
   if (i === 0) return "#FFD700"
@@ -377,16 +374,25 @@ export function RankingTab({ unitId, mes, ano }: Props) {
 }
 
 // ── Histórico Drawer ──────────────────────────────────────────────────────────
+const fmtDate = (value: string | null | undefined) => {
+  if (!value) return "—"
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+  }).format(date)
+}
+
 type DrawerProps = {
   item: RankingItem
   historico: HistoricoRow[]
   loading: boolean
   onClose: () => void
+  onSelecionarNota?: (chaveNfe: string) => void
 }
 
-export function HistoricoDrawer({ item, historico, loading, onClose }: DrawerProps) {
+export function HistoricoDrawer({ item, historico, loading, onClose, onSelecionarNota }: DrawerProps) {
   const chartData = historico.map(h => ({
-    label:      mesLabel(h.mes_lancamento, h.ano_lancamento),
+    label:      fmtDate(h.dt_emissao),
     custoTotal: h.v_custo_total != null ? Math.abs(h.v_custo_total) : null,
     custoMedio: h.v_custo_medio,
     quantidade: h.q_estoque,
@@ -451,7 +457,7 @@ export function HistoricoDrawer({ item, historico, loading, onClose }: DrawerPro
           {!loading && historico.length > 0 && (
             <>
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-3)", margin: "0 0 12px" }}>
-                Evolução — {historico.length} {historico.length === 1 ? "mês" : "meses"}
+                Evolução — {historico.length} {historico.length === 1 ? "compra" : "compras"}
               </p>
               <ResponsiveContainer width="100%" height={220}>
                 <ComposedChart data={chartData} margin={{ top: 4, right: 44, left: 0, bottom: 24 }}>
@@ -483,13 +489,14 @@ export function HistoricoDrawer({ item, historico, loading, onClose }: DrawerPro
               </div>
 
               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-3)", margin: "0 0 10px" }}>
-                Registros por mês
+                Compras
               </p>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
                   <thead>
                     <tr style={{ background: "var(--surface-2)" }}>
-                      <th style={thD()}>Mês</th>
+                      <th style={thD()}>Data</th>
+                      <th style={thD()}>Nota</th>
                       <th style={thD()}>Fornecedor</th>
                       <th style={thD("right")}>Qtd</th>
                       <th style={thD("right")}>Custo Médio</th>
@@ -498,28 +505,39 @@ export function HistoricoDrawer({ item, historico, loading, onClose }: DrawerPro
                     </tr>
                   </thead>
                   <tbody>
-                    {historico.map((h, i) => (
-                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
-                        <td style={{ padding: "6px 10px", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
-                          {mesLabel(h.mes_lancamento, h.ano_lancamento)}
-                        </td>
-                        <td style={{ padding: "6px 10px", color: "var(--text-3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {h.fornecedor_nome ?? "—"}
-                        </td>
-                        <td style={{ padding: "6px 10px", textAlign: "right", color: "var(--text)" }}>{fmtQty(h.q_estoque)}</td>
-                        <td style={{ padding: "6px 10px", textAlign: "right", color: "var(--text)" }}>{fmtBRL(h.v_custo_medio)}</td>
-                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: "var(--text)" }}>
-                          {fmtBRL(h.v_custo_total != null ? Math.abs(h.v_custo_total) : null)}
-                        </td>
-                        <td style={{
-                          padding: "6px 10px", textAlign: "right",
-                          color: h.perc_variacao == null ? "var(--text-3)" : h.perc_variacao > 0 ? "#EF4444" : "#22C55E",
-                          fontWeight: h.perc_variacao != null ? 600 : 400,
-                        }}>
-                          {fmtPct(h.perc_variacao)}
-                        </td>
-                      </tr>
-                    ))}
+                    {historico.map((h, i) => {
+                      const podeVoltar = Boolean(onSelecionarNota && h.chave_nfe)
+                      return (
+                        <tr key={i}
+                          onClick={() => { if (podeVoltar) onSelecionarNota!(h.chave_nfe!) }}
+                          style={{ borderTop: "1px solid var(--border)", cursor: podeVoltar ? "pointer" : "default" }}
+                          onMouseEnter={e => { if (podeVoltar) e.currentTarget.style.background = "var(--surface-2)" }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "" }}
+                        >
+                          <td style={{ padding: "6px 10px", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
+                            {fmtDate(h.dt_emissao)}
+                          </td>
+                          <td style={{ padding: "6px 10px", color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                            {h.nr_danfe ?? "—"}
+                          </td>
+                          <td style={{ padding: "6px 10px", color: "var(--text-3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {h.fornecedor_nome ?? "—"}
+                          </td>
+                          <td style={{ padding: "6px 10px", textAlign: "right", color: "var(--text)" }}>{fmtQty(h.q_estoque)}</td>
+                          <td style={{ padding: "6px 10px", textAlign: "right", color: "var(--text)" }}>{fmtBRL(h.v_custo_medio)}</td>
+                          <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: "var(--text)" }}>
+                            {fmtBRL(h.v_custo_total != null ? Math.abs(h.v_custo_total) : null)}
+                          </td>
+                          <td style={{
+                            padding: "6px 10px", textAlign: "right",
+                            color: h.perc_variacao == null ? "var(--text-3)" : h.perc_variacao > 0 ? "#EF4444" : "#22C55E",
+                            fontWeight: h.perc_variacao != null ? 600 : 400,
+                          }}>
+                            {fmtPct(h.perc_variacao)}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

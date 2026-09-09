@@ -511,6 +511,9 @@ export async function getRankingProdutos(
 export type HistoricoRow = {
   mes_lancamento: number
   ano_lancamento: number
+  dt_emissao: string | null
+  nr_danfe: string | null
+  chave_nfe: string | null
   fornecedor_nome: string | null
   q_estoque: number | null
   v_custo_medio: number | null
@@ -520,26 +523,75 @@ export type HistoricoRow = {
   item_descricao: string | null
 }
 
+type HistoricoRowBruto = HistoricoRow & { fornecedor_codigo: string | null; item_codigo: string | null }
+
+const HISTORICO_SELECT = "mes_lancamento,ano_lancamento,dt_emissao,nr_danfe,chave_nfe,fornecedor_nome,fornecedor_codigo,item_codigo,q_estoque,v_custo_medio,v_custo_total,perc_variacao,desc_gerencial,item_descricao"
+
+function paraHistoricoRow(r: HistoricoRowBruto): HistoricoRow {
+  return {
+    mes_lancamento: r.mes_lancamento, ano_lancamento: r.ano_lancamento,
+    dt_emissao: r.dt_emissao, nr_danfe: r.nr_danfe, chave_nfe: r.chave_nfe,
+    fornecedor_nome: r.fornecedor_nome, q_estoque: r.q_estoque,
+    v_custo_medio: r.v_custo_medio, v_custo_total: r.v_custo_total,
+    perc_variacao: r.perc_variacao, desc_gerencial: r.desc_gerencial,
+    item_descricao: r.item_descricao,
+  }
+}
+
+// Com produtoId: histórico do PRODUTO do catálogo — todas as variações de
+// descrição e todos os fornecedores vinculados a ele, não só este item_codigo.
+// Sem produtoId (ou sem vínculo): comportamento anterior, por item_codigo.
 export async function getHistoricoProduto(
   unitId: string | null,
-  itemCodigo: string
+  itemCodigo: string,
+  produtoId?: string | null
 ): Promise<HistoricoRow[]> {
   try {
     const supabase = await createSupabaseServerClient()
     if (!supabase) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
-    let q = db
-      .from("produtos_relatorio")
-      .select("mes_lancamento,ano_lancamento,fornecedor_nome,q_estoque,v_custo_medio,v_custo_total,perc_variacao,desc_gerencial,item_descricao")
-      .eq("item_codigo", itemCodigo)
-      .not("chave_nfe", "is", null)
-      .order("ano_lancamento", { ascending: true })
-      .order("mes_lancamento", { ascending: true })
-      .limit(120)
-    if (unitId) q = q.eq("unit_id", unitId)
-    const { data } = await q
-    return (data ?? []) as HistoricoRow[]
+
+    if (produtoId) {
+      const pares = await fetchAllPaginado((from, to) =>
+        db.from("produtos_depara")
+          .select("fornecedor_cnpj,item_codigo")
+          .eq("produto_id", produtoId)
+          .range(from, to)
+      ) as Array<{ fornecedor_cnpj: string; item_codigo: string }>
+
+      if (pares.length > 0) {
+        const itemCodigos = [...new Set(pares.map(p => p.item_codigo))]
+        const paresValidos = new Set(pares.map(p => `${p.fornecedor_cnpj} ${p.item_codigo}`))
+
+        const rows = await fetchAllPaginado((from, to) => {
+          let q = db.from("produtos_relatorio")
+            .select(HISTORICO_SELECT)
+            .in("item_codigo", itemCodigos)
+            .not("chave_nfe", "is", null)
+            .order("dt_emissao", { ascending: false })
+            .range(from, to)
+          if (unitId) q = q.eq("unit_id", unitId)
+          return q
+        }) as HistoricoRowBruto[]
+
+        return rows
+          .filter(r => paresValidos.has(`${r.fornecedor_codigo} ${r.item_codigo}`))
+          .map(paraHistoricoRow)
+      }
+    }
+
+    const rows = await fetchAllPaginado((from, to) => {
+      let q = db.from("produtos_relatorio")
+        .select(HISTORICO_SELECT)
+        .eq("item_codigo", itemCodigo)
+        .not("chave_nfe", "is", null)
+        .order("dt_emissao", { ascending: false })
+        .range(from, to)
+      if (unitId) q = q.eq("unit_id", unitId)
+      return q
+    }) as HistoricoRowBruto[]
+    return rows.map(paraHistoricoRow)
   } catch {
     return []
   }
@@ -1521,6 +1573,7 @@ export type NotaItem = {
   quantidade: number | null
   valorUnitario: number | null
   valorTotal: number | null
+  produtoId: string | null
   produtoCodigo: string | null
   produtoNome: string | null
 }
@@ -1572,7 +1625,7 @@ export async function getNotaCompleta(chaveNfe: string): Promise<NotaCompletaRes
     const fornecedorCnpj = itensRaw.find(r => r.fornecedor_codigo)?.fornecedor_codigo ?? null
     const itemCodigos = [...new Set(itensRaw.map(r => r.item_codigo).filter((v): v is string => Boolean(v)))]
 
-    const produtoPorItemCodigo = new Map<string, { codigo: string; nome: string }>()
+    const produtoPorItemCodigo = new Map<string, { id: string; codigo: string; nome: string }>()
     if (fornecedorCnpj && itemCodigos.length > 0) {
       const deparaRows = await fetchAllPaginado((from, to) =>
         db.from("produtos_depara")
@@ -1583,12 +1636,12 @@ export async function getNotaCompleta(chaveNfe: string): Promise<NotaCompletaRes
       ) as Array<{ item_codigo: string; produto_id: string | null }>
 
       const produtoIds = [...new Set(deparaRows.map(d => d.produto_id).filter((v): v is string => Boolean(v)))]
-      const catalogoPorId = new Map<string, { codigo: string; nome: string }>()
+      const catalogoPorId = new Map<string, { id: string; codigo: string; nome: string }>()
       if (produtoIds.length > 0) {
         const catalogoRows = await fetchAllPaginado((from, to) =>
           db.from("produtos_catalogo").select("id,codigo,nome").in("id", produtoIds).range(from, to)
         ) as Array<{ id: string; codigo: string; nome: string }>
-        for (const c of catalogoRows) catalogoPorId.set(c.id, { codigo: c.codigo, nome: c.nome })
+        for (const c of catalogoRows) catalogoPorId.set(c.id, { id: c.id, codigo: c.codigo, nome: c.nome })
       }
       for (const d of deparaRows) {
         if (d.produto_id && catalogoPorId.has(d.produto_id)) {
@@ -1607,6 +1660,7 @@ export async function getNotaCompleta(chaveNfe: string): Promise<NotaCompletaRes
         quantidade: r.q_embalagem,
         valorUnitario: r.v_embalagem,
         valorTotal: r.v_total_embalagem,
+        produtoId: produto?.id ?? null,
         produtoCodigo: produto?.codigo ?? null,
         produtoNome: produto?.nome ?? null,
       }

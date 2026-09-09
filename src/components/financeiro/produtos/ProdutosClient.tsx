@@ -7,15 +7,14 @@ import {
 } from "recharts"
 import { useRouter } from "next/navigation"
 import type { ProdutoRow } from "@/app/financeiro/dre/cmv/page"
-import { getHistoricoProduto } from "@/app/financeiro/dre/cmv/actions"
-import type { HistoricoRow, RankingItem } from "@/app/financeiro/dre/cmv/actions"
+import { getHistoricoProduto, getNotaCompleta } from "@/app/financeiro/dre/cmv/actions"
+import type { HistoricoRow, RankingItem, NotaCompletaResultado, NotaItem } from "@/app/financeiro/dre/cmv/actions"
 import { ImportModal } from "./ImportModal"
 import { NfeImportModal } from "./NfeImportModal"
 import { HistoricoDrawer, RankingTab } from "./RankingTab"
 import { AnaliseTab } from "./AnaliseTab"
 import { ARevisarTab, BonificacaoTab, FornecedorTab } from "./ProdutosExtraTabs"
 import { CatalogoTab } from "./CatalogoTab"
-import { NotaDrawer } from "./NotaDrawer"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -71,76 +70,119 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
   const [tableDrawerItem, setTableDrawerItem] = useState<RankingItem | null>(null)
   const [tableHistorico, setTableHistorico] = useState<HistoricoRow[]>([])
   const [loadingTableHistorico, setLoadingTableHistorico] = useState(false)
-  const [notaDrawerChave, setNotaDrawerChave] = useState<string | null>(null)
+  const [expandedChaves, setExpandedChaves] = useState<Set<string>>(new Set())
+  const [notaDetalhes, setNotaDetalhes] = useState<Map<string, NotaCompletaResultado>>(new Map())
+  const [loadingChaves, setLoadingChaves] = useState<Set<string>>(new Set())
 
-  async function openTableDrawer(row: ProdutoRow) {
-    if (direcao !== "entrada" || !row.item_codigo) return
-    const item: RankingItem = {
-      item_codigo: row.item_codigo,
-      item_descricao: row.item_descricao,
-      fornecedor_nome: row.fornecedor_nome,
-      desc_gerencial: row.desc_gerencial,
-      unidade_medida: row.unidade_medida,
-      custo_total: Number(row.v_custo_total ?? 0),
-      quantidade_total: Number(row.q_estoque ?? 0),
-      custo_medio: Number(row.v_custo_medio ?? 0),
-      variacao_media: row.perc_variacao,
+  async function carregarDetalheNota(chaveNfe: string) {
+    if (notaDetalhes.has(chaveNfe) || loadingChaves.has(chaveNfe)) return
+    setLoadingChaves(prev => new Set(prev).add(chaveNfe))
+    const r = await getNotaCompleta(chaveNfe)
+    setNotaDetalhes(prev => new Map(prev).set(chaveNfe, r))
+    setLoadingChaves(prev => { const next = new Set(prev); next.delete(chaveNfe); return next })
+  }
+
+  function toggleNota(chaveNfe: string) {
+    setExpandedChaves(prev => {
+      const next = new Set(prev)
+      if (next.has(chaveNfe)) next.delete(chaveNfe)
+      else next.add(chaveNfe)
+      return next
+    })
+    void carregarDetalheNota(chaveNfe)
+  }
+
+  async function abrirHistoricoDoItem(item: NotaItem, fornecedorNomeFallback: string | null) {
+    if (!item.itemCodigo) return
+    const rankingItem: RankingItem = {
+      item_codigo: item.itemCodigo,
+      item_descricao: item.itemDescricao,
+      fornecedor_nome: fornecedorNomeFallback,
+      desc_gerencial: item.produtoNome,
+      unidade_medida: item.unidade,
+      custo_total: Number(item.valorTotal ?? 0),
+      quantidade_total: Number(item.quantidade ?? 0),
+      custo_medio: Number(item.valorUnitario ?? 0),
+      variacao_media: null,
     }
-    setTableDrawerItem(item)
+    setTableDrawerItem(rankingItem)
     setTableHistorico([])
     setLoadingTableHistorico(true)
     try {
-      setTableHistorico(await getHistoricoProduto(unitId, row.item_codigo))
+      setTableHistorico(await getHistoricoProduto(unitId, item.itemCodigo, item.produtoId))
     } finally {
       setLoadingTableHistorico(false)
     }
   }
 
-  // ── Tabela filters ──────────────────────────────────────────────────────────
-  const [localQ, setLocalQ] = useState(q)
+  function irParaNota(chaveNfe: string) {
+    setTableDrawerItem(null)
+    setTableHistorico([])
+    setExpandedChaves(prev => new Set(prev).add(chaveNfe))
+    void carregarDetalheNota(chaveNfe)
+    const idx = filtered.findIndex(n => n.chaveNfe === chaveNfe)
+    if (idx >= 0) setPage(Math.floor(idx / PAGE_SIZE))
+  }
 
+  // ── Tabela filters (agora agrupado por nota, não por item) ───────────────────
+  const [localQ, setLocalQ] = useState(q)
 
   const [filterCat, setFilterCat] = useState("")
   const [filterCmv, setFilterCmv] = useState<"all" | "cmv" | "no_cmv">("all")
   const [page, setPage] = useState(0)
-  const [sortCol, setSortCol] = useState<SortCol>("fornecedor_nome")
-  const [sortDir, setSortDir] = useState<SortDir>("asc")
 
   const categorias = useMemo(() =>
     [...new Set(rows.map(r => r.desc_gerencial).filter(Boolean))].sort() as string[]
   , [rows])
 
-  const filtered = useMemo(() => {
-    let r = rows
-    if (localQ.trim())
-      r = r.filter(x =>
-        (x.fornecedor_nome ?? "").toLowerCase().includes(localQ.toLowerCase()) ||
-        (x.item_descricao ?? "").toLowerCase().includes(localQ.toLowerCase()) ||
-        (x.nr_danfe ?? "").toLowerCase().includes(localQ.toLowerCase())
-      )
-    if (filterCat) r = r.filter(x => x.desc_gerencial === filterCat)
-    if (filterCmv === "cmv")    r = r.filter(x => x.calcula_cmv === true)
-    if (filterCmv === "no_cmv") r = r.filter(x => x.calcula_cmv !== true)
-    if (sortCol) {
-      r = [...r].sort((a, b) => {
-        const av = a[sortCol] ?? ""
-        const bv = b[sortCol] ?? ""
-        if (av < bv) return sortDir === "asc" ? -1 : 1
-        if (av > bv) return sortDir === "asc" ? 1 : -1
-        return 0
-      })
+  type NotaAgrupada = {
+    chaveNfe: string
+    dtEmissao: string | null
+    nrDanfe: string | null
+    fornecedorNome: string | null
+    itens: ProdutoRow[]
+    qtdItens: number
+    valorTotal: number
+  }
+
+  const notasAgrupadas = useMemo<NotaAgrupada[]>(() => {
+    const map = new Map<string, NotaAgrupada>()
+    for (const r of rows) {
+      if (!r.chave_nfe) continue
+      let g = map.get(r.chave_nfe)
+      if (!g) {
+        g = {
+          chaveNfe: r.chave_nfe, dtEmissao: r.dt_emissao, nrDanfe: r.nr_danfe,
+          fornecedorNome: r.fornecedor_nome, itens: [], qtdItens: 0, valorTotal: 0,
+        }
+        map.set(r.chave_nfe, g)
+      }
+      g.itens.push(r)
+      g.qtdItens += 1
+      g.valorTotal += Math.abs(r.v_total_embalagem ?? 0)
     }
-    return r
-  }, [rows, localQ, filterCat, filterCmv, sortCol, sortDir])
+    return [...map.values()]
+  }, [rows])
+
+  const filtered = useMemo(() => {
+    let n = notasAgrupadas
+    if (localQ.trim()) {
+      const busca = localQ.toLowerCase()
+      n = n.filter(nota =>
+        (nota.fornecedorNome ?? "").toLowerCase().includes(busca) ||
+        (nota.nrDanfe ?? "").toLowerCase().includes(busca) ||
+        nota.itens.some(item => (item.item_descricao ?? "").toLowerCase().includes(busca))
+      )
+    }
+    if (filterCat) n = n.filter(nota => nota.itens.some(item => item.desc_gerencial === filterCat))
+    if (filterCmv === "cmv")    n = n.filter(nota => nota.itens.some(item => item.calcula_cmv === true))
+    if (filterCmv === "no_cmv") n = n.filter(nota => nota.itens.some(item => item.calcula_cmv !== true))
+    // Padrão: data desc — a compra mais recente primeiro.
+    return [...n].sort((a, b) => (b.dtEmissao ?? "").localeCompare(a.dtEmissao ?? ""))
+  }, [notasAgrupadas, localQ, filterCat, filterCmv])
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const pageRows   = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-
-  function handleSort(col: SortCol) {
-    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc")
-    else { setSortCol(col); setSortDir("asc") }
-    setPage(0)
-  }
+  const pageNotas  = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   function handleFilterChange() { setPage(0) }
 
@@ -353,7 +395,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
         </div>
       )}
 
-      {/* ── Tabela tab ── */}
+      {/* ── Tabela tab (uma linha por NOTA, itens em dropdown inline) ── */}
       {hasData && tab === "tabela" && (
         <div style={{ display:"grid", gap:16 }}>
           {/* Filters */}
@@ -391,7 +433,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
               ))}
             </div>
             <span style={{ fontSize:11, color:"var(--text-3)", marginLeft:"auto" }}>
-              {filtered.length.toLocaleString("pt-BR")} item{filtered.length!==1?"s":""}
+              {filtered.length.toLocaleString("pt-BR")} nota{filtered.length!==1?"s":""}
             </span>
           </div>
 
@@ -402,119 +444,150 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
               <thead>
                 <tr style={{ background:"var(--surface-2)" }}>
                   {([
-                    ["dt_emissao","Data","left"],
-                    ["nr_danfe","Número NF","left"],
-                    ["fornecedor_nome","Fornecedor","left"],
-                    ["item_descricao","Item","left"],
-                    ["desc_gerencial","Categoria","left"],
-                    ["q_estoque","Qtd Estoque","right"],
-                    ["unidade_medida","Unidade","right"],
-                    ["v_total_embalagem","V. Total Emb.","right"],
-                    ["v_custo_medio","Custo Médio","right"],
-                    ["v_custo_compra","Custo Compra","right"],
-                    ["v_custo_total","Custo Total","right"],
-                    ["perc_variacao","% Variação","right"],
-                    ["calcula_cmv","CMV","right"],
-                  ] as [keyof ProdutoRow, string, string][]).map(([col, label, align]) => (
-                    <th key={col} onClick={() => handleSort(col)} style={{
-                      padding:"8px 12px", textAlign:align as "left"|"right",
+                    ["", "left", 32],
+                    ["Data", "left", undefined],
+                    ["Número NF", "left", undefined],
+                    ["Fornecedor", "left", undefined],
+                    ["Qtd Itens", "right", undefined],
+                    ["Valor Total", "right", undefined],
+                  ] as [string, "left"|"right", number|undefined][]).map(([label, align, width], i) => (
+                    <th key={i} style={{
+                      padding:"8px 12px", textAlign:align, width,
                       fontSize:10, fontWeight:700, letterSpacing:0.4,
                       textTransform:"uppercase", color:"var(--text-3)",
                       borderBottom:"1px solid var(--border)", whiteSpace:"nowrap",
-                      cursor:"pointer", userSelect:"none",
                     }}>
-                      {label}{sortCol===col ? (sortDir==="asc"?" ↑":" ↓") : ""}
+                      {label}
                     </th>
                   ))}
-                  <th style={{
-                    padding:"8px 12px", textAlign:"center",
-                    fontSize:10, fontWeight:700, letterSpacing:0.4,
-                    textTransform:"uppercase", color:"var(--text-3)",
-                    borderBottom:"1px solid var(--border)", whiteSpace:"nowrap",
-                  }}>
-                    Histórico
-                  </th>
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map(r => (
-                  <tr
-                    key={r.id}
-                    onClick={() => { if (r.chave_nfe) setNotaDrawerChave(r.chave_nfe) }}
-                    style={{ borderTop:"1px solid var(--border)", cursor:r.chave_nfe ? "pointer" : "default" }}
-                    onMouseEnter={e => { if (r.chave_nfe) e.currentTarget.style.background = "var(--surface-2)" }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "" }}
-                  >
-                    <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
-                      {fmtDate(r.dt_emissao)}
-                    </td>
-                    <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:600, whiteSpace:"nowrap" }}>
-                      {r.nr_danfe ?? "—"}
-                    </td>
-                    <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:500, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {r.fornecedor_nome ?? "—"}
-                    </td>
-                    <td style={{ padding:"7px 12px", color:"var(--text)", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {r.item_descricao ?? "—"}
-                    </td>
-                    <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
-                      {r.desc_gerencial ?? "—"}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
-                      {fmtQty(r.q_estoque)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text-3)" }}>
-                      {r.unidade_medida ?? "—"}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
-                      {fmtBRL(r.v_total_embalagem)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
-                      {fmtBRL(r.v_custo_medio)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
-                      {fmtBRL(r.v_custo_compra)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right", fontWeight:600, color:"var(--text)" }}>
-                      {fmtBRL(r.v_custo_total)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right",
-                      color:r.perc_variacao==null?"var(--text-3)":r.perc_variacao>0?"#EF4444":"#22C55E" }}>
-                      {fmtPct(r.perc_variacao)}
-                    </td>
-                    <td style={{ padding:"7px 12px", textAlign:"right" }}>
-                      {r.calcula_cmv === true
-                        ? <span style={{ fontSize:10,fontWeight:700,color:"#22C55E",background:"rgba(34,197,94,0.12)",padding:"2px 8px",borderRadius:99 }}>SIM</span>
-                        : <span style={{ fontSize:10,color:"var(--text-3)" }}>NÃO</span>
-                      }
-                    </td>
-                                      <td style={{ padding:"7px 12px", textAlign:"center" }}>
-                      <button
-                        onClick={e => { e.stopPropagation(); void openTableDrawer(r) }}
-                        disabled={!(direcao === "entrada" && r.item_codigo)}
-                        title="Histórico do produto"
-                        style={{
-                          background:"none", border:"none", fontSize:14, padding:4,
-                          color:"var(--text-3)",
-                          cursor:(direcao === "entrada" && r.item_codigo) ? "pointer" : "default",
-                          opacity:(direcao === "entrada" && r.item_codigo) ? 1 : 0.35,
-                        }}
+                {pageNotas.map(nota => {
+                  const expandida = expandedChaves.has(nota.chaveNfe)
+                  const detalhe = notaDetalhes.get(nota.chaveNfe)
+                  const carregando = loadingChaves.has(nota.chaveNfe)
+                  return (
+                    <React.Fragment key={nota.chaveNfe}>
+                      <tr
+                        onClick={() => toggleNota(nota.chaveNfe)}
+                        style={{ borderTop:"1px solid var(--border)", cursor:"pointer" }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "var(--surface-2)" }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "" }}
                       >
-                        🕒
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        <td style={{ padding:"7px 12px", textAlign:"center", color:"var(--text-3)" }}>
+                          {expandida ? "▾" : "▸"}
+                        </td>
+                        <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                          {fmtDate(nota.dtEmissao)}
+                        </td>
+                        <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:600, whiteSpace:"nowrap" }}>
+                          {nota.nrDanfe ?? "—"}
+                        </td>
+                        <td style={{ padding:"7px 12px", color:"var(--text)", fontWeight:500, maxWidth:220, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {nota.fornecedorNome ?? "—"}
+                        </td>
+                        <td style={{ padding:"7px 12px", textAlign:"right", color:"var(--text)" }}>
+                          {nota.qtdItens}
+                        </td>
+                        <td style={{ padding:"7px 12px", textAlign:"right", fontWeight:600, color:"var(--text)" }}>
+                          {fmtBRL(nota.valorTotal)}
+                        </td>
+                      </tr>
+                      {expandida && (
+                        <tr>
+                          <td colSpan={6} style={{ padding:0, background:"var(--surface-2)", borderTop:"1px solid var(--border)" }}>
+                            {carregando ? (
+                              <p style={{ padding:"16px 20px", textAlign:"center", color:"var(--text-3)", fontSize:12 }}>
+                                Carregando itens…
+                              </p>
+                            ) : (
+                              <div style={{ padding:"10px 16px 14px" }}>
+                                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                                  <thead>
+                                    <tr>
+                                      {([
+                                        ["Código","left"], ["Descrição","left"], ["Produto do catálogo","left"],
+                                        ["NCM","left"], ["Unid.","right"], ["Qtd","right"],
+                                        ["Vlr Unit.","right"], ["Vlr Total","right"],
+                                      ] as [string, "left"|"right"][]).map(([label, align]) => (
+                                        <th key={label} style={{
+                                          padding:"6px 10px", textAlign:align,
+                                          fontSize:9, fontWeight:700, letterSpacing:0.4,
+                                          textTransform:"uppercase", color:"var(--text-3)",
+                                          borderBottom:"1px solid var(--border)", whiteSpace:"nowrap",
+                                        }}>
+                                          {label}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(detalhe?.itens ?? []).map((item, i) => (
+                                      <tr key={i}
+                                        onClick={() => void abrirHistoricoDoItem(item, detalhe?.nota?.emitenteNome ?? nota.fornecedorNome)}
+                                        style={{ borderTop:"1px solid var(--border)", cursor: item.itemCodigo ? "pointer" : "default" }}
+                                        onMouseEnter={e => { if (item.itemCodigo) e.currentTarget.style.background = "var(--surface)" }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = "" }}
+                                      >
+                                        <td style={{ padding:"6px 10px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                                          {item.itemCodigo ?? "—"}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", color:"var(--text)", maxWidth:220, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                          {item.itemDescricao ?? "—"}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", whiteSpace:"nowrap" }}>
+                                          {item.produtoCodigo
+                                            ? <span style={{ color:"var(--text)" }}><strong>{item.produtoCodigo}</strong> {item.produtoNome}</span>
+                                            : <span style={{ color:"var(--text-3)", fontStyle:"italic" }}>sem produto</span>
+                                          }
+                                        </td>
+                                        <td style={{ padding:"6px 10px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
+                                          {item.ncm ?? "—"}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", textAlign:"right", color:"var(--text-3)" }}>
+                                          {item.unidade ?? "—"}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", textAlign:"right", color:"var(--text)" }}>
+                                          {fmtQty(item.quantidade)}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", textAlign:"right", color:"var(--text)" }}>
+                                          {fmtBRL(item.valorUnitario)}
+                                        </td>
+                                        <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text)" }}>
+                                          {fmtBRL(item.valorTotal)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {(detalhe?.itens ?? []).length === 0 && (
+                                      <tr>
+                                        <td colSpan={8} style={{ padding:"12px", textAlign:"center", color:"var(--text-3)" }}>
+                                          Nenhum item encontrado para esta nota.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop:"2px solid var(--border)", background:"var(--surface-2)" }}>
-                  <td colSpan={7} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
+                  <td colSpan={4} style={{ padding:"8px 12px", fontWeight:700, color:"var(--text)", fontSize:12 }}>
                     {filterCat ? `Total ${filterCat}` : "Total geral"}
                   </td>
-                  <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
-                    {fmtBRL(filtered.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0))}
+                  <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12 }}>
+                    {filtered.reduce((s, n) => s + n.qtdItens, 0)}
                   </td>
-                  <td colSpan={6} />
+                  <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
+                    {fmtBRL(filtered.reduce((s, n) => s + n.valorTotal, 0))}
+                  </td>
                 </tr>
               </tfoot>
             </table>
@@ -524,7 +597,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
           {totalPages > 1 && (
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"var(--text-3)" }}>
               <span>
-                Página {page + 1} de {totalPages} · {filtered.length.toLocaleString("pt-BR")} itens
+                Página {page + 1} de {totalPages} · {filtered.length.toLocaleString("pt-BR")} notas
               </span>
               <div style={{ display:"flex", gap:4 }}>
                 <button onClick={() => setPage(0)} disabled={page===0}
@@ -918,13 +991,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
           historico={tableHistorico}
           loading={loadingTableHistorico}
           onClose={() => { setTableDrawerItem(null); setTableHistorico([]) }}
-        />
-      )}
-      {notaDrawerChave && (
-        <NotaDrawer
-          chaveNfe={notaDrawerChave}
-          unitId={unitId}
-          onClose={() => setNotaDrawerChave(null)}
+          onSelecionarNota={irParaNota}
         />
       )}
     </>
