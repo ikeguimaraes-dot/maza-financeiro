@@ -1497,3 +1497,124 @@ export async function moverVinculo(
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
+
+// ── Conteúdo completo da NF-e (drawer da nota) ───────────────────────────────
+
+export type NotaCompleta = {
+  chave: string
+  numero: string | null
+  serie: string | null
+  emissao: string | null
+  valorTotal: number
+  cancelada: boolean
+  emitenteNome: string | null
+  emitenteCnpj: string | null
+  destinatarioNome: string | null
+  destinatarioCnpj: string | null
+}
+
+export type NotaItem = {
+  itemCodigo: string | null
+  itemDescricao: string | null
+  ncm: string | null
+  unidade: string | null
+  quantidade: number | null
+  valorUnitario: number | null
+  valorTotal: number | null
+  produtoCodigo: string | null
+  produtoNome: string | null
+}
+
+export type NotaCompletaResultado = {
+  nota: NotaCompleta | null
+  itens: NotaItem[]
+  somaItens: number
+}
+
+export async function getNotaCompleta(chaveNfe: string): Promise<NotaCompletaResultado> {
+  const vazio: NotaCompletaResultado = { nota: null, itens: [], somaItens: 0 }
+  try {
+    const db = await getProdutosDb()
+
+    const { data: doc } = await db
+      .from("nfe_documentos")
+      .select("chave,numero,serie,emissao,valor_total,cancelada,emitente_nome,emitente_cnpj,destinatario_nome,destinatario_cnpj")
+      .eq("chave", chaveNfe)
+      .maybeSingle()
+
+    const nota: NotaCompleta | null = doc ? {
+      chave: doc.chave,
+      numero: doc.numero,
+      serie: doc.serie,
+      emissao: doc.emissao,
+      valorTotal: doc.valor_total != null ? Number(doc.valor_total) : 0,
+      cancelada: doc.cancelada,
+      emitenteNome: doc.emitente_nome,
+      emitenteCnpj: doc.emitente_cnpj,
+      destinatarioNome: doc.destinatario_nome,
+      destinatarioCnpj: doc.destinatario_cnpj,
+    } : null
+
+    const itensRaw = await fetchAllPaginado((from, to) =>
+      db.from("produtos_relatorio")
+        .select("fornecedor_codigo,item_codigo,item_descricao,tipo_item,unidade_medida,q_embalagem,v_embalagem,v_total_embalagem")
+        .eq("chave_nfe", chaveNfe)
+        .order("id")
+        .range(from, to)
+    ) as Array<{
+      fornecedor_codigo: string | null; item_codigo: string | null; item_descricao: string | null
+      tipo_item: string | null; unidade_medida: string | null
+      q_embalagem: number | null; v_embalagem: number | null; v_total_embalagem: number | null
+    }>
+
+    if (itensRaw.length === 0) return { nota, itens: [], somaItens: 0 }
+
+    const fornecedorCnpj = itensRaw.find(r => r.fornecedor_codigo)?.fornecedor_codigo ?? null
+    const itemCodigos = [...new Set(itensRaw.map(r => r.item_codigo).filter((v): v is string => Boolean(v)))]
+
+    const produtoPorItemCodigo = new Map<string, { codigo: string; nome: string }>()
+    if (fornecedorCnpj && itemCodigos.length > 0) {
+      const deparaRows = await fetchAllPaginado((from, to) =>
+        db.from("produtos_depara")
+          .select("item_codigo,produto_id")
+          .eq("fornecedor_cnpj", fornecedorCnpj)
+          .in("item_codigo", itemCodigos)
+          .range(from, to)
+      ) as Array<{ item_codigo: string; produto_id: string | null }>
+
+      const produtoIds = [...new Set(deparaRows.map(d => d.produto_id).filter((v): v is string => Boolean(v)))]
+      const catalogoPorId = new Map<string, { codigo: string; nome: string }>()
+      if (produtoIds.length > 0) {
+        const catalogoRows = await fetchAllPaginado((from, to) =>
+          db.from("produtos_catalogo").select("id,codigo,nome").in("id", produtoIds).range(from, to)
+        ) as Array<{ id: string; codigo: string; nome: string }>
+        for (const c of catalogoRows) catalogoPorId.set(c.id, { codigo: c.codigo, nome: c.nome })
+      }
+      for (const d of deparaRows) {
+        if (d.produto_id && catalogoPorId.has(d.produto_id)) {
+          produtoPorItemCodigo.set(d.item_codigo, catalogoPorId.get(d.produto_id)!)
+        }
+      }
+    }
+
+    const itens: NotaItem[] = itensRaw.map(r => {
+      const produto = r.item_codigo ? produtoPorItemCodigo.get(r.item_codigo) : undefined
+      return {
+        itemCodigo: r.item_codigo,
+        itemDescricao: r.item_descricao,
+        ncm: r.tipo_item,
+        unidade: r.unidade_medida,
+        quantidade: r.q_embalagem,
+        valorUnitario: r.v_embalagem,
+        valorTotal: r.v_total_embalagem,
+        produtoCodigo: produto?.codigo ?? null,
+        produtoNome: produto?.nome ?? null,
+      }
+    })
+    const somaItens = itens.reduce((s, i) => s + Math.abs(i.valorTotal ?? 0), 0)
+
+    return { nota, itens, somaItens }
+  } catch {
+    return vazio
+  }
+}

@@ -15,6 +15,7 @@ import { HistoricoDrawer, RankingTab } from "./RankingTab"
 import { AnaliseTab } from "./AnaliseTab"
 import { ARevisarTab, BonificacaoTab, FornecedorTab } from "./ProdutosExtraTabs"
 import { CatalogoTab } from "./CatalogoTab"
+import { NotaDrawer } from "./NotaDrawer"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -70,6 +71,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
   const [tableDrawerItem, setTableDrawerItem] = useState<RankingItem | null>(null)
   const [tableHistorico, setTableHistorico] = useState<HistoricoRow[]>([])
   const [loadingTableHistorico, setLoadingTableHistorico] = useState(false)
+  const [notaDrawerChave, setNotaDrawerChave] = useState<string | null>(null)
 
   async function openTableDrawer(row: ProdutoRow) {
     if (direcao !== "entrada" || !row.item_codigo) return
@@ -424,15 +426,23 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
                       {label}{sortCol===col ? (sortDir==="asc"?" ↑":" ↓") : ""}
                     </th>
                   ))}
+                  <th style={{
+                    padding:"8px 12px", textAlign:"center",
+                    fontSize:10, fontWeight:700, letterSpacing:0.4,
+                    textTransform:"uppercase", color:"var(--text-3)",
+                    borderBottom:"1px solid var(--border)", whiteSpace:"nowrap",
+                  }}>
+                    Histórico
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {pageRows.map(r => (
                   <tr
                     key={r.id}
-                    onClick={() => void openTableDrawer(r)}
-                    style={{ borderTop:"1px solid var(--border)", cursor:direcao === "entrada" && r.item_codigo ? "pointer" : "default" }}
-                    onMouseEnter={e => { if (direcao === "entrada" && r.item_codigo) e.currentTarget.style.background = "var(--surface-2)" }}
+                    onClick={() => { if (r.chave_nfe) setNotaDrawerChave(r.chave_nfe) }}
+                    style={{ borderTop:"1px solid var(--border)", cursor:r.chave_nfe ? "pointer" : "default" }}
+                    onMouseEnter={e => { if (r.chave_nfe) e.currentTarget.style.background = "var(--surface-2)" }}
                     onMouseLeave={e => { e.currentTarget.style.background = "" }}
                   >
                     <td style={{ padding:"7px 12px", color:"var(--text-3)", whiteSpace:"nowrap" }}>
@@ -478,6 +488,21 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
                         : <span style={{ fontSize:10,color:"var(--text-3)" }}>NÃO</span>
                       }
                     </td>
+                                      <td style={{ padding:"7px 12px", textAlign:"center" }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); void openTableDrawer(r) }}
+                        disabled={!(direcao === "entrada" && r.item_codigo)}
+                        title="Histórico do produto"
+                        style={{
+                          background:"none", border:"none", fontSize:14, padding:4,
+                          color:"var(--text-3)",
+                          cursor:(direcao === "entrada" && r.item_codigo) ? "pointer" : "default",
+                          opacity:(direcao === "entrada" && r.item_codigo) ? 1 : 0.35,
+                        }}
+                      >
+                        🕒
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -489,7 +514,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
                   <td style={{ padding:"8px 12px", textAlign:"right", fontWeight:700, color:"var(--text)", fontSize:12, whiteSpace:"nowrap" }}>
                     {fmtBRL(filtered.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0))}
                   </td>
-                  <td colSpan={5} />
+                  <td colSpan={6} />
                 </tr>
               </tfoot>
             </table>
@@ -893,6 +918,13 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
           historico={tableHistorico}
           loading={loadingTableHistorico}
           onClose={() => { setTableDrawerItem(null); setTableHistorico([]) }}
+        />
+      )}
+      {notaDrawerChave && (
+        <NotaDrawer
+          chaveNfe={notaDrawerChave}
+          unitId={unitId}
+          onClose={() => setNotaDrawerChave(null)}
         />
       )}
     </>

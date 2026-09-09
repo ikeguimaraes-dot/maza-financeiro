@@ -12,6 +12,7 @@ export type NfeSearchParams = Promise<{ mes?: string; ano?: string; q?: string }
 export type ProdutoRow = {
   id: number
   unit_id: string
+  chave_nfe: string | null
   fornecedor_nome: string | null
   nr_danfe: string | null
   v_total_danfe: number | null
