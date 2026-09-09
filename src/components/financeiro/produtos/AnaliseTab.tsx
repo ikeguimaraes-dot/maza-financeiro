@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -45,6 +45,13 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
   const [busca, setBusca]       = useState("")
   const [sortMode, setSort]     = useState<SortMode>("variacao")
   const [selId, setSelId]       = useState<string | null>(null)
+  const detalheRef = useRef<HTMLDivElement>(null)
+
+  // Rola até o painel de detalhe sempre que a seleção muda (ex.: clique nos
+  // blocos Maiores Altas/Quedas, que ficam acima e longe do painel).
+  useEffect(() => {
+    if (selId) detalheRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [selId])
 
   useEffect(() => {
     setLoading(true)
@@ -139,9 +146,9 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
       {/* ── Topo: maiores altas, maiores quedas, KPIs ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
         <TopoCard title="Maiores altas" icon="▲" cor="#EF4444"
-          itens={maioresAltas} onSelect={setSelId} vazio="Nenhum produto subiu de preço na última compra." />
+          itens={maioresAltas} selId={selId} onSelect={setSelId} vazio="Nenhum produto subiu de preço na última compra." />
         <TopoCard title="Maiores quedas" icon="▼" cor="#22C55E"
-          itens={maioresQuedas} onSelect={setSelId} vazio="Nenhum produto caiu de preço na última compra." />
+          itens={maioresQuedas} selId={selId} onSelect={setSelId} vazio="Nenhum produto caiu de preço na última compra." />
         <KpiCard kpis={kpis} />
       </div>
 
@@ -221,14 +228,16 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
         {/* Tabela completa + Detalhe do selecionado */}
         <div style={{ display: "grid", gap: 16, minWidth: 0 }}>
           <ListaTabela produtos={listaFiltrada} selId={selId} onSelect={setSelId} />
-          {selecionado ? (
-            <Detalhe p={selecionado} onSelecionarNota={onSelecionarNota} />
-          ) : (
-            <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-3)", fontSize: 13,
-              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
-              Selecione um produto na lista para ver a evolução por compra.
-            </div>
-          )}
+          <div ref={detalheRef}>
+            {selecionado ? (
+              <Detalhe p={selecionado} onSelecionarNota={onSelecionarNota} />
+            ) : (
+              <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-3)", fontSize: 13,
+                background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
+                Selecione um produto na lista para ver a evolução por compra.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -236,9 +245,9 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
 }
 
 // ── Bloco: Maiores altas / Maiores quedas ────────────────────────────────────
-function TopoCard({ title, icon, cor, itens, onSelect, vazio }: {
+function TopoCard({ title, icon, cor, itens, selId, onSelect, vazio }: {
   title: string; icon: string; cor: string
-  itens: ProdutoEvolucao[]; onSelect: (id: string) => void; vazio: string
+  itens: ProdutoEvolucao[]; selId: string | null; onSelect: (id: string) => void; vazio: string
 }) {
   return (
     <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 16px" }}>
@@ -250,34 +259,41 @@ function TopoCard({ title, icon, cor, itens, onSelect, vazio }: {
         <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>{vazio}</p>
       ) : (
         <div style={{ display: "grid", gap: 2 }}>
-          {itens.map((p, i) => (
-            <button key={p.produtoId} onClick={() => onSelect(p.produtoId)} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-              padding: "5px 6px", borderRadius: 6, background: "transparent", border: "none",
-              cursor: "pointer", textAlign: "left",
-            }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-3)", width: 14 }}>{i + 1}</span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 12, color: "var(--text)", overflow: "hidden",
-                    textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {p.nome}
+          {itens.map((p, i) => {
+            const active = p.produtoId === selId
+            return (
+              <button key={p.produtoId} onClick={() => onSelect(p.produtoId)}
+                onMouseEnter={e => { e.currentTarget.style.background = "var(--surface-2)" }}
+                onMouseLeave={e => { e.currentTarget.style.background = active ? "var(--surface-2)" : "transparent" }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                  padding: "5px 6px", borderRadius: 6, border: "none",
+                  background: active ? "var(--surface-2)" : "transparent",
+                  cursor: "pointer", textAlign: "left",
+                }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-3)", width: 14 }}>{i + 1}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 12, color: "var(--text)", overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {p.nome}
+                    </span>
+                    <span style={{ fontSize: 10, color: "var(--text-3)" }}>
+                      {p.codigo} · {fmtBRL(p.precoAtual)}{unidSuffix(p.unidade)}
+                    </span>
                   </span>
-                  <span style={{ fontSize: 10, color: "var(--text-3)" }}>
-                    {p.codigo} · {fmtBRL(p.precoAtual)}{unidSuffix(p.unidade)}
+                </span>
+                <span style={{ display: "grid", justifyItems: "end", flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: cor, whiteSpace: "nowrap" }}>
+                    {fmtPct(p.ultimaVarPct)}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                    {p.ultimaVarAbs != null ? fmtBRL(p.ultimaVarAbs) : "—"}
                   </span>
                 </span>
-              </span>
-              <span style={{ display: "grid", justifyItems: "end", flexShrink: 0 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: cor, whiteSpace: "nowrap" }}>
-                  {fmtPct(p.ultimaVarPct)}
-                </span>
-                <span style={{ fontSize: 10, color: "var(--text-3)", whiteSpace: "nowrap" }}>
-                  {p.ultimaVarAbs != null ? fmtBRL(p.ultimaVarAbs) : "—"}
-                </span>
-              </span>
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
@@ -341,10 +357,13 @@ function ListaTabela({ produtos, selId, onSelect }: {
           {produtos.map(p => {
             const active = p.produtoId === selId
             return (
-              <tr key={p.produtoId} onClick={() => onSelect(p.produtoId)} style={{
-                borderTop: "1px solid var(--border)", cursor: "pointer",
-                background: active ? "var(--surface-2)" : "transparent",
-              }}>
+              <tr key={p.produtoId} onClick={() => onSelect(p.produtoId)}
+                onMouseEnter={e => { e.currentTarget.style.background = "var(--surface-2)" }}
+                onMouseLeave={e => { e.currentTarget.style.background = active ? "var(--surface-2)" : "transparent" }}
+                style={{
+                  borderTop: "1px solid var(--border)", cursor: "pointer",
+                  background: active ? "var(--surface-2)" : "transparent",
+                }}>
                 <td style={{ ...tdD(), fontWeight: 700, color: "var(--text)" }}>{p.codigo}</td>
                 <td style={{ ...tdD(), color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 260 }}>
                   {p.nome}
