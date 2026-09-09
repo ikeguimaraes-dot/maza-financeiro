@@ -46,7 +46,8 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
     if (!direction) { setError("Confirme se o pacote é de entrada ou de saída."); return }
     setStatus("uploading"); setError("")
     // Mantém cada Server Action pequena: pacotes de saída podem ter milhares de XMLs.
-    const aggregate: NfeImportResult = { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0 }
+    const aggregate: NfeImportResult = { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [] }
+    const cnpjMap = new Map<string, { nome: string | null; notas: number; valor: number }>()
     const batchSize = 75
     for (let i = 0; i < notes.length; i += batchSize) {
       const response = await importNfe({
@@ -60,7 +61,16 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
       aggregate.duplicadas += response.duplicadas
       aggregate.canceladas += response.canceladas
       aggregate.itens += response.itens
+      aggregate.naoImportadas += response.naoImportadas
+      for (const item of response.cnpjsDesconhecidos) {
+        const acc = cnpjMap.get(item.cnpj) ?? { nome: item.nome, notas: 0, valor: 0 }
+        acc.notas += item.notas
+        acc.valor += item.valor
+        if (!acc.nome && item.nome) acc.nome = item.nome
+        cnpjMap.set(item.cnpj, acc)
+      }
     }
+    aggregate.cnpjsDesconhecidos = [...cnpjMap.entries()].map(([cnpj, v]) => ({ cnpj, ...v }))
     setResult(aggregate); setStatus("done")
   }
 
@@ -96,7 +106,23 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
 
       {error && <div style={{ padding:"9px 12px", marginTop:12, borderRadius:7, background:"rgba(239,68,68,.1)", color:"#ef4444", fontSize:12 }}>{error}</div>}
       {status === "uploading" && <p style={{ padding:28, textAlign:"center", color:"var(--text-3)" }}>Salvando notas e atualizando o CMV…</p>}
-      {status === "done" && result && <div style={{ padding:"12px 0" }}><h3 style={{ color:"#22c55e", margin:"0 0 8px" }}>Importação concluída</h3><p style={{ fontSize:13, color:"var(--text-2)" }}>{result.importadas} notas importadas · {result.itens} itens · {result.duplicadas} duplicadas ignoradas · {result.canceladas} canceladas</p></div>}
+      {status === "done" && result && <div style={{ padding:"12px 0" }}>
+        <h3 style={{ color:"#22c55e", margin:"0 0 8px" }}>Importação concluída</h3>
+        <p style={{ fontSize:13, color:"var(--text-2)" }}>{result.importadas} notas importadas · {result.itens} itens · {result.duplicadas} duplicadas ignoradas · {result.canceladas} canceladas{result.naoImportadas > 0 ? ` · ${result.naoImportadas} não importadas` : ""}</p>
+        {result.cnpjsDesconhecidos.length > 0 && (
+          <div style={{ marginTop:12, padding:"10px 12px", borderRadius:7, background:"rgba(245,158,11,.12)", color:"#f59e0b", fontSize:12 }}>
+            <p style={{ margin:"0 0 6px", fontWeight:700 }}>CNPJ(s) sem unidade cadastrada</p>
+            <ul style={{ margin:0, paddingLeft:18, display:"grid", gap:4 }}>
+              {result.cnpjsDesconhecidos.map(c => (
+                <li key={c.cnpj}>
+                  {c.cnpj}{c.nome ? ` — ${c.nome}` : ""}: {c.notas} nota{c.notas !== 1 ? "s" : ""} ignorada{c.notas !== 1 ? "s" : ""} ({c.valor.toLocaleString("pt-BR",{style:"currency",currency:"BRL"})})
+                </li>
+              ))}
+            </ul>
+            <p style={{ margin:"8px 0 0" }}>Cadastre a unidade com este CNPJ e reimporte o pacote.</p>
+          </div>
+        )}
+      </div>}
 
       <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:18 }}>
         {status === "done" ? <button onClick={() => { onSuccess(); onClose() }} style={{ ...button, background:"var(--brand)", color:"white", border:0 }}>Concluir</button> : <><button disabled={busy} onClick={onClose} style={{ ...button, background:"transparent", color:"var(--text-2)" }}>Cancelar</button>{notes.length > 0 && <button disabled={busy || !direction} onClick={() => void submit()} style={{ ...button, background:direction?"var(--brand)":"var(--surface-2)", color:direction?"white":"var(--text-3)", border:0 }}>Importar NF-e</button>}</>}

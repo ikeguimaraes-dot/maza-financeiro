@@ -60,17 +60,28 @@ export type NfeImportPayload = {
   rejeitadas: number
 }
 
+export type NfeCnpjDesconhecido = {
+  cnpj: string
+  nome: string | null
+  notas: number
+  valor: number
+}
+
 export type NfeImportResult = {
   ok: boolean
   importadas: number
   duplicadas: number
   canceladas: number
   itens: number
+  naoImportadas: number
+  cnpjsDesconhecidos: NfeCnpjDesconhecido[]
   error?: string
 }
 
+type NfeImportNota = NfeImportPayload["notas"][number]
+
 export async function importNfe(payload: NfeImportPayload): Promise<NfeImportResult> {
-  const empty = { ok: false, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0 }
+  const empty = { ok: false, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [] }
   try {
     await requireUser()
     const unit = await getCurrentUnit()
@@ -82,71 +93,130 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     // Tabelas novas ainda não constam nos tipos gerados.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = db as any
-    // A unidade fiscal vem do CNPJ da própria empresa: emitente nas saídas e
-    // destinatário nas entradas. Isso impede que um ZIP de outra unidade seja
-    // gravado apenas porque ela estava selecionada no menu.
-    const ownCnpjs = payload.notas
-      .filter(note => !note.cancelada)
-      .map(note => payload.direcao === "saida" ? note.emitenteCnpj : note.destinatarioCnpj)
-      .filter((cnpj): cnpj is string => Boolean(cnpj))
-    const counts = new Map<string, number>()
-    for (const cnpj of ownCnpjs) counts.set(cnpj, (counts.get(cnpj) ?? 0) + 1)
-    const dominantCnpj = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
-    let targetUnitId = unit.id
-    if (dominantCnpj) {
-      const { data: fiscalUnit, error: fiscalUnitError } = await raw
-        .from("units").select("id,name").eq("cnpj", dominantCnpj).maybeSingle()
-      if (fiscalUnitError) return { ...empty, error: fiscalUnitError.message }
-      if (fiscalUnit?.id) targetUnitId = fiscalUnit.id
+
+    // A unidade é resolvida POR NOTA pelo CNPJ próprio (emitente nas saídas,
+    // destinatário nas entradas) — nunca pela unidade selecionada no menu, e
+    // nunca por um CNPJ "dominante" do pacote. Nota cujo CNPJ não bate com
+    // nenhuma unit cadastrada não é importada.
+    const ownCnpjOf = (note: NfeImportNota) =>
+      payload.direcao === "saida" ? note.emitenteCnpj : note.destinatarioCnpj
+    const ownNomeOf = (note: NfeImportNota) =>
+      payload.direcao === "saida" ? note.emitenteNome : note.destinatarioNome
+
+    const distinctCnpjs = [...new Set(
+      payload.notas.map(ownCnpjOf).filter((cnpj): cnpj is string => Boolean(cnpj))
+    )]
+    const { data: unitsData, error: unitsError } = distinctCnpjs.length
+      ? await raw.from("units").select("id,cnpj").in("cnpj", distinctCnpjs)
+      : { data: [], error: null }
+    if (unitsError) return { ...empty, error: unitsError.message }
+    const unitIdByCnpj = new Map<string, string>(
+      (unitsData ?? []).map((u: { id: string; cnpj: string }) => [u.cnpj, u.id])
+    )
+
+    const resolvidas: Array<NfeImportNota & { unitId: string }> = []
+    const cnpjAgg = new Map<string, { nome: string | null; notas: number; valor: number }>()
+    for (const note of payload.notas) {
+      const cnpj = ownCnpjOf(note)
+      const unitId = cnpj ? unitIdByCnpj.get(cnpj) : undefined
+      if (unitId) {
+        resolvidas.push({ ...note, unitId })
+        continue
+      }
+      const key = cnpj ?? "—"
+      const acc = cnpjAgg.get(key) ?? { nome: ownNomeOf(note), notas: 0, valor: 0 }
+      acc.notas += 1
+      acc.valor += note.valorTotal
+      if (!acc.nome) acc.nome = ownNomeOf(note)
+      cnpjAgg.set(key, acc)
     }
-    const keys = payload.notas.map(note => note.chave)
+    const cnpjsDesconhecidos: NfeCnpjDesconhecido[] =
+      [...cnpjAgg.entries()].map(([cnpj, v]) => ({ cnpj, ...v }))
+    const naoImportadas = payload.notas.length - resolvidas.length
+
+    if (!resolvidas.length) {
+      return { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas, cnpjsDesconhecidos }
+    }
+
+    const keys = resolvidas.map(note => note.chave)
+    const targetUnitIds = [...new Set(resolvidas.map(note => note.unitId))]
     const { data: existing, error: existingError } = await raw
-      .from("nfe_documentos").select("chave").eq("unit_id", targetUnitId).in("chave", keys)
-    if (existingError) return { ...empty, error: `Migração 025 pendente: ${existingError.message}` }
-    const existingKeys = new Set((existing ?? []).map((row: { chave: string }) => row.chave))
-    const novas = payload.notas.filter(note => !existingKeys.has(note.chave))
+      .from("nfe_documentos").select("unit_id,chave").in("unit_id", targetUnitIds).in("chave", keys)
+    if (existingError) return { ...empty, error: `Migração 025 pendente: ${existingError.message}`, naoImportadas, cnpjsDesconhecidos }
+    const existingKeys = new Set(
+      (existing ?? []).map((row: { unit_id: string; chave: string }) => `${row.unit_id} ${row.chave}`)
+    )
+    const novas = resolvidas.filter(note => !existingKeys.has(`${note.unitId} ${note.chave}`))
     const canceladas = novas.filter(note => note.cancelada).length
     const validas = novas.filter(note => !note.cancelada)
 
-    const valorTotal = validas.reduce((sum, note) => sum + note.valorTotal, 0)
-    const { data: batch, error: batchError } = await raw.from("nfe_importacoes").insert({
-      unit_id: targetUnitId, arquivo: payload.arquivo, direcao: payload.direcao,
-      total_xml: payload.notas.length + payload.rejeitadas,
-      importadas: validas.length, duplicadas: existingKeys.size,
-      canceladas, rejeitadas: payload.rejeitadas, valor_total: valorTotal,
-    }).select("id").single()
-    if (batchError) return { ...empty, error: batchError.message }
+    // Cada unidade fiscal recebe seu próprio registro de auditoria — o pacote
+    // pode misturar notas de mais de uma unidade.
+    const notasPorUnidade = new Map<string, Array<NfeImportNota & { unitId: string }>>()
+    for (const note of resolvidas) {
+      const arr = notasPorUnidade.get(note.unitId) ?? []
+      arr.push(note)
+      notasPorUnidade.set(note.unitId, arr)
+    }
+    const importacaoIdPorUnidade = new Map<string, string>()
+    let rejeitadasRestantes = payload.rejeitadas
+    for (const [uid, notasDaUnidade] of notasPorUnidade) {
+      const novasDaUnidade = notasDaUnidade.filter(n => !existingKeys.has(`${n.unitId} ${n.chave}`))
+      const canceladasDaUnidade = novasDaUnidade.filter(n => n.cancelada).length
+      const validasDaUnidade = novasDaUnidade.filter(n => !n.cancelada)
+      const valorDaUnidade = validasDaUnidade.reduce((sum, n) => sum + n.valorTotal, 0)
+      const duplicadasDaUnidade = notasDaUnidade.length - novasDaUnidade.length
+      const { data: batch, error: batchError } = await raw.from("nfe_importacoes").insert({
+        unit_id: uid, arquivo: payload.arquivo, direcao: payload.direcao,
+        total_xml: notasDaUnidade.length + rejeitadasRestantes,
+        importadas: validasDaUnidade.length, duplicadas: duplicadasDaUnidade,
+        canceladas: canceladasDaUnidade, rejeitadas: rejeitadasRestantes, valor_total: valorDaUnidade,
+      }).select("id").single()
+      if (batchError) return { ...empty, error: batchError.message, naoImportadas, cnpjsDesconhecidos }
+      importacaoIdPorUnidade.set(uid, batch.id)
+      rejeitadasRestantes = 0 // conta só no primeiro lote registrado desta chamada
+    }
 
     // Uma nova importação com direção corrigida deve também corrigir os
     // documentos já conhecidos (ex.: pacote de entrada marcado como saída).
     if (existingKeys.size) {
-      const { error } = await raw.from("nfe_documentos")
-        .update({ direcao: payload.direcao })
-        .eq("unit_id", targetUnitId)
-        .in("chave", [...existingKeys])
-      if (error) return { ...empty, error: error.message }
+      const chavesPorUnidade = new Map<string, string[]>()
+      for (const note of resolvidas) {
+        const key = `${note.unitId} ${note.chave}`
+        if (!existingKeys.has(key)) continue
+        const arr = chavesPorUnidade.get(note.unitId) ?? []
+        arr.push(note.chave)
+        chavesPorUnidade.set(note.unitId, arr)
+      }
+      for (const [uid, chaves] of chavesPorUnidade) {
+        const { error } = await raw.from("nfe_documentos")
+          .update({ direcao: payload.direcao })
+          .eq("unit_id", uid)
+          .in("chave", chaves)
+        if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
+      }
     }
 
     if (novas.length) {
       const { error } = await raw.from("nfe_documentos").insert(novas.map(note => ({
-        unit_id: targetUnitId, importacao_id: batch.id, chave: note.chave, direcao: payload.direcao,
+        unit_id: note.unitId, importacao_id: importacaoIdPorUnidade.get(note.unitId), chave: note.chave, direcao: payload.direcao,
         numero: note.numero, serie: note.serie, emissao: note.emissao,
         emitente_cnpj: note.emitenteCnpj, emitente_nome: note.emitenteNome,
         destinatario_cnpj: note.destinatarioCnpj, destinatario_nome: note.destinatarioNome,
         valor_total: note.valorTotal, status_sefaz: note.statusSefaz, cancelada: note.cancelada,
       })))
-      if (error) return { ...empty, error: error.message }
+      if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
     }
 
     let itemCount = 0
     // Reprocessa também documentos já conhecidos: o upsert é idempotente e isto
     // permite reparar uma importação interrompida entre documento e itens.
-    const notasParaProdutos = payload.notas.filter(note => !note.cancelada)
+    const notasParaProdutos = resolvidas.filter(note => !note.cancelada)
     if (notasParaProdutos.length) {
       const rows = notasParaProdutos.flatMap(note => note.itens.map((item, index) => {
         const date = new Date(note.emissao)
         return {
-          unit_id: targetUnitId, chave_nfe: note.chave,
+          unit_id: note.unitId, chave_nfe: note.chave,
           fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
           v_total_danfe: note.valorTotal, dt_emissao: note.emissao,
           item_codigo: item.codigo ?? String(index + 1), item_descricao: item.descricao,
@@ -164,31 +234,39 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
       // O índice legado é parcial e não pode ser inferido pelo ON CONFLICT do
       // PostgREST. Filtrar antes da inserção mantém a operação idempotente sem
       // depender do formato desse índice.
-      const noteKeys = [...new Set(rows.map(row => row.chave_nfe))]
+      const noteKeysPorUnidade = new Map<string, string[]>()
+      for (const note of notasParaProdutos) {
+        const arr = noteKeysPorUnidade.get(note.unitId) ?? []
+        arr.push(note.chave)
+        noteKeysPorUnidade.set(note.unitId, arr)
+      }
       // Se o usuário reenviar o pacote na página correta, move também os itens
       // que já existiam para a direção escolhida.
-      const { error: directionError } = await raw
-        .from("produtos_relatorio")
-        .update({
-          direcao_nfe: payload.direcao,
-          calcula_cmv: payload.direcao === "entrada",
-        })
-        .eq("unit_id", targetUnitId)
-        .in("chave_nfe", noteKeys)
-      if (directionError) return { ...empty, error: directionError.message }
+      for (const [uid, chaves] of noteKeysPorUnidade) {
+        const { error: directionError } = await raw
+          .from("produtos_relatorio")
+          .update({
+            direcao_nfe: payload.direcao,
+            calcula_cmv: payload.direcao === "entrada",
+          })
+          .eq("unit_id", uid)
+          .in("chave_nfe", [...new Set(chaves)])
+        if (directionError) return { ...empty, error: directionError.message, naoImportadas, cnpjsDesconhecidos }
+      }
 
       const { data: existingProducts, error: productsError } = await raw
         .from("produtos_relatorio")
-        .select("chave_nfe,item_codigo")
-        .eq("unit_id", targetUnitId)
-        .in("chave_nfe", noteKeys)
-      if (productsError) return { ...empty, error: productsError.message }
+        .select("unit_id,chave_nfe,item_codigo")
+        .in("unit_id", targetUnitIds)
+        .in("chave_nfe", [...new Set(notasParaProdutos.map(n => n.chave))])
+      if (productsError) return { ...empty, error: productsError.message, naoImportadas, cnpjsDesconhecidos }
 
-      const known = new Set((existingProducts ?? []).map((row: { chave_nfe: string; item_codigo: string }) =>
-        `${row.chave_nfe}\u0000${row.item_codigo}`
+      const known = new Set((existingProducts ?? []).map(
+        (row: { unit_id: string; chave_nfe: string; item_codigo: string }) =>
+          `${row.unit_id}\u0000${row.chave_nfe}\u0000${row.item_codigo}`
       ))
       const pending = rows.filter(row => {
-        const key = `${row.chave_nfe}\u0000${row.item_codigo}`
+        const key = `${row.unit_id}\u0000${row.chave_nfe}\u0000${row.item_codigo}`
         if (known.has(key)) return false
         known.add(key)
         return true
@@ -197,12 +275,15 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
       for (let i = 0; i < pending.length; i += 500) {
         const chunk = pending.slice(i, i + 500)
         const { error } = await raw.from("produtos_relatorio").insert(chunk)
-        if (error) return { ...empty, error: error.message }
+        if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
         itemCount += chunk.length
       }
     }
 
-    return { ok: true, importadas: validas.length, duplicadas: existingKeys.size, canceladas, itens: itemCount }
+    return {
+      ok: true, importadas: validas.length, duplicadas: existingKeys.size, canceladas, itens: itemCount,
+      naoImportadas, cnpjsDesconhecidos,
+    }
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : String(error) }
   }
