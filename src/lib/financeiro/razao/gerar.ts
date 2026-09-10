@@ -698,8 +698,19 @@ export async function recalcularSnapshot(
     ) as Array<{ status_fonte: string }>
     const fontesTotal = fontes.length
     const fontesOk = fontes.filter(f => f.status_fonte === "viva").length
-    const confiancaPct = pctClassificado != null && fontesTotal > 0
-      ? 0.6 * pctClassificado + 0.4 * (fontesOk / fontesTotal)
+
+    // Terceiro termo: cobertura de XML dentro do próprio CMV do mês. Sem
+    // ele, confianca_pct não reagia à ausência de NF-e (maio, zero XML,
+    // saía com a mesma confiança de junho, com 543 notas) — os outros dois
+    // termos (classificação de conta, saúde global das fontes) não olham
+    // pra isso.
+    const cmvComXml = lancamentos
+      .filter(l => grupoPorConta.get(l.conta_codigo) === "cmv" && l.origem === "nfe_entrada")
+      .reduce((s, l) => s + Number(l.valor), 0)
+    const pctCompraComXml = cmv > 0 ? cmvComXml / cmv : null
+
+    const confiancaPct = pctClassificado != null && fontesTotal > 0 && pctCompraComXml != null
+      ? 0.4 * pctClassificado + 0.3 * (fontesOk / fontesTotal) + 0.3 * pctCompraComXml
       : null
 
     // possivel_dupla_contagem: Σ valor dos lançamentos de título desta
@@ -736,6 +747,7 @@ export async function recalcularSnapshot(
       pct_classificado: pctClassificado,
       fontes_ok: fontesOk,
       fontes_total: fontesTotal,
+      pct_compra_com_xml: pctCompraComXml,
       confianca_pct: confiancaPct,
       possivel_dupla_contagem: round2(possivelDuplaContagem),
     }
