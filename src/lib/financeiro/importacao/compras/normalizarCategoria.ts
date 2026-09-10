@@ -31,12 +31,32 @@ function limparBase(texto: string): string {
     .trim();
 }
 
+// Impostos precisam de detecção por PALAVRA-CHAVE em vez de prefixo — a
+// natureza real (venda / lucro / encargo de folha) está na sigla que vem
+// DEPOIS do traço ("IMPOSTOS - IRPJ **IKY**"), não no texto antes dele.
+// IRPJ/CSLL são imposto sobre lucro (não reduz receita líquida — ver
+// resultado_liquido). FGTS/DCTF/SINDICATO/CONTRIBUICAO são encargo de
+// folha, não imposto de venda. O resto (ICMS, PIS, COFINS, ISS, DIFAL,
+// NFSE, DAS, DAMSP) é imposto sobre venda de verdade.
+const IMPOSTO_LUCRO_PALAVRAS = ["IRPJ", "CSLL"];
+const ENCARGO_FOLHA_PALAVRAS = ["FGTS", "DCTF", "SINDICATO", "CONTRIBUICAO"];
+
+function contemAlguma(texto: string, palavras: string[]): boolean {
+  return palavras.some((p) => texto.includes(p));
+}
+
+function categoriaImposto(textoCompleto: string): string | null {
+  if (!textoCompleto.startsWith("IMPOSTO") && !textoCompleto.includes("CONTRIBUICAO")) return null;
+  if (contemAlguma(textoCompleto, IMPOSTO_LUCRO_PALAVRAS)) return "IMPOSTO LUCRO";
+  if (contemAlguma(textoCompleto, ENCARGO_FOLHA_PALAVRAS)) return "ENCARGO FOLHA";
+  return "IMPOSTOS VENDA";
+}
+
 // Alias por prefixo/igualdade — unifica grafia, plural/singular e as várias
-// sub-variações de uma mesma família (ex. todas as siglas de imposto) no
-// nome canônico usado em regras_classificacao.
+// sub-variações de uma mesma família no nome canônico usado em
+// regras_classificacao. Impostos são tratados antes (categoriaImposto),
+// não entram aqui.
 const ALIAS_PREFIXO: Array<[RegExp, string]> = [
-  [/^IMPOSTO/, "IMPOSTOS"],
-  [/^CONTRIBUICAO/, "IMPOSTOS"],
   [/^MAQ\b/, "MAQ LAVAR"],
   [/^LOCACAO/, "LOCACAO"],
   [/^AROMATIZACAO/, "AROMATIZACAO"],
@@ -66,6 +86,12 @@ function aplicarAlias(categoria: string): string {
 export function normalizarCategoria(textoOriginal: string, origem: OrigemPlanilha): string {
   const limpo = limparBase(textoOriginal || "")
   if (!limpo) return ""
+
+  // Imposto: a sigla que decide a natureza (venda/lucro/encargo) pode estar
+  // depois do traço ("IMPOSTOS - IRPJ"), então checa o texto limpo INTEIRO
+  // antes de cortar — diferente de todas as outras categorias.
+  const imposto = categoriaImposto(limpo)
+  if (imposto) return imposto
 
   const partes = limpo.split(/\s*-\s*/)
   let candidata = partes[0]!.trim()

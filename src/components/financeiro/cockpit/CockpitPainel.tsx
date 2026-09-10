@@ -29,6 +29,7 @@ const CARDS: CardDef[] = [
   { chave: "mo_pct", label: "Mão de obra %", formatar: (v) => formatPct(v * 100) },
   { chave: "prime_cost_pct", label: "Prime cost %", formatar: (v) => formatPct(v * 100) },
   { chave: "ebitda_pct", label: "EBITDA %", formatar: (v) => formatPct(v * 100) },
+  { chave: "resultado_liquido", label: "Resultado líquido", formatar: formatBRLCompact },
   { chave: "clientes", label: "Clientes", formatar: (v) => v.toLocaleString("pt-BR") },
   { chave: "ticket_medio", label: "Ticket médio", formatar: formatBRL },
 ];
@@ -86,9 +87,10 @@ export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dr
           } else if (card.chave === "prime_cost_pct") {
             semDado = faltaCmv || faltaFolha;
             if (semDado) semDadoTexto = `sem dado (falta ${faltantes(faltaCmv, faltaFolha)})`;
-          } else if (card.chave === "ebitda_pct" && (faltaCmv || faltaFolha)) {
-            // EBITDA nunca fica "sem dado" — mostra o valor parcial, mas
-            // avisa o que está faltando pra não ser lido como definitivo.
+          } else if ((card.chave === "ebitda_pct" || card.chave === "resultado_liquido") && (faltaCmv || faltaFolha)) {
+            // EBITDA e resultado líquido (derivado dele) nunca ficam "sem
+            // dado" — mostra o valor parcial, mas avisa o que está
+            // faltando pra não ser lido como definitivo.
             avisoParcial = `parcial — faltam ${faltantes(faltaCmv, faltaFolha)}`;
           }
 

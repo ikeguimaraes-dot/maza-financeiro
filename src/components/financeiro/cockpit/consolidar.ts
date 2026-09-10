@@ -18,6 +18,7 @@ export function consolidarKpi(rows: KpiSnapshotRow[]): KpiSnapshotRow | null {
   const maoDeObra = soma((r) => r.mao_de_obra);
   const despesaOp = soma((r) => r.despesas_operacionais);
   const ebitda = soma((r) => r.ebitda);
+  const resultadoLiquido = soma((r) => r.resultado_liquido);
   const clientes = rows.some((r) => r.clientes != null) ? soma((r) => r.clientes) : null;
   const ticketMedio = clientes && clientes > 0 ? receitaBruta / clientes : null;
   const cmvPorCliente = clientes && clientes > 0 ? cmv / clientes : null;
@@ -40,6 +41,7 @@ export function consolidarKpi(rows: KpiSnapshotRow[]): KpiSnapshotRow | null {
     mao_de_obra: maoDeObra,
     despesas_operacionais: despesaOp,
     ebitda,
+    resultado_liquido: resultadoLiquido,
     cmv_compras_pct: pct(cmv),
     mo_pct: pct(maoDeObra),
     prime_cost_pct: pct(cmv + maoDeObra),

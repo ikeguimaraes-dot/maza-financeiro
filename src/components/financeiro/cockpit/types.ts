@@ -7,6 +7,7 @@ export type KpiSnapshotRow = {
   mao_de_obra: number | null;
   despesas_operacionais: number | null;
   ebitda: number | null;
+  resultado_liquido: number | null;
   cmv_compras_pct: number | null;
   mo_pct: number | null;
   prime_cost_pct: number | null;

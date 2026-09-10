@@ -610,6 +610,7 @@ export async function recalcularSnapshot(
 
     // ── KPIs ────────────────────────────────────────────────────────────
     let receitaBruta = 0, deducao = 0, cmv = 0, maoDeObra = 0, despesaOp = 0
+    let financeiro = 0, impostoLucro = 0
     let valor999 = 0, valorTotal = 0
     for (const [conta, v] of porConta) {
       valorTotal += v.valor
@@ -620,10 +621,16 @@ export async function recalcularSnapshot(
         case "cmv": cmv += v.valor; break
         case "mao_de_obra": maoDeObra += v.valor; break
         case "despesa_operacional": despesaOp += v.valor; break
+        case "financeiro": financeiro += v.valor; break
+        // imposto_lucro (IRPJ/CSLL) fica de fora do EBITDA e da receita
+        // líquida — é imposto sobre o lucro, não dedução de venda. Some só
+        // em resultado_liquido, abaixo do EBITDA.
+        case "imposto_lucro": impostoLucro += v.valor; break
       }
     }
     const receitaLiquida = receitaBruta - deducao
     const ebitda = receitaLiquida - cmv - maoDeObra - despesaOp
+    const resultadoLiquido = ebitda - financeiro - impostoLucro
     const pct = (v: number): number | null => (receitaLiquida > 0 ? v / receitaLiquida : null)
     const temNfe = lancamentos.some(l => l.origem === "nfe_entrada")
     const temFolha = lancamentos.some(l => l.origem === "folha")
@@ -675,6 +682,7 @@ export async function recalcularSnapshot(
       mao_de_obra: round2(maoDeObra),
       despesas_operacionais: round2(despesaOp),
       ebitda: round2(ebitda),
+      resultado_liquido: round2(resultadoLiquido),
       cmv_compras_pct: pct(cmv),
       mo_pct: pct(maoDeObra),
       prime_cost_pct: pct(cmv + maoDeObra),
