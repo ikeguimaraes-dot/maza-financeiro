@@ -1,7 +1,7 @@
 "use server"
 
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
-import { getCurrentUnit } from "@kph/auth/unit"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
+import { getCurrentUnit } from "@maza/auth/unit"
 
 export type ProdutoInsert = {
   unit_id: string

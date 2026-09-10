@@ -1,7 +1,7 @@
 import Link from "next/link";
 
-import { requireUser } from "@kph/auth/server";
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
+import { requireUser } from "@maza/auth/server";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import {
   getAprovacoesPendentes,
   getBrandsOperacionais,
@@ -9,8 +9,8 @@ import {
   getTopProdutosMes,
 } from "./actions";
 import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
-import { KpiCard } from "@kph/ui/kpi-card";
-import { ProgressBar } from "@kph/ui/progress-bar";
+import { KpiCard } from "@maza/ui/kpi-card";
+import { ProgressBar } from "@maza/ui/progress-bar";
 import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
 import { AprovacaoActions } from "@/components/financeiro/AprovacaoActions";
 import { CATEGORIA_DESPESA_LABELS } from "@/lib/financeiro/labels";
@@ -27,7 +27,7 @@ import {
 import type {
   CategoriaDespesa,
   DreConsolidadoRow,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 export const dynamic = "force-dynamic";
 

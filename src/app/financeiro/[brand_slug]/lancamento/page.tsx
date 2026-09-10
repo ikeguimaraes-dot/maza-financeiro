@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { requireUser } from "@kph/auth/server";
+import { requireUser } from "@maza/auth/server";
 import {
   getBrandBySlug,
   getBrandFinancialConfig,

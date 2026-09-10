@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { requireUser } from "@kph/auth/server";
+import { requireUser } from "@maza/auth/server";
 import {
   getBrandBySlug,
   getCmvDashboard,
   getMenuItems,
 } from "../../actions";
-import { KpiCard } from "@kph/ui/kpi-card";
+import { KpiCard } from "@maza/ui/kpi-card";
 import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
 import { CmvCreateForm } from "@/components/financeiro/CmvCreateForm";
 import { CMV_CATEGORIA_OPTIONS } from "@/lib/financeiro/labels";

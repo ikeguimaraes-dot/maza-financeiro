@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
-import { Button } from "@kph/ui/button";
+import { Button } from "@maza/ui/button";
 import { responderAprovacao } from "@/app/financeiro/actions";
 
 type Props = {

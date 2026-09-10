@@ -1,7 +1,7 @@
 "use server"
 
-import { createServiceClient, createSupabaseServerClient } from "@kph/db/supabase/server"
-import { requireUser } from "@kph/auth/server"
+import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server"
+import { requireUser } from "@maza/auth/server"
 import { parseProtesto } from "@/lib/protestos/parse-protesto"
 import type { TextItemLike, ProtestoRegistro } from "@/lib/protestos/parse-protesto"
 // Precisa rodar antes de qualquer import de "pdfjs-dist/..." — ver o

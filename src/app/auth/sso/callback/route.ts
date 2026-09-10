@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import type { Database } from "@kph/db/types/database";
+import type { Database } from "@maza/db/types/database";
 
 function safeFinancePath(value: string | null): string {
   return value?.startsWith("/financeiro") && !value.startsWith("//")

@@ -1,4 +1,4 @@
-import { getCurrentUnit } from "@kph/auth/unit"
+import { getCurrentUnit } from "@maza/auth/unit"
 import { ImportError, importErrorMessage } from "@/lib/financeiro/importacao/core/errors"
 import { SupabaseFolhaImportRepository } from "@/lib/financeiro/importacao/folha/repository"
 import { ImportFolhaService } from "@/lib/financeiro/importacao/folha/service"

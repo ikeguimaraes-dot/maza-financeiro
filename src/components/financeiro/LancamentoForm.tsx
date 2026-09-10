@@ -6,10 +6,10 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 
-import { Button } from "@kph/ui/button";
-import { Input } from "@kph/ui/input";
-import { Label } from "@kph/ui/label";
-import { Textarea } from "@kph/ui/textarea";
+import { Button } from "@maza/ui/button";
+import { Input } from "@maza/ui/input";
+import { Label } from "@maza/ui/label";
+import { Textarea } from "@maza/ui/textarea";
 import {
   CATEGORIA_DESPESA_GRUPOS,
   CATEGORIA_DESPESA_LABELS,
@@ -23,7 +23,7 @@ import {
 } from "@/lib/financeiro/schema";
 import { formatBRL } from "@/lib/financeiro/utils";
 import { createCashFlowEntry } from "@/app/financeiro/actions";
-import type { LancamentoNatureza } from "@kph/db/types/database";
+import type { LancamentoNatureza } from "@maza/db/types/database";
 
 type EventOption = { id: string; nome: string; data_inicio: string };
 

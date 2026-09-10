@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
-import type { Unit } from "@kph/db/types/database";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
+import type { Unit } from "@maza/db/types/database";
 
 const COOKIE_KEY = "kph_unit_id";
 

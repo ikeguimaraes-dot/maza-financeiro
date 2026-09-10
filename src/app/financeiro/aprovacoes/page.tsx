@@ -1,4 +1,4 @@
-import { requireUser } from "@kph/auth/server"
+import { requireUser } from "@maza/auth/server"
 
 export const dynamic = "force-dynamic"
 

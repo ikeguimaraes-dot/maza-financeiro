@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { requireUser } from "@kph/auth/server";
+import { requireUser } from "@maza/auth/server";
 import {
   getBrandBySlug,
   getBrandFinancialConfig,
@@ -14,7 +14,7 @@ import {
 import { DreCard } from "@/components/financeiro/DreCard";
 import { GapTable } from "@/components/financeiro/GapTable";
 import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
-import { KpiCard } from "@kph/ui/kpi-card";
+import { KpiCard } from "@maza/ui/kpi-card";
 import {
   CATEGORIA_DESPESA_LABELS,
   CATEGORIA_RECEITA_LABELS,
@@ -34,7 +34,7 @@ import type {
   CategoriaDespesa,
   CategoriaReceita,
   CashFlowEntryRow,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 export const dynamic = "force-dynamic";
 

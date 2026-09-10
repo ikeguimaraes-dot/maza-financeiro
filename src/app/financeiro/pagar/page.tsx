@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { requireUser } from "@kph/auth/server";
-import { getCurrentUnit } from "@kph/auth/unit";
+import { requireUser } from "@maza/auth/server";
+import { getCurrentUnit } from "@maza/auth/unit";
 import { getPagarKpisETitulos } from "../actions-operations";
 import { ImportPagarButton } from "@/components/financeiro/ImportPagarButton";
 import { FiltroCategoria } from "@/components/financeiro/FiltroCategoria";

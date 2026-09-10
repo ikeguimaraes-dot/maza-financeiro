@@ -1,8 +1,8 @@
 export const runtime = "nodejs"
 export const maxDuration = 120
 
-import { requireUser } from "@kph/auth/server"
-import { getCurrentUnit } from "@kph/auth/unit"
+import { requireUser } from "@maza/auth/server"
+import { getCurrentUnit } from "@maza/auth/unit"
 import { previewMazaArchive, previewMazaSpreadsheet } from "@/lib/financeiro/importacao/maza/archive"
 import { ImportConflictError, persistMazaArchive } from "@/lib/financeiro/importacao/maza/repository"
 

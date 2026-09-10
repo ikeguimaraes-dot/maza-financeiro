@@ -1,6 +1,6 @@
 import "server-only"
 import { createHash } from "node:crypto"
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
 import type { MazaBatchPreview, NfEntradaRow, ContaPagarRow, ReceitaCaixaRow } from "./types"
 
 export class ImportConflictError extends Error {

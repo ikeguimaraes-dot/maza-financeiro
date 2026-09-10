@@ -1,5 +1,5 @@
 import "server-only"
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
 import type { FolhaImportDocument } from "./types"
 import type { BufferedImportFile } from "../core/types"
 

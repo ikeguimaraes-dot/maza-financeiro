@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useUnit } from "@kph/auth/context";
+import { useUnit } from "@maza/auth/context";
 
 const API_BASE = "/financeiro";
 

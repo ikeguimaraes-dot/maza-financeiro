@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@kph/auth/server";
+import { requireUser } from "@maza/auth/server";
 import { getFluxoCaixaMes } from "../actions-operations";
 import {
   competenciaLabel,
@@ -11,7 +11,7 @@ import {
   getCompetenciaAtual,
 } from "@/lib/financeiro/utils";
 import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
-import { KpiCard } from "@kph/ui/kpi-card";
+import { KpiCard } from "@maza/ui/kpi-card";
 
 export const dynamic = "force-dynamic";
 

@@ -5,7 +5,7 @@ import type {
   LancamentoRegime,
   LancamentoStatus,
   ApprovalStatus,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 export const NATUREZA_LABELS: Record<LancamentoNatureza, string> = {
   receita: "Receita",

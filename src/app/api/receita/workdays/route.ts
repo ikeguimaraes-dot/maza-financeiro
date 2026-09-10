@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

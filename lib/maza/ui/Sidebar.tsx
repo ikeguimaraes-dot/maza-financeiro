@@ -27,7 +27,7 @@ import {
   Brain, Target, LineChart, Layers, Bug, Map, BarChart3, Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useAuth, useUnit } from "@kph/auth/context";
+import { useAuth, useUnit } from "@maza/auth/context";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

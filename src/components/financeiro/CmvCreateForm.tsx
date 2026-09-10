@@ -6,9 +6,9 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 
-import { Button } from "@kph/ui/button";
-import { Input } from "@kph/ui/input";
-import { Label } from "@kph/ui/label";
+import { Button } from "@maza/ui/button";
+import { Input } from "@maza/ui/input";
+import { Label } from "@maza/ui/label";
 import { CMV_CATEGORIA_OPTIONS } from "@/lib/financeiro/labels";
 import {
   createMenuItemSchema,

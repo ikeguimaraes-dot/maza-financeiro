@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
 import { formatBRL } from "@/lib/financeiro/utils"
-import { KpiCard } from "@kph/ui/kpi-card"
+import { KpiCard } from "@maza/ui/kpi-card"
 import type { TituloComUnidade } from "@/app/financeiro/actions-operations"
 import { ConciliacaoTab } from "./ConciliacaoTab"
 import { ProtestosTab } from "./ProtestosTab"

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { requireUser } from "@kph/auth/server";
+import { requireUser } from "@maza/auth/server";
 import {
   getOrcamentoData,
   getUnitsComDre,

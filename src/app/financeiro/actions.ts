@@ -2,9 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
-import { requireUser } from "@kph/auth/server";
-import { getCurrentUnit } from "@kph/auth/unit";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
+import { requireUser } from "@maza/auth/server";
+import { getCurrentUnit } from "@maza/auth/unit";
 import type { ActionResult } from "@/lib/result";
 import {
   createMenuItemSchema,
@@ -29,7 +29,7 @@ import type {
   GapProjecaoRealizadoRow,
   LancamentoStatus,
   ApprovalStatus,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 import type {
   CmvFilters,
   EntryFilters,

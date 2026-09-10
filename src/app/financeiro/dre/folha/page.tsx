@@ -4,7 +4,7 @@
 // Repo: maza-financeiro
 
 import { useEffect, useState, useMemo, useRef } from "react"
-import { useUnit } from "@kph/auth/context"
+import { useUnit } from "@maza/auth/context"
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,

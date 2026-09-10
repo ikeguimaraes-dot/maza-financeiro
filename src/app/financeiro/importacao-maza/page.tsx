@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useUnit } from "@kph/auth/context"
+import { useUnit } from "@maza/auth/context"
 import type { MazaBatchPreview } from "@/lib/financeiro/importacao/maza/types"
 
 type Result = { name: string; file: File; preview?: MazaBatchPreview; error?: string; imported?: string }

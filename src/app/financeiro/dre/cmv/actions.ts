@@ -1,9 +1,9 @@
 "use server"
 
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
-import { getCurrentUnit } from "@kph/auth/unit"
-import { requireUser } from "@kph/auth/server"
-import { createServiceClient } from "@kph/db/supabase/server"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
+import { getCurrentUnit } from "@maza/auth/unit"
+import { requireUser } from "@maza/auth/server"
+import { createServiceClient } from "@maza/db/supabase/server"
 import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
 
 // Categorias de desc_gerencial que são despesa administrativa/financeira/folha,

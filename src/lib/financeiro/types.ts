@@ -2,7 +2,7 @@ import type {
   CategoriaDespesa,
   LancamentoNatureza,
   LancamentoStatus,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 export type EntryFilters = {
   natureza?: LancamentoNatureza | null;

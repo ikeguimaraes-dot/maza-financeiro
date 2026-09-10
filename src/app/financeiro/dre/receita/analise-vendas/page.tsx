@@ -8,7 +8,7 @@ import {
   XAxis, YAxis, Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useUnit } from "@kph/auth/context";
+import { useUnit } from "@maza/auth/context";
 
 const API_BASE = "/financeiro";
 

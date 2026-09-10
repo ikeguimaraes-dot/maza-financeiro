@@ -5,7 +5,7 @@ import type {
   CategoriaReceita,
   LancamentoNatureza,
   LancamentoRegime,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 export const NATUREZA_VALUES = [
   "receita",

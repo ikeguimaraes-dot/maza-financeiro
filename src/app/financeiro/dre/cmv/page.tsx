@@ -1,8 +1,8 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { requireUser } from "@kph/auth/server"
-import { getCurrentUnit } from "@kph/auth/unit"
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
+import { requireUser } from "@maza/auth/server"
+import { getCurrentUnit } from "@maza/auth/unit"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
 import { ProdutosClient } from "@/components/financeiro/produtos/ProdutosClient"
 
 export const dynamic = "force-dynamic"

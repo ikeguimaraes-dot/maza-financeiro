@@ -2,8 +2,8 @@ export const runtime = "nodejs"
 export const maxDuration = 60
 
 import * as XLSX from "xlsx"
-import { createOperationsClient } from "@kph/db/supabase/operations-client"
-import { requireUser } from "@kph/auth/server"
+import { createOperationsClient } from "@maza/db/supabase/operations-client"
+import { requireUser } from "@maza/auth/server"
 import { mapRow, normalizeUnitName } from "@/lib/pagar-import/parse-titulos"
 
 // ── Route ─────────────────────────────────────────────────────────────────────

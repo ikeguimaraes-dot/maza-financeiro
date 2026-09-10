@@ -7,10 +7,10 @@ import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/receita/vendaExtract
 // EQUIVALÊNCIA COM /api/receita/import-xlsx — leia antes de mexer em qualquer
 // dos dois parsers.
 //
-// Esta rota (PDF, via Claude) é a referência que o cron diário usa — validada
-// em produção pra todas as unidades (Meet/Madonna/Match), com o MESMO prompt
-// pra qualquer uma (zero lógica condicional por unidade). import-xlsx/route.ts
-// é o equivalente sem IA pra quem tem o Excel — os dois devem gravar o MESMO
+// Esta rota (PDF, via Claude) está validada em produção pra todas as
+// unidades (Meet/Madonna/Match), com o MESMO prompt pra qualquer uma (zero
+// lógica condicional por unidade). import-xlsx/route.ts é o equivalente sem
+// IA pra quem tem o Excel — os dois devem gravar o MESMO
 // resultado em receita_dias/receita_pagamentos/receita_ambientes/
 // receita_turnos/receita_horarios/receita_grupos pro mesmo workday_id. Mudou um
 // campo aqui? Confere se o parser XLSX extrai a mesma coisa.

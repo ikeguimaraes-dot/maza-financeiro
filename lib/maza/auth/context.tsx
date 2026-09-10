@@ -3,8 +3,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CurrentUser } from "./server";
-import type { Unit } from "@kph/db/types/database";
-import { getBrowserClient } from "@kph/db/supabase/client";
+import type { Unit } from "@maza/db/types/database";
+import { getBrowserClient } from "@maza/db/supabase/client";
 
 type AuthContextValue = {
   user: CurrentUser | null;

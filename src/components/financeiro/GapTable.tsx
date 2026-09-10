@@ -13,7 +13,7 @@ import type {
   CategoriaDespesa,
   CategoriaReceita,
   GapProjecaoRealizadoRow,
-} from "@kph/db/types/database";
+} from "@maza/db/types/database";
 
 type Props = {
   rows: GapProjecaoRealizadoRow[];

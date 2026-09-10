@@ -9,7 +9,7 @@ import {
   XAxis, YAxis, Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useUnit } from "@kph/auth/context";
+import { useUnit } from "@maza/auth/context";
 import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
 
 // Pelo shell, as APIs passam pelo rewrite /financeiro/api/*. No domínio direto

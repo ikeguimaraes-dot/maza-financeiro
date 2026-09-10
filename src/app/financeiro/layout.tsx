@@ -1,8 +1,8 @@
-import { AuthProvider } from "@kph/auth/context";
-import { requireUser } from "@kph/auth/server";
-import { createServiceClient, createSupabaseServerClient } from "@kph/db/supabase/server";
-import type { Unit } from "@kph/db/types/database";
-import { Sidebar } from "@kph/ui/sidebar";
+import { AuthProvider } from "@maza/auth/context";
+import { requireUser } from "@maza/auth/server";
+import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server";
+import type { Unit } from "@maza/db/types/database";
+import { Sidebar } from "@maza/ui/sidebar";
 
 export const dynamic = "force-dynamic";
 

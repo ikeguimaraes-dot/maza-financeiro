@@ -1,8 +1,8 @@
 import Link from "next/link"
-import { requireUser } from "@kph/auth/server"
-import { getCurrentUnit } from "@kph/auth/unit"
-import { createSupabaseServerClient } from "@kph/db/supabase/server"
-import { KpiCard } from "@kph/ui/kpi-card"
+import { requireUser } from "@maza/auth/server"
+import { getCurrentUnit } from "@maza/auth/unit"
+import { createSupabaseServerClient } from "@maza/db/supabase/server"
+import { KpiCard } from "@maza/ui/kpi-card"
 import { formatBRLCompact } from "@/lib/financeiro/utils"
 import {
   DreBarChart,

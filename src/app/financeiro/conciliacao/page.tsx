@@ -1,6 +1,6 @@
 import Link from "next/link"
-import { requireUser } from "@kph/auth/server"
-import { getCurrentUnit } from "@kph/auth/unit"
+import { requireUser } from "@maza/auth/server"
+import { getCurrentUnit } from "@maza/auth/unit"
 import { ConciliacaoTab } from "@/components/financeiro/ConciliacaoTab"
 
 export const dynamic = "force-dynamic"

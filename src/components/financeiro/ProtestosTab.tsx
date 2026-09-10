@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react"
 import type { CSSProperties } from "react"
-import { getBrowserClient } from "@kph/db/supabase/client"
+import { getBrowserClient } from "@maza/db/supabase/client"
 import {
   getProtestos,
   getProtestoUploadUrl,

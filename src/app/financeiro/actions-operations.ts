@@ -1,13 +1,13 @@
 "use server";
 
-import { createOperationsClient } from "@kph/db/supabase/operations-client";
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
+import { createOperationsClient } from "@maza/db/supabase/operations-client";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import type {
   VendaDiaria,
   MetaProjecao,
   TituloAPagar,
   WorkdayPagamento,
-} from "@kph/db/types/operations-database";
+} from "@maza/db/types/operations-database";
 
 /** TituloAPagar + nome da unidade (join com `units` via unit_id). */
 export type TituloComUnidade = TituloAPagar & { unit_name: string | null };

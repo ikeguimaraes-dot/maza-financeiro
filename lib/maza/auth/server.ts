@@ -2,9 +2,9 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "@kph/db/supabase/server";
+import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import { getShellLoginUrl } from "../../../src/lib/shell-url";
-import type { RoleName } from "@kph/db/types/database";
+import type { RoleName } from "@maza/db/types/database";
 
 export type CurrentUser = {
   id: string;
