@@ -392,7 +392,7 @@ export async function gerarLancamentosTitulos(
 
       if (matchConfirmado) {
         sugestoesRows.push({
-          unit_id: unitId, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
+          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
           score: Math.round(matchConfirmado.score * 100) / 100,
           valor_titulo: valorTitulo, valor_nfe: matchConfirmado.valorNfe,
           dias_diferenca: 0, status: "confirmada",
@@ -419,7 +419,7 @@ export async function gerarLancamentosTitulos(
       // existe, só falta importar o XML. Sinaliza pro Ike.
       if (t.n_nota_fiscal) {
         sugestoesRows.push({
-          unit_id: unitId, titulo_id: t.id, chave_nfe: `SEM_XML:${t.n_nota_fiscal}`,
+          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: `SEM_XML:${t.n_nota_fiscal}`,
           score: 0, valor_titulo: valorTitulo, valor_nfe: 0, dias_diferenca: 0, status: "sem_xml",
         })
       }
@@ -427,6 +427,14 @@ export async function gerarLancamentosTitulos(
 
     await deleteEscopo(db, "titulo", unitId, inicio)
     await inserirLancamentos(db, lancamentosRows)
+
+    // Idempotência: sem isso, sugestão de um match que a lógica não faz
+    // mais (ex. mudança de regra de competência) nunca some — só se
+    // acumula upsert após upsert. status='rejeitada' é decisão humana da
+    // tela de classificação e nunca é apagada por reprocessamento.
+    const { error: delSugestoesError } = await db.from("reconciliacoes_sugeridas").delete()
+      .eq("unit_id", unitId).eq("competencia", inicio).in("status", ["confirmada", "sem_xml"])
+    if (delSugestoesError) throw new Error(delSugestoesError.message)
 
     for (let i = 0; i < sugestoesRows.length; i += 500) {
       const chunk = sugestoesRows.slice(i, i + 500)
