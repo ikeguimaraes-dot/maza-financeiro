@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { parseContasAPagarWorkbook, parseNfPedidosWorkbook, type LinhaCompraParseada } from "@/lib/financeiro/importacao/compras/parseComprasXlsx";
+import { parseContasAPagarWorkbook, parseNfPedidosWorkbook } from "@/lib/financeiro/importacao/compras/parseComprasXlsx";
 import { importarNfPedidos, importarContasPagar, type ImportarComprasResultado } from "@/app/financeiro/pagar/compras-actions";
 
 type Tipo = "nf_pedidos" | "contas_pagar";
@@ -22,6 +22,8 @@ export function ComprasImportModal({ tipo, unitIdBase, onClose, onSuccess }: Pro
   const [error, setError] = useState("");
   const [resultado, setResultado] = useState<ImportarComprasResultado | null>(null);
   const [linhasLidas, setLinhasLidas] = useState(0);
+  const [abasLidas, setAbasLidas] = useState<string[]>([]);
+  const [abasIgnoradas, setAbasIgnoradas] = useState<string[]>([]);
 
   async function processar(file: File) {
     setStatus("lendo");
@@ -29,10 +31,12 @@ export function ComprasImportModal({ tipo, unitIdBase, onClose, onSuccess }: Pro
     setFileName(file.name);
     try {
       const buffer = await file.arrayBuffer();
-      const linhas: LinhaCompraParseada[] = tipo === "nf_pedidos"
+      const { linhas, abasLidas: lidas, abasIgnoradas: ignoradas } = tipo === "nf_pedidos"
         ? parseNfPedidosWorkbook(buffer)
         : parseContasAPagarWorkbook(buffer);
       setLinhasLidas(linhas.length);
+      setAbasLidas(lidas);
+      setAbasIgnoradas(ignoradas);
       if (linhas.length === 0) {
         setError("Nenhuma linha de dado reconhecida no arquivo.");
         setStatus("erro");
@@ -87,6 +91,17 @@ export function ComprasImportModal({ tipo, unitIdBase, onClose, onSuccess }: Pro
         {status === "enviando" && <p style={{ padding: 30, textAlign: "center", color: "var(--text-3)" }}>Gravando {linhasLidas} linhas…</p>}
 
         {error && <div style={{ padding: "9px 12px", marginTop: 12, borderRadius: 7, background: "rgba(239,68,68,.1)", color: "#ef4444", fontSize: 12 }}>{error}</div>}
+
+        {(abasLidas.length > 0 || abasIgnoradas.length > 0) && (
+          <div style={{ padding: "9px 12px", marginTop: 12, borderRadius: 7, background: "var(--surface-2)", fontSize: 12, color: "var(--text-2)" }}>
+            <div>Abas lidas: {abasLidas.length > 0 ? abasLidas.map((a) => `"${a}"`).join(", ") : "nenhuma"}</div>
+            {abasIgnoradas.length > 0 && (
+              <div style={{ marginTop: 4, color: "#f59e0b" }}>
+                Abas ignoradas (nome não reconhecido): {abasIgnoradas.map((a) => `"${a}"`).join(", ")}
+              </div>
+            )}
+          </div>
+        )}
 
         {status === "concluido" && resultado && (
           <div style={{ padding: "12px 0" }}>

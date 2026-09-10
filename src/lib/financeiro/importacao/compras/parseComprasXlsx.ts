@@ -10,6 +10,12 @@ const MES_DA_ABA: Record<string, string> = {
   MAIO: "05", JUNHO: "06", JULHO: "07", AGOSTO: "08",
 };
 
+export type ResultadoParseWorkbook = {
+  linhas: LinhaCompraParseada[];
+  abasLidas: string[]; // nome literal, na ordem da planilha
+  abasIgnoradas: string[]; // nome literal — não bateu com nenhum mês conhecido
+};
+
 export type LinhaCompraParseada = {
   fornecedorNome: string | null;
   dLancamento: string | null; // ISO YYYY-MM-DD
@@ -72,13 +78,16 @@ function abaParaCompetencia(nomeAba: string): string | null {
   return mes ? `2026-${mes}-01` : null;
 }
 
-export function parseContasAPagarWorkbook(arrayBuffer: ArrayBuffer): LinhaCompraParseada[] {
+export function parseContasAPagarWorkbook(arrayBuffer: ArrayBuffer): ResultadoParseWorkbook {
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
   const linhas: LinhaCompraParseada[] = [];
+  const abasLidas: string[] = [];
+  const abasIgnoradas: string[] = [];
 
   for (const nomeAba of wb.SheetNames) {
     const competencia = abaParaCompetencia(nomeAba);
-    if (!competencia) continue;
+    if (!competencia) { abasIgnoradas.push(nomeAba); continue; }
+    abasLidas.push(nomeAba);
     const ws = wb.Sheets[nomeAba]!;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null });
 
@@ -105,16 +114,19 @@ export function parseContasAPagarWorkbook(arrayBuffer: ArrayBuffer): LinhaCompra
       });
     }
   }
-  return linhas;
+  return { linhas, abasLidas, abasIgnoradas };
 }
 
-export function parseNfPedidosWorkbook(arrayBuffer: ArrayBuffer): LinhaCompraParseada[] {
+export function parseNfPedidosWorkbook(arrayBuffer: ArrayBuffer): ResultadoParseWorkbook {
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
   const linhas: LinhaCompraParseada[] = [];
+  const abasLidas: string[] = [];
+  const abasIgnoradas: string[] = [];
 
   for (const nomeAba of wb.SheetNames) {
     const competencia = abaParaCompetencia(nomeAba);
-    if (!competencia) continue;
+    if (!competencia) { abasIgnoradas.push(nomeAba); continue; }
+    abasLidas.push(nomeAba);
     const ws = wb.Sheets[nomeAba]!;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null });
 
@@ -164,5 +176,5 @@ export function parseNfPedidosWorkbook(arrayBuffer: ArrayBuffer): LinhaCompraPar
       });
     }
   }
-  return linhas;
+  return { linhas, abasLidas, abasIgnoradas };
 }
