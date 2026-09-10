@@ -15,6 +15,7 @@ export type KpiSnapshotRow = {
   ticket_medio: number | null;
   cmv_por_cliente: number | null;
   tem_nfe: boolean;
+  tem_folha: boolean;
   pct_classificado: number | null;
   fontes_ok: number | null;
   fontes_total: number | null;

@@ -626,6 +626,7 @@ export async function recalcularSnapshot(
     const ebitda = receitaLiquida - cmv - maoDeObra - despesaOp
     const pct = (v: number): number | null => (receitaLiquida > 0 ? v / receitaLiquida : null)
     const temNfe = lancamentos.some(l => l.origem === "nfe_entrada")
+    const temFolha = lancamentos.some(l => l.origem === "folha")
 
     const dias = await fetchAllPaginado((from, to) =>
       db.from("receita_dias").select("clientes")
@@ -682,6 +683,7 @@ export async function recalcularSnapshot(
       ticket_medio: ticketMedio != null ? round2(ticketMedio) : null,
       cmv_por_cliente: cmvPorCliente != null ? round2(cmvPorCliente) : null,
       tem_nfe: temNfe,
+      tem_folha: temFolha,
       pct_classificado: pctClassificado,
       fontes_ok: fontesOk,
       fontes_total: fontesTotal,

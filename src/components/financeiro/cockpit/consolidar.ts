@@ -48,6 +48,7 @@ export function consolidarKpi(rows: KpiSnapshotRow[]): KpiSnapshotRow | null {
     ticket_medio: ticketMedio,
     cmv_por_cliente: cmvPorCliente,
     tem_nfe: rows.some((r) => r.tem_nfe),
+    tem_folha: rows.some((r) => r.tem_folha),
     pct_classificado: mediaPonderada((r) => r.pct_classificado),
     // v_fonte_saude é global — mesma leitura pras duas units, não soma.
     fontes_ok: rows[0]!.fontes_ok,

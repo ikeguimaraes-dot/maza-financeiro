@@ -21,18 +21,33 @@ type CardDef = {
   chave: string;
   label: string;
   formatar: (v: number) => string;
-  ehPercentual: boolean;
 };
 
 const CARDS: CardDef[] = [
-  { chave: "receita_liquida", label: "Receita líquida", formatar: formatBRLCompact, ehPercentual: false },
-  { chave: "cmv_compras_pct", label: "CMV %", formatar: (v) => formatPct(v * 100), ehPercentual: true },
-  { chave: "mo_pct", label: "Mão de obra %", formatar: (v) => formatPct(v * 100), ehPercentual: true },
-  { chave: "prime_cost_pct", label: "Prime cost %", formatar: (v) => formatPct(v * 100), ehPercentual: true },
-  { chave: "ebitda_pct", label: "EBITDA %", formatar: (v) => formatPct(v * 100), ehPercentual: true },
-  { chave: "clientes", label: "Clientes", formatar: (v) => v.toLocaleString("pt-BR"), ehPercentual: false },
-  { chave: "ticket_medio", label: "Ticket médio", formatar: formatBRL, ehPercentual: false },
+  { chave: "receita_liquida", label: "Receita líquida", formatar: formatBRLCompact },
+  { chave: "cmv_compras_pct", label: "CMV %", formatar: (v) => formatPct(v * 100) },
+  { chave: "mo_pct", label: "Mão de obra %", formatar: (v) => formatPct(v * 100) },
+  { chave: "prime_cost_pct", label: "Prime cost %", formatar: (v) => formatPct(v * 100) },
+  { chave: "ebitda_pct", label: "EBITDA %", formatar: (v) => formatPct(v * 100) },
+  { chave: "clientes", label: "Clientes", formatar: (v) => v.toLocaleString("pt-BR") },
+  { chave: "ticket_medio", label: "Ticket médio", formatar: formatBRL },
 ];
+
+// Nomeia o que falta pra um card, dado quais fontes a competência tem.
+// prime_cost e ebitda dependem dos dois lados (CMV + folha); os outros
+// cards dependem só da própria fonte.
+function faltantes(faltaCmv: boolean, faltaFolha: boolean): string {
+  return [faltaCmv && "CMV", faltaFolha && "folha"].filter(Boolean).join(" e ");
+}
+
+// Total real da conta 9.99 (a classificar) na competência — direto do
+// dre_snapshot, não uma estimativa. "unidade" pode ser um unit_id ou
+// "consolidado" (soma as duas).
+function valor999PorUnidade(dreRows: DreSnapshotRow[], unidade: string): number {
+  return dreRows
+    .filter((r) => r.conta_codigo === "9.99" && (unidade === "consolidado" || r.unit_id === unidade))
+    .reduce((s, r) => s + Number(r.valor), 0);
+}
 
 export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dreRows, planoContas, fontes }: Props) {
   const porCompetencia = agruparPorCompetencia(kpiRows, janela, unidade);
@@ -55,7 +70,28 @@ export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dr
       {/* ── Linha 1: 7 cards ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 12 }}>
         {CARDS.map((card) => {
-          const semDado = card.chave === "cmv_compras_pct" && !atual.tem_nfe;
+          const faltaCmv = !atual.tem_nfe;
+          const faltaFolha = !atual.tem_folha;
+
+          let semDado = false;
+          let semDadoTexto: string | undefined;
+          let avisoParcial: string | undefined;
+
+          if (card.chave === "cmv_compras_pct") {
+            semDado = faltaCmv;
+            if (semDado) semDadoTexto = "sem dado (sem NF-e no mês)";
+          } else if (card.chave === "mo_pct") {
+            semDado = faltaFolha;
+            if (semDado) semDadoTexto = "sem dado (sem folha no mês)";
+          } else if (card.chave === "prime_cost_pct") {
+            semDado = faltaCmv || faltaFolha;
+            if (semDado) semDadoTexto = `sem dado (falta ${faltantes(faltaCmv, faltaFolha)})`;
+          } else if (card.chave === "ebitda_pct" && (faltaCmv || faltaFolha)) {
+            // EBITDA nunca fica "sem dado" — mostra o valor parcial, mas
+            // avisa o que está faltando pra não ser lido como definitivo.
+            avisoParcial = `parcial — faltam ${faltantes(faltaCmv, faltaFolha)}`;
+          }
+
           const valorAtual = (atual as unknown as Record<string, number | null>)[card.chave];
           const valorAnterior = anterior ? (anterior as unknown as Record<string, number | null>)[card.chave] : null;
           const serie = janela.map((c) => {
@@ -78,20 +114,27 @@ export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dr
               meta={meta}
               destaqueVermelho={destaque}
               badge={card.chave === "cmv_compras_pct" ? "de compras" : undefined}
-              semDadoTexto={semDado ? "sem dado (sem NF-e no mês)" : undefined}
+              semDadoTexto={semDadoTexto}
+              avisoParcial={avisoParcial}
             />
           );
         })}
       </div>
 
-      <ConfiancaEClassificar unidade={unidade} atual={atual} fontes={fontes} competencia={competencia} />
+      <ConfiancaEClassificar
+        unidade={unidade}
+        atual={atual}
+        fontes={fontes}
+        competencia={competencia}
+        valorNaoClassificado={valor999PorUnidade(dreRows, unidade)}
+      />
 
       <DreResumida dreRows={dreRows} planoContas={planoContas} receitaLiquida={atual.receita_liquida ?? 0} />
     </div>
   );
 }
 
-function KpiCard({ label, valor, valorAnterior, formatar, serie, meta, destaqueVermelho, badge, semDadoTexto }: {
+function KpiCard({ label, valor, valorAnterior, formatar, serie, meta, destaqueVermelho, badge, semDadoTexto, avisoParcial }: {
   label: string;
   valor: number | null;
   valorAnterior: number | null;
@@ -101,6 +144,7 @@ function KpiCard({ label, valor, valorAnterior, formatar, serie, meta, destaqueV
   destaqueVermelho: boolean;
   badge?: string;
   semDadoTexto?: string;
+  avisoParcial?: string;
 }) {
   const delta = valor != null && valorAnterior != null && valorAnterior !== 0
     ? ((valor - valorAnterior) / Math.abs(valorAnterior)) * 100
@@ -127,9 +171,14 @@ function KpiCard({ label, valor, valorAnterior, formatar, serie, meta, destaqueV
       {semDadoTexto ? (
         <p style={{ fontSize: 13, color: "var(--text-3)", fontStyle: "italic", margin: "4px 0" }}>{semDadoTexto}</p>
       ) : (
-        <p style={{ fontSize: 24, fontWeight: 800, color: destaqueVermelho ? "#EF4444" : "var(--text)", margin: 0, lineHeight: 1 }}>
-          {valor != null ? formatar(valor) : "—"}
-        </p>
+        <>
+          <p style={{ fontSize: 24, fontWeight: 800, color: destaqueVermelho ? "#EF4444" : "var(--text)", margin: 0, lineHeight: 1 }}>
+            {valor != null ? formatar(valor) : "—"}
+          </p>
+          {avisoParcial && (
+            <p style={{ fontSize: 10, color: "#F59E0B", fontWeight: 600, margin: 0 }}>{avisoParcial}</p>
+          )}
+        </>
       )}
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>

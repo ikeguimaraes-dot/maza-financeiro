@@ -7,6 +7,9 @@ type Props = {
   atual: KpiSnapshotRow;
   fontes: FonteSaudeRow[];
   competencia: string;
+  // Total real da conta 9.99 na competência, vindo direto de dre_snapshot —
+  // não uma estimativa derivada de despesas_operacionais.
+  valorNaoClassificado: number;
 };
 
 const STATUS_COR: Record<string, string> = {
@@ -15,13 +18,10 @@ const STATUS_COR: Record<string, string> = {
   morta: "#EF4444",
 };
 
-export function ConfiancaEClassificar({ atual, fontes }: Props) {
+export function ConfiancaEClassificar({ atual, fontes, valorNaoClassificado }: Props) {
   const confianca = atual.confianca_pct;
   const classificado = atual.pct_classificado;
   const abaixoDoLimite = confianca != null && confianca < 0.7;
-  const valorNaoClassificado = atual.despesas_operacionais != null && classificado != null
-    ? atual.despesas_operacionais * (1 - classificado)
-    : null;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 12 }}>
