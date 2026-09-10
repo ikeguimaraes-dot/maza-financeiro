@@ -270,17 +270,22 @@ export async function gerarLancamentosTitulos(
   try {
     const { inicio, fim } = competenciaRange(competencia)
 
+    // FASE 7 PASSO 5: fonte é titulos_a_pagar origem in (nf_pedidos,
+    // contas_pagar) — a origem antiga ('PLANILHA MAZA', ~2.000 linhas de
+    // fonte desconhecida) é ignorada por design, não só por estar apagada.
+    // Competência: usa d_competencia; se nula, cai no mês de d_vencimento.
     const titulos = await fetchAllPaginado((from, to) =>
       db.from("titulos_a_pagar")
-        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,descricao_c_gerencial,v_titulo,d_competencia,d_vencimento,d_lancamento")
+        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
         .eq("unit_id", unitId)
-        .gte("d_competencia", inicio)
-        .lt("d_competencia", fim)
+        .in("origem", ["nf_pedidos", "contas_pagar"])
+        .or(`d_competencia.eq.${inicio},and(d_competencia.is.null,d_vencimento.gte.${inicio},d_vencimento.lt.${fim})`)
         .range(from, to)
     ) as Array<{
       id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
-      cnpj_cpf_fornecedor: string | null; descricao_c_gerencial: string | null
+      cnpj_cpf_fornecedor: string | null; c_gerencial: string | null; descricao_c_gerencial: string | null
       v_titulo: number | null; d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
+      n_nota_fiscal: string | null; origem: string
     }>
 
     if (titulos.length === 0) {
@@ -288,9 +293,11 @@ export async function gerarLancamentosTitulos(
       return { ok: true, inseridos: 0 }
     }
 
-    // Regras de classificação: cnpj exato > nome contém > descrição contém,
-    // dentro de cada tipo respeita a prioridade escolhida na tela.
-    const TIPO_RANK: Record<string, number> = { fornecedor_cnpj: 0, fornecedor_nome: 1, descricao_contem: 2 }
+    // Regras: categoria_gerencial (match exato contra c_gerencial) tem
+    // prioridade — é a classificação real das planilhas novas. Os tipos
+    // fuzzy antigos (cnpj/nome/descrição) seguem como fallback pra título
+    // sem categoria.
+    const TIPO_RANK: Record<string, number> = { categoria_gerencial: -1, fornecedor_cnpj: 0, fornecedor_nome: 1, descricao_contem: 2 }
     const regras = (await fetchAllPaginado((from, to) =>
       db.from("regras_classificacao")
         .select("unit_id,tipo,padrao,conta_codigo,prioridade")
@@ -301,33 +308,35 @@ export async function gerarLancamentosTitulos(
 
     function classificar(t: typeof titulos[number]): string {
       const nome = (t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase()
+      const categoria = (t.c_gerencial ?? "").toUpperCase()
       for (const r of regras) {
         const padrao = r.padrao.toUpperCase()
+        if (r.tipo === "categoria_gerencial" && categoria && categoria === padrao) return r.conta_codigo
         if (r.tipo === "fornecedor_cnpj" && t.cnpj_cpf_fornecedor && t.cnpj_cpf_fornecedor === r.padrao) return r.conta_codigo
         if (r.tipo === "fornecedor_nome" && nome && nome.includes(padrao)) return r.conta_codigo
-        // titulos_a_pagar não tem coluna de descrição livre além de
-        // descricao_c_gerencial (100% nula) — "descricao_contem" cai no
-        // mesmo campo de nome do fornecedor por falta de outro texto.
         if (r.tipo === "descricao_contem" && nome && nome.includes(padrao)) return r.conta_codigo
       }
       return "9.99"
     }
 
-    // Candidatas a NF-e: nfe_documentos (nível de nota, não de item) da
-    // mesma unidade, entrada, dentro de uma janela generosa de data — o
-    // filtro real de ±5 dias e ±1% é aplicado por título abaixo.
-    const janelaInicio = new Date(inicio); janelaInicio.setDate(janelaInicio.getDate() - 10)
-    const janelaFim = new Date(fim); janelaFim.setDate(janelaFim.getDate() + 10)
+    // Candidatas a NF-e: nfe_documentos (nível de nota) da mesma unidade,
+    // entrada, todo o histórico — o match é por NÚMERO exato, não por
+    // proximidade de data, então não precisa de janela.
     const notasCandidatas = await fetchAllPaginado((from, to) =>
       db.from("nfe_documentos")
-        .select("chave,emitente_nome,valor_total,emissao")
+        .select("chave,numero,emitente_nome,valor_total")
         .eq("unit_id", unitId)
         .eq("direcao", "entrada")
         .eq("cancelada", false)
-        .gte("emissao", janelaInicio.toISOString())
-        .lt("emissao", janelaFim.toISOString())
+        .not("numero", "is", null)
         .range(from, to)
-    ) as Array<{ chave: string; emitente_nome: string | null; valor_total: number; emissao: string }>
+    ) as Array<{ chave: string; numero: string | null; emitente_nome: string | null; valor_total: number }>
+    const notasPorNumero = new Map<string, typeof notasCandidatas>()
+    for (const nota of notasCandidatas) {
+      const arr = notasPorNumero.get(nota.numero!) ?? []
+      arr.push(nota)
+      notasPorNumero.set(nota.numero!, arr)
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lancamentosRows: any[] = []
@@ -335,9 +344,39 @@ export async function gerarLancamentosTitulos(
     const sugestoesRows: any[] = []
 
     for (const t of titulos) {
+      const categoria = (t.c_gerencial ?? "").toUpperCase()
+      // CONTAS_A_PAGAR duplica ALIMENTOS/BEBIDAS que já vêm por NF_PEDIDOS
+      // (mesma compra, dois ângulos) — ignora pra não contar duas vezes.
+      if (t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS")) continue
+
       const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
       const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia ?? inicio
       const valorTitulo = Math.abs(Number(t.v_titulo ?? 0))
+
+      // Dedup: mesmo número de NF + fornecedor por similaridade + valor
+      // ±2% → já foi gerado via XML (com detalhe por item) — não duplica.
+      let matchConfirmado: { chave: string; score: number; valorNfe: number } | null = null
+      if (t.n_nota_fiscal) {
+        const candidatas = notasPorNumero.get(t.n_nota_fiscal) ?? []
+        for (const nota of candidatas) {
+          const diffValor = Math.abs(nota.valor_total - valorTitulo) / Math.max(valorTitulo, 0.01)
+          if (diffValor > 0.02) continue
+          const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
+          if (!matchConfirmado || score > matchConfirmado.score) {
+            matchConfirmado = { chave: nota.chave, score, valorNfe: nota.valor_total }
+          }
+        }
+      }
+
+      if (matchConfirmado) {
+        sugestoesRows.push({
+          unit_id: unitId, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
+          score: Math.round(matchConfirmado.score * 100) / 100,
+          valor_titulo: valorTitulo, valor_nfe: matchConfirmado.valorNfe,
+          dias_diferenca: 0, status: "confirmada",
+        })
+        continue // já coberto pela NF-e — não gera lançamento
+      }
 
       lancamentosRows.push({
         unit_id: unitId,
@@ -347,37 +386,19 @@ export async function gerarLancamentosTitulos(
         valor: valorTitulo,
         origem: "titulo",
         origem_id: t.id,
-        descricao: null,
+        descricao: t.descricao_c_gerencial,
         fornecedor_cnpj: t.cnpj_cpf_fornecedor,
         fornecedor_nome: nomeFornecedor,
         produto_id: null,
         reconciliado: false,
       })
 
-      if (!nomeFornecedor || valorTitulo === 0) continue
-      const dataTituloMs = new Date(dataTitulo).getTime()
-
-      let melhor: { chave: string; score: number; valorNfe: number; dias: number } | null = null
-      for (const nota of notasCandidatas) {
-        const diffValor = Math.abs(nota.valor_total - valorTitulo) / Math.max(valorTitulo, 0.01)
-        if (diffValor > 0.01) continue
-        const dias = Math.round(Math.abs(new Date(nota.emissao).getTime() - dataTituloMs) / 86_400_000)
-        if (dias > 5) continue
-        const score = similaridadeNome(nomeFornecedor, nota.emitente_nome ?? "")
-        if (!melhor || score > melhor.score || (score === melhor.score && dias < melhor.dias)) {
-          melhor = { chave: nota.chave, score, valorNfe: nota.valor_total, dias }
-        }
-      }
-
-      if (melhor) {
+      // Tinha número de nota mas não achou XML correspondente — a nota
+      // existe, só falta importar o XML. Sinaliza pro Ike.
+      if (t.n_nota_fiscal) {
         sugestoesRows.push({
-          unit_id: unitId,
-          titulo_id: t.id,
-          chave_nfe: melhor.chave,
-          score: Math.round(melhor.score * 100) / 100,
-          valor_titulo: valorTitulo,
-          valor_nfe: melhor.valorNfe,
-          dias_diferenca: melhor.dias,
+          unit_id: unitId, titulo_id: t.id, chave_nfe: `SEM_XML:${t.n_nota_fiscal}`,
+          score: 0, valor_titulo: valorTitulo, valor_nfe: 0, dias_diferenca: 0, status: "sem_xml",
         })
       }
     }
@@ -385,8 +406,6 @@ export async function gerarLancamentosTitulos(
     await deleteEscopo(db, "titulo", unitId, inicio)
     await inserirLancamentos(db, lancamentosRows)
 
-    // Sugestões: upsert por (titulo_id, chave_nfe) — não sobrescreve
-    // decisão humana (confirmada/rejeitada) já registrada.
     for (let i = 0; i < sugestoesRows.length; i += 500) {
       const chunk = sugestoesRows.slice(i, i + 500)
       const { error } = await db.from("reconciliacoes_sugeridas")
