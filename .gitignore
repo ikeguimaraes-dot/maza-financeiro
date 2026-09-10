@@ -24,4 +24,4 @@ supabase/.temp/
 npm-debug.log*
 .vercel
 .env*
-tests/fixtures/folha/
+tests/fixtures/
