@@ -483,23 +483,218 @@ export async function gerarLancamentosFolha(
   }
 }
 
+const KPIS_COM_META_BASELINE = [
+  "receita_liquida", "cmv_compras_pct", "mo_pct", "prime_cost_pct", "ebitda_pct", "clientes", "ticket_medio",
+] as const
+
+export type SnapshotResultado = { ok: boolean; error?: string }
+
+// Agrega lancamentos → dre_snapshot (por conta) e kpi_snapshot (por unidade
+// e competência). Sempre delete+insert do escopo — é projeção, não dado
+// digitado, então rodar de novo depois de mudar uma regra de classificação
+// (ou de reprocessar o razão) sempre reflete o estado atual.
+export async function recalcularSnapshot(unitId: string, competencia: string): Promise<SnapshotResultado> {
+  try {
+    await requireUser()
+    const supabase = createServiceClient()
+    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+    const { inicio, fim } = competenciaRange(competencia)
+
+    const planoContas = await fetchAllPaginado((from, to) =>
+      db.from("plano_contas").select("codigo,grupo").range(from, to)
+    ) as Array<{ codigo: string; grupo: string }>
+    const grupoPorConta = new Map(planoContas.map(p => [p.codigo, p.grupo]))
+
+    const lancamentos = await fetchAllPaginado((from, to) =>
+      db.from("lancamentos").select("conta_codigo,valor,origem,origem_id")
+        .eq("unit_id", unitId).eq("competencia", inicio)
+        .range(from, to)
+    ) as Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>
+
+    // ── dre_snapshot: soma por conta ──────────────────────────────────────
+    const porConta = new Map<string, { valor: number; qtd: number }>()
+    for (const l of lancamentos) {
+      const cur = porConta.get(l.conta_codigo) ?? { valor: 0, qtd: 0 }
+      cur.valor += Number(l.valor)
+      cur.qtd += 1
+      porConta.set(l.conta_codigo, cur)
+    }
+
+    const { error: delDreError } = await db.from("dre_snapshot").delete().eq("unit_id", unitId).eq("competencia", inicio)
+    if (delDreError) throw new Error(delDreError.message)
+    if (porConta.size > 0) {
+      const dreRows = [...porConta.entries()].map(([conta_codigo, v]) => ({
+        unit_id: unitId, competencia: inicio, conta_codigo,
+        valor: Math.round(v.valor * 100) / 100, qtd_lancamentos: v.qtd,
+      }))
+      const { error } = await db.from("dre_snapshot").insert(dreRows)
+      if (error) throw new Error(error.message)
+    }
+
+    // ── KPIs ────────────────────────────────────────────────────────────
+    let receitaBruta = 0, deducao = 0, cmv = 0, maoDeObra = 0, despesaOp = 0
+    let valor999 = 0, valorTotal = 0
+    for (const [conta, v] of porConta) {
+      valorTotal += v.valor
+      if (conta === "9.99") valor999 += v.valor
+      switch (grupoPorConta.get(conta)) {
+        case "receita": receitaBruta += v.valor; break
+        case "deducao": deducao += v.valor; break
+        case "cmv": cmv += v.valor; break
+        case "mao_de_obra": maoDeObra += v.valor; break
+        case "despesa_operacional": despesaOp += v.valor; break
+      }
+    }
+    const receitaLiquida = receitaBruta - deducao
+    const ebitda = receitaLiquida - cmv - maoDeObra - despesaOp
+    const pct = (v: number): number | null => (receitaLiquida > 0 ? v / receitaLiquida : null)
+    const temNfe = lancamentos.some(l => l.origem === "nfe_entrada")
+
+    const dias = await fetchAllPaginado((from, to) =>
+      db.from("receita_dias").select("clientes")
+        .eq("unit_id", unitId).gte("data", inicio).lt("data", fim)
+        .range(from, to)
+    ) as Array<{ clientes: number | null }>
+    const clientes = dias.length > 0 ? dias.reduce((s, d) => s + (d.clientes ?? 0), 0) : null
+    // Ticket médio do mês = receita bruta total / clientes totais — evita
+    // média de médias diárias, que distorce quando os dias têm volumes bem
+    // diferentes.
+    const ticketMedio = clientes && clientes > 0 ? receitaBruta / clientes : null
+    const cmvPorCliente = clientes && clientes > 0 ? cmv / clientes : null
+
+    const pctClassificado = valorTotal > 0 ? 1 - valor999 / valorTotal : null
+
+    // v_fonte_saude não tem coluna de unidade — é uma leitura global de
+    // saúde das fontes de dado, a mesma pras duas units até essa view
+    // ganhar um recorte por unidade.
+    const fontes = await fetchAllPaginado((from, to) =>
+      db.from("v_fonte_saude").select("status_fonte").range(from, to)
+    ) as Array<{ status_fonte: string }>
+    const fontesTotal = fontes.length
+    const fontesOk = fontes.filter(f => f.status_fonte === "viva").length
+    const confiancaPct = pctClassificado != null && fontesTotal > 0
+      ? 0.6 * pctClassificado + 0.4 * (fontesOk / fontesTotal)
+      : null
+
+    // possivel_dupla_contagem: Σ valor dos lançamentos de título desta
+    // competência cuja sugestão de reconciliação ainda está pendente.
+    const sugestoesPendentes = await fetchAllPaginado((from, to) =>
+      db.from("reconciliacoes_sugeridas").select("titulo_id")
+        .eq("unit_id", unitId).eq("status", "sugerida")
+        .range(from, to)
+    ) as Array<{ titulo_id: string }>
+    const titulosPendentes = new Set(sugestoesPendentes.map(s => s.titulo_id))
+    const possivelDuplaContagem = lancamentos
+      .filter(l => l.origem === "titulo" && titulosPendentes.has(l.origem_id))
+      .reduce((s, l) => s + Number(l.valor), 0)
+
+    const kpiRow = {
+      unit_id: unitId,
+      competencia: inicio,
+      receita_bruta: round2(receitaBruta),
+      receita_liquida: round2(receitaLiquida),
+      cmv_compras: round2(cmv),
+      mao_de_obra: round2(maoDeObra),
+      despesas_operacionais: round2(despesaOp),
+      ebitda: round2(ebitda),
+      cmv_compras_pct: pct(cmv),
+      mo_pct: pct(maoDeObra),
+      prime_cost_pct: pct(cmv + maoDeObra),
+      ebitda_pct: pct(ebitda),
+      clientes,
+      ticket_medio: ticketMedio != null ? round2(ticketMedio) : null,
+      cmv_por_cliente: cmvPorCliente != null ? round2(cmvPorCliente) : null,
+      tem_nfe: temNfe,
+      pct_classificado: pctClassificado,
+      fontes_ok: fontesOk,
+      fontes_total: fontesTotal,
+      confianca_pct: confiancaPct,
+      possivel_dupla_contagem: round2(possivelDuplaContagem),
+    }
+
+    const { error: upsertError } = await db.from("kpi_snapshot")
+      .upsert(kpiRow, { onConflict: "unit_id,competencia" })
+    if (upsertError) throw new Error(upsertError.message)
+
+    await gravarMetasBaseline(db, unitId, inicio)
+
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function gravarMetasBaseline(db: any, unitId: string, competencia: string): Promise<void> {
+  const [ano, mes] = competencia.split("-").map(Number)
+  const competenciasAnteriores: string[] = []
+  for (let i = 1; i <= 3; i++) {
+    const m = mes! - i
+    const anoAjustado = m <= 0 ? ano! - 1 : ano!
+    const mesAjustado = ((m - 1 + 12) % 12) + 1
+    competenciasAnteriores.push(`${anoAjustado}-${String(mesAjustado).padStart(2, "0")}-01`)
+  }
+
+  const anteriores = await fetchAllPaginado((from, to) =>
+    db.from("kpi_snapshot")
+      .select(KPIS_COM_META_BASELINE.join(","))
+      .eq("unit_id", unitId)
+      .in("competencia", competenciasAnteriores)
+      .range(from, to)
+  ) as Array<Record<string, number | null>>
+
+  const metasExistentes = await fetchAllPaginado((from, to) =>
+    db.from("metas").select("chave,origem")
+      .eq("unit_id", unitId).eq("competencia", competencia)
+      .range(from, to)
+  ) as Array<{ chave: string; origem: string }>
+  const jaTemMetaManual = new Set(metasExistentes.filter(m => m.origem === "manual").map(m => m.chave))
+
+  const rows = KPIS_COM_META_BASELINE
+    .filter(chave => !jaTemMetaManual.has(chave))
+    .map(chave => {
+      const valores = anteriores.map(a => a[chave]).filter((v): v is number => v != null)
+      if (valores.length === 0) return null
+      const media = valores.reduce((s, v) => s + v, 0) / valores.length
+      return {
+        unit_id: unitId, competencia, chave,
+        valor: round2(media), tipo: "absoluto", origem: "baseline",
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+
+  if (rows.length > 0) {
+    const { error } = await db.from("metas").upsert(rows, { onConflict: "unit_id,competencia,chave" })
+    if (error) throw new Error(error.message)
+  }
+}
+
 export type GerarRazaoResultado = {
   ok: boolean
   nfeEntrada: GerarLancamentosResultado
   titulos: GerarLancamentosResultado
   folha: GerarLancamentosResultado
   receita: GerarLancamentosResultado
+  snapshot: SnapshotResultado
   error?: string
 }
 
 // Roda as quatro projeções pra uma unidade/competência, nessa ordem —
 // títulos depois de NF-e não importa pra dedup (isso agora é sugestão, não
-// exclusão automática), mas mantém a ordem estável do pedido original.
+// exclusão automática), mas mantém a ordem estável do pedido original —
+// depois recalcula o snapshot.
 export async function gerarRazao(unitId: string, competencia: string): Promise<GerarRazaoResultado> {
   const nfeEntrada = await gerarLancamentosNfeEntrada(unitId, competencia)
   const titulos = await gerarLancamentosTitulos(unitId, competencia)
   const folha = await gerarLancamentosFolha(unitId, competencia)
   const receita = await gerarLancamentosReceita(unitId, competencia)
-  const ok = nfeEntrada.ok && titulos.ok && folha.ok && receita.ok
-  return { ok, nfeEntrada, titulos, folha, receita }
+  const snapshot = await recalcularSnapshot(unitId, competencia)
+  const ok = nfeEntrada.ok && titulos.ok && folha.ok && receita.ok && snapshot.ok
+  return { ok, nfeEntrada, titulos, folha, receita, snapshot }
 }
