@@ -46,7 +46,7 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
     if (!direction) { setError("Confirme se o pacote é de entrada ou de saída."); return }
     setStatus("uploading"); setError("")
     // Mantém cada Server Action pequena: pacotes de saída podem ter milhares de XMLs.
-    const aggregate: NfeImportResult = { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [] }
+    const aggregate: NfeImportResult = { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [], produtosCriados: 0, vinculosCriados: 0 }
     const cnpjMap = new Map<string, { nome: string | null; notas: number; valor: number }>()
     const batchSize = 75
     for (let i = 0; i < notes.length; i += batchSize) {
@@ -62,6 +62,8 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
       aggregate.canceladas += response.canceladas
       aggregate.itens += response.itens
       aggregate.naoImportadas += response.naoImportadas
+      aggregate.produtosCriados += response.produtosCriados
+      aggregate.vinculosCriados += response.vinculosCriados
       for (const item of response.cnpjsDesconhecidos) {
         const acc = cnpjMap.get(item.cnpj) ?? { nome: item.nome, notas: 0, valor: 0 }
         acc.notas += item.notas
@@ -109,6 +111,11 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
       {status === "done" && result && <div style={{ padding:"12px 0" }}>
         <h3 style={{ color:"#22c55e", margin:"0 0 8px" }}>Importação concluída</h3>
         <p style={{ fontSize:13, color:"var(--text-2)" }}>{result.importadas} notas importadas · {result.itens} itens · {result.duplicadas} duplicadas ignoradas · {result.canceladas} canceladas{result.naoImportadas > 0 ? ` · ${result.naoImportadas} não importadas` : ""}</p>
+        {(result.produtosCriados > 0 || result.vinculosCriados > 0) && (
+          <p style={{ fontSize:12, color:"var(--text-3)", marginTop: 4 }}>
+            Catálogo: {result.produtosCriados} produto{result.produtosCriados !== 1 ? "s" : ""} novo{result.produtosCriados !== 1 ? "s" : ""} · {result.vinculosCriados} item{result.vinculosCriados !== 1 ? "s" : ""} vinculado{result.vinculosCriados !== 1 ? "s" : ""}
+          </p>
+        )}
         {result.cnpjsDesconhecidos.length > 0 && (
           <div style={{ marginTop:12, padding:"10px 12px", borderRadius:7, background:"rgba(245,158,11,.12)", color:"#f59e0b", fontSize:12 }}>
             <p style={{ margin:"0 0 6px", fontWeight:700 }}>CNPJ(s) sem unidade cadastrada</p>

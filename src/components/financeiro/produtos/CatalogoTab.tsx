@@ -48,7 +48,8 @@ export function CatalogoTab() {
             Catálogo de produtos
           </p>
           <p style={{ fontSize: 11, color: "var(--text-3)", margin: "2px 0 0" }}>
-            Gera automaticamente a partir das compras por XML que ainda não têm produto.
+            Já é gerado automaticamente a cada importação de NF-e. Use o botão só como manutenção
+            — pra reprocessar todo o histórico depois de mudar uma regra de agrupamento, por exemplo.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -64,7 +65,7 @@ export function CatalogoTab() {
             background: "var(--brand, #C4622D)", color: "var(--primary-foreground)", border: "none",
             cursor: (gerando || limpando) ? "default" : "pointer", whiteSpace: "nowrap",
           }}>
-            {gerando ? "Gerando…" : "Gerar catálogo"}
+            {gerando ? "Reprocessando…" : "Reprocessar catálogo completo"}
           </button>
         </div>
       </div>
@@ -93,7 +94,7 @@ export function CatalogoTab() {
         <div style={{ padding: "48px 24px", textAlign: "center",
           background: "var(--surface)", border: "1px dashed var(--border)", borderRadius: 14 }}>
           <p style={{ fontSize: 14, color: "var(--text-3)", margin: 0 }}>
-            Catálogo vazio. Clique em &ldquo;Gerar catálogo&rdquo; para criar a partir das compras existentes.
+            Catálogo vazio. Importe uma NF-e de entrada ou clique em &ldquo;Reprocessar catálogo completo&rdquo;.
           </p>
         </div>
       ) : (

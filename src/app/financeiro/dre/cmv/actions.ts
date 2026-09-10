@@ -100,13 +100,15 @@ export type NfeImportResult = {
   itens: number
   naoImportadas: number
   cnpjsDesconhecidos: NfeCnpjDesconhecido[]
+  produtosCriados: number
+  vinculosCriados: number
   error?: string
 }
 
 type NfeImportNota = NfeImportPayload["notas"][number]
 
 export async function importNfe(payload: NfeImportPayload): Promise<NfeImportResult> {
-  const empty = { ok: false, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [] }
+  const empty = { ok: false, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [], produtosCriados: 0, vinculosCriados: 0 }
   try {
     await requireUser()
     const unit = await getCurrentUnit()
@@ -166,7 +168,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     const naoImportadas = payload.notas.length - resolvidas.length
 
     if (!resolvidas.length) {
-      return { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas, cnpjsDesconhecidos }
+      return { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas, cnpjsDesconhecidos, produtosCriados: 0, vinculosCriados: 0 }
     }
 
     const keys = resolvidas.map(note => note.chave)
@@ -311,9 +313,18 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
       }
     }
 
+    // Catálogo automático: escopado às chaves deste lote (não reprocessa o
+    // histórico inteiro a cada importação). Falha aqui não derruba a
+    // importação — os itens já foram gravados; o botão "Reprocessar
+    // catálogo completo" na aba Catálogo cobre qualquer lacuna.
+    const chavesDoLote = [...new Set(notasParaProdutos.map(note => note.chave))]
+    const catalogo = chavesDoLote.length ? await gerarCatalogoAutomatico(chavesDoLote) : null
+
     return {
       ok: true, importadas: validas.length, duplicadas: existingKeys.size, canceladas, itens: itemCount,
       naoImportadas, cnpjsDesconhecidos,
+      produtosCriados: catalogo?.produtosCriados ?? 0,
+      vinculosCriados: catalogo?.vinculosCriados ?? 0,
     }
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : String(error) }
@@ -1228,13 +1239,22 @@ type GrupoCatalogo = {
   pares: ParPendente[]
 }
 
-export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado> {
+// Sem chavesNfe: varre todo produtos_relatorio (ação de manutenção, botão
+// "Reprocessar catálogo completo" na aba Catálogo). Com chavesNfe: só os
+// itens daquelas notas — é o que importNfe() chama a cada lote, pra não
+// reprocessar o histórico inteiro em toda importação. jaVinculados (pares
+// já em produtos_depara) já torna a função aditiva; o filtro por chave só
+// reduz o que precisa ser lido de produtos_relatorio.
+export async function gerarCatalogoAutomatico(chavesNfe?: string[]): Promise<GerarCatalogoResultado> {
   const empty = {
     ok: false, linhasLidas: 0, itensDistintos: 0, produtosCriados: 0, vinculosCriados: 0,
     excluidosPorNcm: 0, excluidosPorCategoria: 0,
   }
   try {
     await requireUser()
+    if (chavesNfe && chavesNfe.length === 0) {
+      return { ok: true, linhasLidas: 0, itensDistintos: 0, produtosCriados: 0, vinculosCriados: 0, excluidosPorNcm: 0, excluidosPorCategoria: 0 }
+    }
     const supabase = createServiceClient()
     if (!supabase) return { ...empty, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1281,16 +1301,17 @@ export async function gerarCatalogoAutomatico(): Promise<GerarCatalogoResultado>
 
     let rows: LinhaEntrada[]
     try {
-      rows = await fetchAllPaginado((from, to) =>
-        db.from("produtos_relatorio")
+      rows = await fetchAllPaginado((from, to) => {
+        let q = db.from("produtos_relatorio")
           .select("fornecedor_codigo,fornecedor_nome,item_codigo,item_descricao,tipo_item,desc_gerencial,unidade_medida,v_total_embalagem")
           .eq("direcao_nfe", "entrada")
           .not("chave_nfe", "is", null)
           .not("fornecedor_codigo", "is", null)
           .not("item_codigo", "is", null)
           .not("item_descricao", "is", null)
-          .range(from, to)
-      )
+        if (chavesNfe && chavesNfe.length > 0) q = q.in("chave_nfe", chavesNfe)
+        return q.range(from, to)
+      })
     } catch (e) {
       return { ...empty, error: e instanceof Error ? e.message : String(e) }
     }
