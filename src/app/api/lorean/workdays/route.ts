@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   }
 
   const { data: workdays, error: wErr } = await db
-    .from("lorean_workdays")
+    .from("receita_dias")
     .select("id, data, turno, receita_bruta, desconto, gorjeta, receita_liquida, custo, cmv_pct, clientes, ticket_medio, previsto, devedor")
     .eq("unit_id", unit_id)
     .gte("data", start)
@@ -62,7 +62,7 @@ export async function GET(request: Request) {
 
   if (ids.length === 0) {
     const { data: latestWorkday } = await db
-      .from("lorean_workdays")
+      .from("receita_dias")
       .select("data")
       .eq("unit_id", unit_id)
       .order("data", { ascending: false })
@@ -72,26 +72,26 @@ export async function GET(request: Request) {
   }
 
   const [pagRes, descRes, ambRes, turRes, grpRes, metaRes, metasDsRes, overrideRes, horRes, usuRes, caixasRes, prodRes, descDetRes, cancelRes, cancelDetRes] = await Promise.all([
-    db.from("lorean_pagamentos").select("workday_id_fk, forma, valor_fechado, valor_recebido").in("workday_id_fk", ids),
-    db.from("lorean_descontos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
-    db.from("lorean_ambientes").select("workday_id_fk, ambiente, produto, clientes").in("workday_id_fk", ids),
-    db.from("lorean_turnos").select("workday_id_fk, turno, produto, clientes, gorjeta, consumo").in("workday_id_fk", ids),
-    db.from("lorean_grupos").select("grupo, bruto, pct_bruto").in("workday_id_fk", ids),
+    db.from("receita_pagamentos").select("workday_id_fk, forma, valor_fechado, valor_recebido").in("workday_id_fk", ids),
+    db.from("receita_descontos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
+    db.from("receita_ambientes").select("workday_id_fk, ambiente, produto, clientes").in("workday_id_fk", ids),
+    db.from("receita_turnos").select("workday_id_fk, turno, produto, clientes, gorjeta, consumo").in("workday_id_fk", ids),
+    db.from("receita_grupos").select("grupo, bruto, pct_bruto").in("workday_id_fk", ids),
     mes_ano
       ? db.from("metas_projecoes").select("meta_faturamento").eq("mes_ano", mes_ano).maybeSingle()
       : Promise.resolve({ data: null }),
     db.from("metas_dia_semana").select("dia_semana, meta").eq("unit_id", unit_id),
     db.from("metas_dia_override").select("data, meta").eq("unit_id", unit_id).gte("data", start).lte("data", end),
-    db.from("lorean_horarios").select("workday_id_fk, hora, clientes, gorjeta, produto, consumo").in("workday_id_fk", ids),
-    db.from("lorean_usuarios").select("workday_id_fk, usuario, qtd, gorjeta, produto, consumo").in("workday_id_fk", ids),
-    db.from("lorean_caixas").select("workday_id_fk, operador, total_fechado, total_recebido, diferenca").in("workday_id_fk", ids),
-    db.from("lorean_produtos_dia").select("workday_id_fk, grupo, produto, qtd, cmv_pct, bruto, desconto, gorjeta, total").in("workday_id_fk", ids),
-    db.from("lorean_descontos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
-    db.from("lorean_cancelamentos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
-    db.from("lorean_cancelamentos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
+    db.from("receita_horarios").select("workday_id_fk, hora, clientes, gorjeta, produto, consumo").in("workday_id_fk", ids),
+    db.from("receita_usuarios").select("workday_id_fk, usuario, qtd, gorjeta, produto, consumo").in("workday_id_fk", ids),
+    db.from("receita_caixas").select("workday_id_fk, operador, total_fechado, total_recebido, diferenca").in("workday_id_fk", ids),
+    db.from("receita_produtos_dia").select("workday_id_fk, grupo, produto, qtd, cmv_pct, bruto, desconto, gorjeta, total").in("workday_id_fk", ids),
+    db.from("receita_descontos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
+    db.from("receita_cancelamentos").select("workday_id_fk, motivo, qtd, consumo").in("workday_id_fk", ids),
+    db.from("receita_cancelamentos_detalhe").select("workday_id_fk, item, usuario, motivo, qtd, valor").in("workday_id_fk", ids),
   ]);
 
-  // Receita bruta da DRE = lorean_workdays.receita_bruta = PREVISTO (o que foi
+  // Receita bruta da DRE = receita_dias.receita_bruta = PREVISTO (o que foi
   // vendido: convite+produto+gorjeta±pendência antiga) — já gravado corretamente
   // no import, não recalculado aqui. valor_recebido segue somado à parte (o que
   // de fato entrou no caixa); devedor_real = previsto - recebido, agora mais
@@ -114,7 +114,7 @@ export async function GET(request: Request) {
     };
   });
 
-  // Agrupa lorean_turnos por workday
+  // Agrupa receita_turnos por workday
   const turnosByWorkday = new Map<string, any[]>();
   for (const t of (turRes.data ?? [])) {
     const fk = (t as any).workday_id_fk as string;
@@ -150,7 +150,7 @@ export async function GET(request: Request) {
         turno: turnoLabel,
         receita_bruta: t.consumo,
         receita_bruta_real: t.consumo,
-        // Sem split fechado/recebido no nível de turno (lorean_turnos só tem consumo).
+        // Sem split fechado/recebido no nível de turno (receita_turnos só tem consumo).
         recebido_real: null,
         devedor_real: null,
         gorjeta: t.gorjeta,

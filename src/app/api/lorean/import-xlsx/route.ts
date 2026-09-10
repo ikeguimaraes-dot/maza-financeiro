@@ -9,8 +9,8 @@ import * as XLSX from "xlsx";
 // diário usa PDF (via Claude, WORKDAY_PROMPT/VENDA_PROMPT em
 // src/app/api/lorean/import/route.ts). Esta rota é o equivalente pra quem tem
 // o Excel em mãos — sem chamar IA, por regex. Os dois devem gravar o MESMO
-// resultado em lorean_workdays/lorean_pagamentos/lorean_ambientes/
-// lorean_turnos/lorean_horarios/lorean_grupos pro mesmo workday_id.
+// resultado em receita_dias/receita_pagamentos/receita_ambientes/
+// receita_turnos/receita_horarios/receita_grupos pro mesmo workday_id.
 //
 // Nenhum dos dois parsers tem lógica condicional por unidade (Meet/Madonna/
 // Match) — o relatório é idêntico pra qualquer uma; qualquer variação de
@@ -572,7 +572,7 @@ async function insertMovimento(
     parsed.receita_bruta != null && parsed.desconto != null ? parsed.receita_bruta - parsed.desconto : null;
 
   const { data: wd, error } = await supabase
-    .from("lorean_workdays")
+    .from("receita_dias")
     .upsert(
       {
         unit_id: unitId,
@@ -603,7 +603,7 @@ async function insertMovimento(
     .select()
     .single();
 
-  if (error) throw new Error(`lorean_workdays: ${error.message}`);
+  if (error) throw new Error(`receita_dias: ${error.message}`);
 
   // Classificação de turno — mesma lógica de /api/lorean/import (PDF).
   const turnosNomes = parsed.turnos.map((t) => t.nome.toLowerCase());
@@ -619,7 +619,7 @@ async function insertMovimento(
     turnoClassificado = "jantar";
   } else {
     const { data: siblings } = await supabase
-      .from("lorean_workdays")
+      .from("receita_dias")
       .select("id, workday_id")
       .eq("unit_id", unitId)
       .eq("data", parsed.data)
@@ -627,65 +627,65 @@ async function insertMovimento(
     if (siblings?.length === 1) {
       turnoClassificado = "dia_inteiro";
     } else if (siblings && siblings.length >= 2) {
-      await supabase.from("lorean_workdays").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
-      await supabase.from("lorean_workdays").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
+      await supabase.from("receita_dias").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
+      await supabase.from("receita_dias").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
       turnoClassificado = wd.workday_id === siblings[0]!.workday_id ? "almoco" : "jantar";
     } else {
       turnoClassificado = "dia_inteiro";
     }
   }
-  await supabase.from("lorean_workdays").update({ turno: turnoClassificado }).eq("id", wd.id);
+  await supabase.from("receita_dias").update({ turno: turnoClassificado }).eq("id", wd.id);
 
   // Reimport idempotente: apaga filhos antes de reinserir.
   await Promise.all([
-    supabase.from("lorean_pagamentos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_ambientes").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_turnos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_horarios").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_descontos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("lorean_usuarios").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_pagamentos").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_ambientes").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_turnos").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_horarios").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_descontos").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
+    supabase.from("receita_usuarios").delete().eq("workday_id_fk", wd.id),
   ]);
 
   const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
   if (parsed.pagamentos.length) {
-    inserts.push(supabase.from("lorean_pagamentos").insert(
+    inserts.push(supabase.from("receita_pagamentos").insert(
       parsed.pagamentos.map((p) => ({ forma: p.forma, valor_fechado: p.valor_fechado, valor_recebido: p.valor_recebido, diferenca: p.diferenca, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.ambientes.length) {
-    inserts.push(supabase.from("lorean_ambientes").insert(
+    inserts.push(supabase.from("receita_ambientes").insert(
       parsed.ambientes.map((a) => ({ ambiente: a.nome, clientes: a.clientes, gorjeta: a.gorjeta, produto: a.produto, consumo: a.consumo, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.turnos.length) {
-    inserts.push(supabase.from("lorean_turnos").insert(
+    inserts.push(supabase.from("receita_turnos").insert(
       parsed.turnos.map((t) => ({ turno: t.nome, clientes: t.clientes, gorjeta: t.gorjeta, produto: t.produto, consumo: t.consumo, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.horarios.length) {
-    inserts.push(supabase.from("lorean_horarios").insert(
+    inserts.push(supabase.from("receita_horarios").insert(
       parsed.horarios.map((h) => ({ hora: h.hora, clientes: h.clientes, gorjeta: h.gorjeta, produto: h.produto, consumo: h.consumo, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.descontos.length) {
-    inserts.push(supabase.from("lorean_descontos").insert(
+    inserts.push(supabase.from("receita_descontos").insert(
       parsed.descontos.map((d) => ({ motivo: d.motivo, qtd: d.qtd, consumo: d.consumo, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.descontos_detalhe.length) {
-    inserts.push(supabase.from("lorean_descontos_detalhe").insert(
+    inserts.push(supabase.from("receita_descontos_detalhe").insert(
       parsed.descontos_detalhe.map((d) => ({ item: d.item, usuario: d.usuario, motivo: d.motivo, qtd: d.qtd, valor: d.valor, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.cancelamentos_detalhe.length) {
-    inserts.push(supabase.from("lorean_cancelamentos_detalhe").insert(
+    inserts.push(supabase.from("receita_cancelamentos_detalhe").insert(
       parsed.cancelamentos_detalhe.map((c) => ({ item: c.item, usuario: c.usuario, motivo: c.motivo, qtd: c.qtd, valor: c.valor, workday_id_fk: wd.id })),
     ).then());
   }
   if (parsed.usuarios.length) {
-    inserts.push(supabase.from("lorean_usuarios").insert(
+    inserts.push(supabase.from("receita_usuarios").insert(
       parsed.usuarios.map((u) => ({ usuario: u.usuario, qtd: u.qtd, gorjeta: u.gorjeta, produto: u.produto, consumo: u.consumo, workday_id_fk: wd.id })),
     ).then());
   }
@@ -701,31 +701,31 @@ async function insertVenda(
   if (parsed.workday_id == null) throw new Error("workday_id não encontrado no arquivo (esperado 'Workday: <n>')");
 
   const { data: wd } = await supabase
-    .from("lorean_workdays")
+    .from("receita_dias")
     .select("id")
     .eq("unit_id", unitId)
     .eq("workday_id", parsed.workday_id)
     .maybeSingle();
   if (!wd) throw new Error(`Workday não encontrado para workday_id=${parsed.workday_id} — importe o Movimento primeiro`);
 
-  await supabase.from("lorean_grupos").delete().eq("workday_id_fk", wd.id);
+  await supabase.from("receita_grupos").delete().eq("workday_id_fk", wd.id);
   if (parsed.grupos.length) {
-    const { error } = await supabase.from("lorean_grupos").insert(
+    const { error } = await supabase.from("receita_grupos").insert(
       parsed.grupos.map((g) => ({ grupo: g.grupo, bruto: g.bruto, desconto: g.desconto, gorjeta: g.gorjeta, consumo: g.consumo, workday_id_fk: wd.id })),
     );
-    if (error) throw new Error(`lorean_grupos: ${error.message}`);
+    if (error) throw new Error(`receita_grupos: ${error.message}`);
   }
 
-  await supabase.from("lorean_produtos_dia").delete().eq("workday_id_fk", wd.id);
+  await supabase.from("receita_produtos_dia").delete().eq("workday_id_fk", wd.id);
   if (parsed.produtos.length) {
-    const { error } = await supabase.from("lorean_produtos_dia").insert(
+    const { error } = await supabase.from("receita_produtos_dia").insert(
       parsed.produtos.map((p) => ({
         grupo: p.grupo, produto: p.produto, qtd: p.qtd, cmv_pct: p.cmv_pct,
         bruto: p.bruto, desconto: p.desconto, gorjeta: p.gorjeta, total: p.total,
         workday_id_fk: wd.id,
       })),
     );
-    if (error) throw new Error(`lorean_produtos_dia: ${error.message}`);
+    if (error) throw new Error(`receita_produtos_dia: ${error.message}`);
   }
 }
 

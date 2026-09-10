@@ -769,7 +769,7 @@ export async function getTopProdutosMes(): Promise<TopProdutoItem[]> {
     const end = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
     const { data: workdays } = await supabase
-      .from("lorean_workdays")
+      .from("receita_dias")
       .select("id")
       .eq("unit_id", unitId)
       .gte("data", start)
@@ -780,7 +780,7 @@ export async function getTopProdutosMes(): Promise<TopProdutoItem[]> {
     const ids = workdays.map((w: { id: string }) => w.id);
 
     const { data: produtos } = await supabase
-      .from("lorean_produtos_dia")
+      .from("receita_produtos_dia")
       .select("grupo, produto, qtd, total")
       .in("workday_id_fk", ids);
 

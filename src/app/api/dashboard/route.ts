@@ -16,7 +16,7 @@ export const maxDuration = 60;
 // Monta TODOS os números do KPH Dashboard numa chamada só. Cada indicador
 // numérico vem como { valor, valor_mes_anterior, delta_pct, sem_dados } — dado
 // AUSENTE nunca vira zero, vira null + sem_dados:true (o front pinta de vermelho).
-// Faturamento = SUM(lorean_pagamentos.valor_fechado) dos workdays — o que foi
+// Faturamento = SUM(receita_pagamentos.valor_fechado) dos workdays — o que foi
 // vendido/consumido (NUNCA o campo receita_bruta do workday, nem valor_recebido:
 // esse é só o que entrou no caixa e diverge de valor_fechado quando há devedor).
 // Linha DRE resolvida com precedência override > mapa, reusando o helper
@@ -70,7 +70,7 @@ async function loadMonth(
 ): Promise<MonthAgg> {
   // ── Lorean (faturamento/clientes/melhor dia/ticket) ──
   const wdRes = await db
-    .from("lorean_workdays")
+    .from("receita_dias")
     .select("id, data, clientes, ticket_medio, gorjeta")
     .eq("unit_id", unitId)
     .gte("data", start)
@@ -103,7 +103,7 @@ async function loadMonth(
     const ids = workdays.map((w) => w.id);
     const dataDoWorkday = new Map(workdays.map((w) => [w.id, w.data]));
     const pagRes = await db
-      .from("lorean_pagamentos")
+      .from("receita_pagamentos")
       .select("workday_id_fk, forma, valor_fechado")
       .in("workday_id_fk", ids);
     const pags = (pagRes.data ?? []) as Array<{ workday_id_fk: string; forma: string | null; valor_fechado: number | null }>;
@@ -133,7 +133,7 @@ async function loadMonth(
 
     // Top grupos: soma bruto por grupo no mês, top 5.
     const grpRes = await db
-      .from("lorean_grupos")
+      .from("receita_grupos")
       .select("workday_id_fk, grupo, bruto")
       .in("workday_id_fk", ids);
     const grupos = (grpRes.data ?? []) as Array<{ workday_id_fk: string; grupo: string | null; bruto: number | null }>;

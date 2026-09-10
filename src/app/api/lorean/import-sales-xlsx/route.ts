@@ -74,18 +74,18 @@ export async function POST(request: Request) {
 
     const db: any = await createSupabaseServerClient();
     if (!db) throw new Error("Supabase não configurado");
-    const { data: workdays, error } = await db.from("lorean_workdays").upsert(rows, { onConflict: "unit_id,workday_id" }).select("id,data,receita_liquida");
-    if (error) throw new Error(`lorean_workdays: ${error.message}`);
+    const { data: workdays, error } = await db.from("receita_dias").upsert(rows, { onConflict: "unit_id,workday_id" }).select("id,data,receita_liquida");
+    if (error) throw new Error(`receita_dias: ${error.message}`);
     const ids = (workdays ?? []).map((row: any) => row.id);
     if (ids.length) {
-      const { error: deleteError } = await db.from("lorean_pagamentos").delete().in("workday_id_fk", ids);
-      if (deleteError) throw new Error(`lorean_pagamentos: ${deleteError.message}`);
+      const { error: deleteError } = await db.from("receita_pagamentos").delete().in("workday_id_fk", ids);
+      if (deleteError) throw new Error(`receita_pagamentos: ${deleteError.message}`);
       const payments = workdays.map((row: any) => ({
         workday_id_fk: row.id, forma: "Relatório Geral de Vendas",
         valor_fechado: row.receita_liquida, valor_recebido: row.receita_liquida,
       }));
-      const { error: paymentError } = await db.from("lorean_pagamentos").insert(payments);
-      if (paymentError) throw new Error(`lorean_pagamentos: ${paymentError.message}`);
+      const { error: paymentError } = await db.from("receita_pagamentos").insert(payments);
+      if (paymentError) throw new Error(`receita_pagamentos: ${paymentError.message}`);
     }
     const dates = [...days.keys()].sort();
     return Response.json({

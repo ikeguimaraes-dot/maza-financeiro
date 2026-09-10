@@ -113,7 +113,7 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
   const dates = [...new Set(rows.map((row) => row.data))]
   const existing: any[] = []
   for (const part of chunks(dates, 100)) {
-    const { data, error } = await db.from("lorean_workdays").select("id,data,turno,importacao_id").eq("unit_id", unitId).in("data", part)
+    const { data, error } = await db.from("receita_dias").select("id,data,turno,importacao_id").eq("unit_id", unitId).in("data", part)
     if (error) throw new Error(error.message); existing.push(...(data ?? []))
   }
   if (existing.some((row) => !row.importacao_id) && !replaceExisting) {
@@ -121,8 +121,8 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
   }
   if (existing.length) {
     const ids = existing.map((row) => row.id)
-    for (const part of chunks(ids, 200)) await db.from("lorean_pagamentos").delete().in("workday_id_fk", part)
-    for (const part of chunks(ids, 200)) { const { error } = await db.from("lorean_workdays").delete().in("id", part); if (error) throw new Error(error.message) }
+    for (const part of chunks(ids, 200)) await db.from("receita_pagamentos").delete().in("workday_id_fk", part)
+    for (const part of chunks(ids, 200)) { const { error } = await db.from("receita_dias").delete().in("id", part); if (error) throw new Error(error.message) }
   }
   const workdays = [...unique.values()].map((row) => ({ unit_id: unitId, importacao_id: importId,
     workday_id: workdayNumber(row),
@@ -133,7 +133,7 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
     custo: null, lucro: row.receitaLiquida, cmv_pct: null, devedor: 0 }))
   const inserted: any[] = []
   for (const part of chunks(workdays, 100)) {
-    const { data, error } = await db.from("lorean_workdays").insert(part).select("id,workday_id")
+    const { data, error } = await db.from("receita_dias").insert(part).select("id,workday_id")
     if (error) throw new Error(`Receita: ${error.message}`); inserted.push(...(data ?? []))
   }
   const ids = new Map(inserted.map((row) => [String(row.workday_id), row.id]))
@@ -142,5 +142,5 @@ async function persistRevenue(db: any, importId: string, unitId: string, rows: R
     const id = ids.get(String(workdayId)); if (!id) return []
     return row.pagamentos.map((payment) => ({ workday_id_fk: id, forma: payment.descricao, valor_fechado: payment.valor, valor_recebido: payment.valor }))
   })
-  for (const part of chunks(payments, 300)) { const { error } = await db.from("lorean_pagamentos").insert(part); if (error) throw new Error(error.message) }
+  for (const part of chunks(payments, 300)) { const { error } = await db.from("receita_pagamentos").insert(part); if (error) throw new Error(error.message) }
 }
