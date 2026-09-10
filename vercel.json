@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/lorean-import",
-      "schedule": "0 7 * * *"
-    }
-  ]
-}
+{}
