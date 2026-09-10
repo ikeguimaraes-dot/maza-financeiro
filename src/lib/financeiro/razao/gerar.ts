@@ -321,7 +321,14 @@ export async function gerarLancamentosTitulos(
 
     // Candidatas a NF-e: nfe_documentos (nível de nota) da mesma unidade,
     // entrada, todo o histórico — o match é por NÚMERO exato, não por
-    // proximidade de data, então não precisa de janela.
+    // proximidade de data, então não precisa de janela. nfe_documentos não
+    // tem coluna de competência (só "emissao", a data real da nota); a
+    // competência RECONHECIDA internamente é a de produtos_relatorio
+    // (mes_lancamento/ano_lancamento, mesma fonte usada em
+    // gerarLancamentosNfeEntrada). Sem esse cruzamento, duas notas com o
+    // mesmo número em meses diferentes (ex. maio e junho) colidiam: o
+    // título de maio casava com a nota de junho, sumindo do CMV de maio
+    // sem culpa nenhuma da nota.
     const notasCandidatas = await fetchAllPaginado((from, to) =>
       db.from("nfe_documentos")
         .select("chave,numero,emitente_nome,valor_total")
@@ -336,6 +343,18 @@ export async function gerarLancamentosTitulos(
       const arr = notasPorNumero.get(nota.numero!) ?? []
       arr.push(nota)
       notasPorNumero.set(nota.numero!, arr)
+    }
+
+    const produtosCompetencia = await fetchAllPaginado((from, to) =>
+      db.from("produtos_relatorio")
+        .select("chave_nfe,mes_lancamento,ano_lancamento")
+        .eq("unit_id", unitId)
+        .not("chave_nfe", "is", null)
+        .range(from, to)
+    ) as Array<{ chave_nfe: string; mes_lancamento: number; ano_lancamento: number }>
+    const competenciaPorChave = new Map<string, string>()
+    for (const p of produtosCompetencia) {
+      competenciaPorChave.set(p.chave_nfe, `${p.ano_lancamento}-${String(p.mes_lancamento).padStart(2, "0")}-01`)
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -354,11 +373,14 @@ export async function gerarLancamentosTitulos(
       const valorTitulo = Math.abs(Number(t.v_titulo ?? 0))
 
       // Dedup: mesmo número de NF + fornecedor por similaridade + valor
-      // ±2% → já foi gerado via XML (com detalhe por item) — não duplica.
+      // ±2% + mesma competência → já foi gerado via XML (com detalhe por
+      // item) — não duplica. Sem a competência bater, número igual em mês
+      // diferente não é a mesma compra.
       let matchConfirmado: { chave: string; score: number; valorNfe: number } | null = null
       if (t.n_nota_fiscal) {
         const candidatas = notasPorNumero.get(t.n_nota_fiscal) ?? []
         for (const nota of candidatas) {
+          if (competenciaPorChave.get(nota.chave) !== inicio) continue
           const diffValor = Math.abs(nota.valor_total - valorTitulo) / Math.max(valorTitulo, 0.01)
           if (diffValor > 0.02) continue
           const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
