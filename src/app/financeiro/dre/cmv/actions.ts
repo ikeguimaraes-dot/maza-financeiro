@@ -639,6 +639,95 @@ export async function getCurrentUnitId(): Promise<string | null> {
   return unit?.id ?? null
 }
 
+// ── Aba Produto: uma linha por ITEM de NF-e de entrada, todo o histórico ───
+// (ignora competência — é busca, não fechamento mensal). Categoria vem do
+// catálogo (produtos_depara → produtos_catalogo), nunca de desc_gerencial
+// (texto livre com erro de classificação, ex. "ALGA KOMBU" como "FRUTAS").
+
+export type ItemProdutoRow = {
+  id: number
+  dtEmissao: string | null
+  itemCodigo: string | null
+  fornecedorCodigo: string | null
+  fornecedorNome: string | null
+  nrDanfe: string | null
+  itemDescricao: string | null
+  produtoId: string | null
+  produtoCodigo: string | null
+  produtoNome: string | null
+  categoria: string | null
+  qEstoque: number | null
+  unidadeMedida: string | null
+  vTotalEmbalagem: number | null
+  vCustoCompra: number | null
+  vCustoTotal: number | null
+}
+
+export async function getItensProdutoBusca(unitId: string | null): Promise<ItemProdutoRow[]> {
+  try {
+    const supabase = await createSupabaseServerClient()
+    if (!supabase) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any
+
+    const rows = await fetchAllPaginado((from, to) => {
+      let q = db.from("produtos_relatorio")
+        .select("id,dt_emissao,fornecedor_nome,fornecedor_codigo,nr_danfe,item_codigo,item_descricao,q_estoque,unidade_medida,v_total_embalagem,v_custo_compra,v_custo_total")
+        .eq("direcao_nfe", "entrada")
+        .not("chave_nfe", "is", null)
+        .order("dt_emissao", { ascending: false })
+        .range(from, to)
+      if (unitId) q = q.eq("unit_id", unitId)
+      return q
+    }) as Array<{
+      id: number; dt_emissao: string | null; fornecedor_nome: string | null; fornecedor_codigo: string | null
+      nr_danfe: string | null; item_codigo: string | null; item_descricao: string | null
+      q_estoque: number | null; unidade_medida: string | null
+      v_total_embalagem: number | null; v_custo_compra: number | null; v_custo_total: number | null
+    }>
+    if (rows.length === 0) return []
+
+    const pares = await fetchAllPaginado((from, to) =>
+      db.from("produtos_depara").select("fornecedor_cnpj,item_codigo,produto_id").range(from, to)
+    ) as Array<{ fornecedor_cnpj: string; item_codigo: string; produto_id: string | null }>
+    const produtoIdPorPar = new Map<string, string>()
+    for (const p of pares) if (p.produto_id) produtoIdPorPar.set(`${p.fornecedor_cnpj} ${p.item_codigo}`, p.produto_id)
+
+    const produtoIds = [...new Set(produtoIdPorPar.values())]
+    const catalogo = produtoIds.length
+      ? await fetchAllPaginado((from, to) =>
+          db.from("produtos_catalogo").select("id,codigo,nome,categoria").in("id", produtoIds).range(from, to)
+        ) as Array<{ id: string; codigo: string; nome: string; categoria: string | null }>
+      : []
+    const catalogoPorId = new Map(catalogo.map(c => [c.id, c]))
+
+    return rows.map(r => {
+      const produtoId = produtoIdPorPar.get(`${r.fornecedor_codigo} ${r.item_codigo}`) ?? null
+      const produto = produtoId ? catalogoPorId.get(produtoId) : undefined
+      return {
+        id: r.id,
+        dtEmissao: r.dt_emissao,
+        itemCodigo: r.item_codigo,
+        fornecedorCodigo: r.fornecedor_codigo,
+        fornecedorNome: r.fornecedor_nome,
+        nrDanfe: r.nr_danfe,
+        itemDescricao: r.item_descricao,
+        produtoId,
+        produtoCodigo: produto?.codigo ?? null,
+        produtoNome: produto?.nome ?? null,
+        categoria: produto?.categoria ?? null,
+        qEstoque: r.q_estoque,
+        unidadeMedida: r.unidade_medida,
+        vTotalEmbalagem: r.v_total_embalagem,
+        vCustoCompra: r.v_custo_compra,
+        vCustoTotal: r.v_custo_total,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 // ── Análise: evolução de preço unitário por produto ─────────────────────────────
 // Preço unitário do mês = AVG(v_custo_compra) — preço de compra JÁ normalizado pelo
 // sistema na unidade base do produto (R$/kg, R$/L, R$/un). Não usamos
