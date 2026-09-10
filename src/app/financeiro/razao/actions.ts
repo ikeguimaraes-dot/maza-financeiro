@@ -407,13 +407,31 @@ export async function gerarLancamentosTitulos(
   }
 }
 
-// Projeta dre_folha em lançamentos de mão de obra. tipo INTERNO e CLT vão
-// os dois pra 4.01 (custo_total é o total já fechado da linha — CLT é
-// vínculo formal, não é "extra/freelancer", então NÃO vai pra 4.04, apesar
-// do pedido original: essa conta ficaria com 37% da folha classificada como
-// avulsa quando é folha normal). fgts_mes > 0 vai pra 4.02. 4.03/4.04/4.05
-// ficam vazios por ora — abrir isso exigiria parsear as descrições dentro
-// de verbas (jsonb), que têm grafia inconsistente.
+// Classificação de rubrica PROVENTO → conta, dada pelo Ike a partir dos
+// extratos reais Domínio (IKY Restaurantes e MZ Delivery, jun-ago/2026).
+// Qualquer rubrica de provento fora desta lista cai em 9.99 (reportado, não
+// bloqueia). Rubricas de DESCONTO nunca geram lançamento — são retenção
+// sobre o bruto ou movimentação de líquido, não custo adicional — exceto a
+// 843 (INSS EMPREGADOR: INSS patronal sobre pró-labore do diretor, é custo
+// real da empresa apesar de aparecer como "D" no extrato).
+const RUBRICA_PARA_CONTA: Record<number, string> = {
+  // 4.01 Salários
+  8781: "4.01", 9180: "4.01", 19: "4.01", 8870: "4.01", 200: "4.01",
+  434: "4.01", 458: "4.01", 626: "4.01", 250: "4.01", 854: "4.01",
+  8125: "4.01", 204: "4.01", 990: "4.01", 8130: "4.01", 9755: "4.01",
+  // 4.06 Férias e 13º
+  29: "4.06", 931: "4.06", 805: "4.06", 806: "4.06", 815: "4.06",
+  816: "4.06", 8783: "4.06", 8169: "4.06", 940: "4.06", 8112: "4.06",
+  8189: "4.06", 8550: "4.06", 8551: "4.06", 8552: "4.06",
+  // 4.07 Pró-labore
+  100: "4.07",
+}
+const RUBRICA_DESCONTO_ENCARGO = 843 // INSS EMPREGADOR — única DESCONTO que gera lançamento (4.02)
+
+// Projeta payroll_extrato_dominio_linha (+ FGTS do rodapé de
+// payroll_extrato_dominio_competencia) em lançamentos de mão de obra.
+// Fonte EXCLUSIVA — nunca lê dre_folha (dado cross-wired entre unidades,
+// substituído nesta fase). Classifica estritamente por código de rubrica.
 export async function gerarLancamentosFolha(
   unitId: string,
   competencia: string
@@ -424,54 +442,72 @@ export async function gerarLancamentosFolha(
     if (!supabase) return { ok: false, inseridos: 0, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
-    const comp = competencia.slice(0, 7) // dre_folha.competencia é texto "YYYY-MM"
+    const comp = competencia.slice(0, 7) // payroll_extrato_dominio_* usa texto "YYYY-MM"
     const { inicio } = competenciaRange(competencia)
 
     const linhas = await fetchAllPaginado((from, to) =>
-      db.from("dre_folha")
-        .select("id,nome,tipo,custo_total,fgts_mes")
+      db.from("payroll_extrato_dominio_linha")
+        .select("cod_colaborador,rubrica_codigo,natureza,valor")
         .eq("unit_id", unitId)
         .eq("competencia", comp)
         .range(from, to)
-    ) as Array<{ id: number; nome: string | null; tipo: string | null; custo_total: number | null; fgts_mes: number | null }>
+    ) as Array<{ cod_colaborador: number; rubrica_codigo: number; natureza: string; valor: number }>
+
+    const { data: competenciaRow, error: competenciaError } = await db
+      .from("payroll_extrato_dominio_competencia")
+      .select("valor_fgts,valor_fgts_rescisorio")
+      .eq("unit_id", unitId)
+      .eq("competencia", comp)
+      .maybeSingle()
+    if (competenciaError) throw new Error(competenciaError.message)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows: any[] = []
     for (const l of linhas) {
-      const salario = Math.abs(Number(l.custo_total ?? 0))
-      if (salario > 0) {
-        rows.push({
-          unit_id: unitId,
-          data: inicio,
-          competencia: inicio,
-          conta_codigo: "4.01",
-          valor: salario,
-          origem: "folha",
-          origem_id: `${l.id}:salario`,
-          descricao: l.nome ? `Folha — ${l.nome}` : null,
-          fornecedor_cnpj: null,
-          fornecedor_nome: null,
-          produto_id: null,
-          reconciliado: false,
-        })
-      }
-      const fgts = Number(l.fgts_mes ?? 0)
-      if (fgts > 0) {
-        rows.push({
-          unit_id: unitId,
-          data: inicio,
-          competencia: inicio,
-          conta_codigo: "4.02",
-          valor: fgts,
-          origem: "folha",
-          origem_id: `${l.id}:fgts`,
-          descricao: l.nome ? `FGTS — ${l.nome}` : null,
-          fornecedor_cnpj: null,
-          fornecedor_nome: null,
-          produto_id: null,
-          reconciliado: false,
-        })
-      }
+      const valor = Math.abs(Number(l.valor ?? 0))
+      if (valor === 0) continue
+
+      const contaCodigo = l.natureza === "DESCONTO"
+        ? (l.rubrica_codigo === RUBRICA_DESCONTO_ENCARGO ? "4.02" : null)
+        : (RUBRICA_PARA_CONTA[l.rubrica_codigo] ?? "9.99")
+      if (!contaCodigo) continue // desconto que não é 843: retenção/movimentação, não gera lançamento
+
+      rows.push({
+        unit_id: unitId,
+        data: inicio,
+        competencia: inicio,
+        conta_codigo: contaCodigo,
+        valor,
+        origem: "folha",
+        // origem_id precisa ser único por (origem, conta_codigo) globalmente —
+        // cod_colaborador é um inteiro pequeno atribuído por empresa no
+        // Domínio, colide entre unidades sem o prefixo unitId.
+        origem_id: `${unitId}:${comp}:${l.cod_colaborador}:${l.rubrica_codigo}`,
+        descricao: `Rubrica ${l.rubrica_codigo}`,
+        fornecedor_cnpj: null,
+        fornecedor_nome: null,
+        produto_id: null,
+        reconciliado: false,
+      })
+    }
+
+    const valorFgts = Number(competenciaRow?.valor_fgts ?? 0)
+    if (valorFgts > 0) {
+      rows.push({
+        unit_id: unitId, data: inicio, competencia: inicio, conta_codigo: "4.02",
+        valor: valorFgts, origem: "folha", origem_id: `${unitId}:${comp}:FGTS`,
+        descricao: "FGTS do mês", fornecedor_cnpj: null, fornecedor_nome: null,
+        produto_id: null, reconciliado: false,
+      })
+    }
+    const valorFgtsRescisorio = Number(competenciaRow?.valor_fgts_rescisorio ?? 0)
+    if (valorFgtsRescisorio > 0) {
+      rows.push({
+        unit_id: unitId, data: inicio, competencia: inicio, conta_codigo: "4.02",
+        valor: valorFgtsRescisorio, origem: "folha", origem_id: `${unitId}:${comp}:FGTS_RESC`,
+        descricao: "FGTS rescisório", fornecedor_cnpj: null, fornecedor_nome: null,
+        produto_id: null, reconciliado: false,
+      })
     }
 
     await deleteEscopo(db, "folha", unitId, inicio)
