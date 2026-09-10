@@ -1,10 +1,10 @@
 // NextResponse not needed — using native Response.json() throughout
 import { createClient } from "@supabase/supabase-js";
 // Extração do PDF de Venda compartilhada com /api/vendas-consolidado/import
-import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/lorean/vendaExtract";
+import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/receita/vendaExtract";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EQUIVALÊNCIA COM /api/lorean/import-xlsx — leia antes de mexer em qualquer
+// EQUIVALÊNCIA COM /api/receita/import-xlsx — leia antes de mexer em qualquer
 // dos dois parsers.
 //
 // Esta rota (PDF, via Claude) é a referência que o cron diário usa — validada
@@ -130,7 +130,7 @@ Regras:
 - pagamentos: array vazio [] se não houver`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-// VENDA_PROMPT, fileToBase64 e parsePdf agora vêm de @/lib/lorean/vendaExtract
+// VENDA_PROMPT, fileToBase64 e parsePdf agora vêm de @/lib/receita/vendaExtract
 // (compartilhados com a rota consolidada). WORKDAY_PROMPT/CAIXA_PROMPT seguem
 // locais por serem exclusivos do import diário.
 

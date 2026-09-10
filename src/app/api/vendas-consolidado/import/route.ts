@@ -8,7 +8,7 @@
 // compartilhada). A única diferença das duas rotas é o DESTINO no banco.
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
-import { VENDA_PROMPT, parsePdf } from "@/lib/lorean/vendaExtract";
+import { VENDA_PROMPT, parsePdf } from "@/lib/receita/vendaExtract";
 import { parseSalesSpreadsheets } from "@/lib/vendas/spreadsheet-parser";
 
 export const dynamic = "force-dynamic";

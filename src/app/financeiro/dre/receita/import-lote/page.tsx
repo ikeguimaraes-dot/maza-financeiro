@@ -170,7 +170,7 @@ function Dropzone({ label, sub, accept, onFiles }: {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── XLSX: import direto, sem IA, via /api/lorean/import-xlsx ──────────────────
+// ── XLSX: import direto, sem IA, via /api/receita/import-xlsx ──────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
 type ProcessState = "pendente" | "processando" | "sucesso" | "erro";
@@ -224,7 +224,7 @@ async function enviarArquivoXlsx(
   }
   fd.append("unit_id", unitId);
   fd.append("arquivos", file);
-  const res = await fetch(`${API_BASE}/api/lorean/import-xlsx`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/receita/import-xlsx`, { method: "POST", body: fd });
   let json: { processados: number; erros: string[]; detalhes: Array<{ arquivo: string; tipo: string | null; sucesso: boolean; erro?: string; resumo?: Record<string, unknown> }> };
   try { json = await res.json(); }
   catch (e) { throw new Error(`resposta inválida: ${String(e)}`); }
@@ -493,7 +493,7 @@ type ParsedFile = {
   tipo: Tipo | null;
 };
 
-// Regex idêntica à extractDateFromFilename de /api/lorean/import — garante que
+// Regex idêntica à extractDateFromFilename de /api/receita/import — garante que
 // o agrupamento client-side bate com a data que a API vai gravar no banco.
 function parseFilename(file: File): ParsedFile {
   const name = file.name;
@@ -531,7 +531,7 @@ async function enviarArquivo(
   const fd = new FormData();
   fd.append("tipo", tipo); fd.append("arquivo", file); fd.append("unit_id", unitId);
   if (workdayId) fd.append("workday_id", workdayId);
-  const res = await fetch(`${API_BASE}/api/lorean/import`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/receita/import`, { method: "POST", body: fd });
   let json: { success: boolean; workday_id?: string | null; errors?: string[] };
   try { json = await res.json(); }
   catch (e) { throw new Error(`resposta inválida: ${String(e)}`); }

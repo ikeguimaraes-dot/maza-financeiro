@@ -1,5 +1,5 @@
 // Lógica COMPARTILHADA de extração de PDF do Lorean via Claude.
-// Fonte única para o import diário (/api/lorean/import) e o consolidado
+// Fonte única para o import diário (/api/receita/import) e o consolidado
 // (/api/vendas-consolidado/import) — assim a mecânica de chamada ao Claude e
 // o parse NUNCA divergem entre as duas rotas. A única diferença permitida
 // entre elas é o DESTINO no banco (lorean_* por dia/turno vs

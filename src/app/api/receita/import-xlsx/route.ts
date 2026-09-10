@@ -2,13 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EQUIVALÊNCIA COM /api/lorean/import (PDF) — leia antes de mexer em qualquer
+// EQUIVALÊNCIA COM /api/receita/import (PDF) — leia antes de mexer em qualquer
 // dos dois parsers.
 //
-// PDF e XLSX são o MESMO relatório do Lorean em formatos diferentes. O cron
-// diário usa PDF (via Claude, WORKDAY_PROMPT/VENDA_PROMPT em
-// src/app/api/lorean/import/route.ts). Esta rota é o equivalente pra quem tem
-// o Excel em mãos — sem chamar IA, por regex. Os dois devem gravar o MESMO
+// PDF e XLSX são o MESMO relatório do Lorean em formatos diferentes. Esta
+// rota é o equivalente pra quem tem o Excel em mãos — sem chamar IA, por
+// regex. Os dois devem gravar o MESMO
 // resultado em receita_dias/receita_pagamentos/receita_ambientes/
 // receita_turnos/receita_horarios/receita_grupos pro mesmo workday_id.
 //
@@ -78,7 +77,7 @@ function parseNumBR(v: unknown): number | null {
   return isFinite(n) ? n : null;
 }
 
-// Mesma regex usada em /api/lorean/import (extractDateFromFilename) — garante
+// Mesma regex usada em /api/receita/import (extractDateFromFilename) — garante
 // que a data extraída do nome bate com o que o import de PDF já grava.
 function extractDateFromFilename(filename: string): string | null {
   const m = filename.match(/\[(\d{2})\.(\d{2})\.(\d{2})\]/);
@@ -605,7 +604,7 @@ async function insertMovimento(
 
   if (error) throw new Error(`receita_dias: ${error.message}`);
 
-  // Classificação de turno — mesma lógica de /api/lorean/import (PDF).
+  // Classificação de turno — mesma lógica de /api/receita/import (PDF).
   const turnosNomes = parsed.turnos.map((t) => t.nome.toLowerCase());
   const temTarde = turnosNomes.some((t) => t.includes("tarde"));
   const temNoite = turnosNomes.some((t) => t.includes("noite"));

@@ -217,7 +217,7 @@ export default function ReceitaPage() {
     const end   = new Date(ano, mes, 0).toISOString().split("T")[0]!;
     try {
       const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: `${ano}-${mm}` });
-      const { response: res, json } = await fetchApiJson<any>(`/api/lorean/workdays?${params}`);
+      const { response: res, json } = await fetchApiJson<any>(`/api/receita/workdays?${params}`);
       if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
       if ((json.workdays?.length ?? 0) === 0 && json.latestDataDate) {
         const [latestYear, latestMonth] = String(json.latestDataDate).split("-").map(Number);
@@ -270,7 +270,7 @@ export default function ReceitaPage() {
         fd.append("tipo", tipo); fd.append("arquivo", arquivo); fd.append("unit_id", unit.id);
         if (workdayId) fd.append("workday_id", workdayId);
         let json: { success: boolean; workday_id?: string | null; errors?: string[] };
-        try { ({ json } = await fetchApiJson<typeof json>("/api/lorean/import", { method: "POST", body: fd })); }
+        try { ({ json } = await fetchApiJson<typeof json>("/api/receita/import", { method: "POST", body: fd })); }
         catch (e) { allErrors.push(`${label}: ${String(e)}`); continue; }
         if (json.errors?.length) allErrors.push(...json.errors);
         if (json.workday_id) workdayId = json.workday_id;
@@ -280,7 +280,7 @@ export default function ReceitaPage() {
         const fd = new FormData();
         fd.append("unit_id", unit.id);
         excelFiles.forEach((file) => fd.append("arquivos", file));
-        const { response, json } = await fetchApiJson<{ error?: string; pedidos?: number; dias?: number; total_bruto?: number }>("/api/lorean/import-sales-xlsx", { method: "POST", body: fd });
+        const { response, json } = await fetchApiJson<{ error?: string; pedidos?: number; dias?: number; total_bruto?: number }>("/api/receita/import-sales-xlsx", { method: "POST", body: fd });
         if (!response.ok) allErrors.push(json.error ?? `Excel: HTTP ${response.status}`);
         else importSummaries.push(`${json.pedidos ?? 0} pedidos · ${json.dias ?? 0} dias · ${fmt(json.total_bruto ?? 0)}`);
       }
@@ -299,7 +299,7 @@ export default function ReceitaPage() {
     setSavingMetas(true); setMetaSaveMsg(null);
     try {
       const overrides = Array.from(metaEdits.entries()).map(([data, meta]) => ({ data, meta }));
-      const { response: res, json } = await fetchApiJson<{ error?: string }>("/api/lorean/metas", {
+      const { response: res, json } = await fetchApiJson<{ error?: string }>("/api/receita/metas", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ unit_id: unit.id, overrides }),
       });
