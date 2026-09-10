@@ -20,7 +20,7 @@ const CONTA_RECEITA_POR_UNIDADE: Record<string, string> = {
 export type GerarLancamentosResultado = { ok: boolean; inseridos: number; error?: string }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchAllPaginado(buildQuery: (from: number, to: number) => any): Promise<any[]> {
+export async function fetchAllPaginado(buildQuery: (from: number, to: number) => any): Promise<any[]> {
   const pageSize = 1000
   const result: any[] = []
   for (let from = 0; ; from += pageSize) {
