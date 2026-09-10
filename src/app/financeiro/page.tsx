@@ -2,463 +2,178 @@ import Link from "next/link";
 
 import { requireUser } from "@maza/auth/server";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
-import {
-  getAprovacoesPendentes,
-  getBrandsOperacionais,
-  getFinanceiroResumoGrupo,
-  getTopProdutosMes,
-} from "./actions";
-import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
-import { KpiCard } from "@maza/ui/kpi-card";
-import { ProgressBar } from "@maza/ui/progress-bar";
-import { SeverityBadge } from "@/components/financeiro/SeverityBadge";
-import { AprovacaoActions } from "@/components/financeiro/AprovacaoActions";
-import { CATEGORIA_DESPESA_LABELS } from "@/lib/financeiro/labels";
-import {
-  competenciaLabel,
-  formatBRL,
-  formatBRLCompact,
-  formatPct,
-  getCmvSeverity,
-  getCompetenciaAtual,
-  getEbitdaSeverity,
-  getGapSeverity,
-} from "@/lib/financeiro/utils";
+import { competenciaLabel, competenciaShift } from "@/lib/financeiro/utils";
+import { CockpitPainel } from "@/components/financeiro/cockpit/CockpitPainel";
 import type {
-  CategoriaDespesa,
-  DreConsolidadoRow,
-} from "@maza/db/types/database";
+  KpiSnapshotRow,
+  DreSnapshotRow,
+  PlanoContaRow,
+  MetaRow,
+  FonteSaudeRow,
+} from "@/components/financeiro/cockpit/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function FinanceiroHubPage() {
-  const user = await requireUser();
+// Únicas duas units operacionais do grupo (sql/026_cmv_bootstrap.sql).
+const YOSHIMORI_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909c";
+const IKY_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909b";
+export const UNIDADES = [
+  { id: YOSHIMORI_UNIT_ID, nome: "Yoshimori" },
+  { id: IKY_UNIT_ID, nome: "IKY" },
+] as const;
+
+const JANELA_MESES = 6;
+
+type SearchParams = Promise<{ unidade?: string; competencia?: string }>;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAll(buildQuery: (from: number, to: number) => any) {
+  const pageSize = 1000;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result: any[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const page = data ?? [];
+    result.push(...page);
+    if (page.length < pageSize) return result;
+  }
+}
+
+export default async function FinanceiroHubPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireUser();
+  const sp = await searchParams;
+
   const supabase = await createSupabaseServerClient();
-  const comp = getCompetenciaAtual();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
 
-  const [resumo, brands, aprovacoes, dresPorMarca, topProdutos] = await Promise.all([
-    getFinanceiroResumoGrupo(),
-    getBrandsOperacionais(),
-    getAprovacoesPendentes(null),
-    supabase
-      ? supabase
-          .from("v_dre_consolidado")
-          .select("*")
-          .eq("competencia", comp)
-      : Promise.resolve({ data: [] as DreConsolidadoRow[] }),
-    getTopProdutosMes(),
-  ]);
+  const unitIdsTodos: string[] = UNIDADES.map((u) => u.id);
 
-  const dreByBrand = new Map<string, DreConsolidadoRow>();
-  const dreRows = ((dresPorMarca as { data?: DreConsolidadoRow[] }).data ??
-    []) as DreConsolidadoRow[];
-  for (const r of dreRows) dreByBrand.set(r.brand_id, r);
+  const todasCompetencias = (await fetchAll((from, to) =>
+    db.from("kpi_snapshot").select("competencia").in("unit_id", unitIdsTodos).order("competencia").range(from, to),
+  )) as Array<{ competencia: string }>;
+  const competenciasDisponiveis = [...new Set(todasCompetencias.map((c) => c.competencia))].sort();
 
-  const isAprovador = user.roles.some(
-    (r) => r.role === "founder" || r.role === "cfo",
-  );
-  const operacionais = brands.filter((b) => b.has_period);
-  const semOperacao = brands.filter((b) => !b.has_period);
+  const unidadeParam = sp.unidade && (sp.unidade === "consolidado" || unitIdsTodos.includes(sp.unidade))
+    ? sp.unidade
+    : "consolidado";
+  const competenciaParam = sp.competencia && competenciasDisponiveis.includes(sp.competencia)
+    ? sp.competencia
+    : (competenciasDisponiveis.at(-1) ?? null);
 
   return (
     <div style={{ maxWidth: 1240, margin: "0 auto" }}>
-      <header style={{ marginBottom: 24 }}>
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: 1.6,
-            textTransform: "uppercase",
-            color: "var(--text-3)",
-          }}
-        >
-          Fase E4 · Hub financeiro
+      <header style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.6, textTransform: "uppercase", color: "var(--text-3)" }}>
+          Cockpit financeiro
         </div>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: "var(--text)",
-            letterSpacing: -0.5,
-            margin: "8px 0 4px",
-          }}
-        >
-          Financeiro · {competenciaLabel(comp)}
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "8px 0 4px" }}>
+          Financeiro{competenciaParam ? ` · ${competenciaLabel(competenciaParam)}` : ""}
         </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 620 }}>
-          Receita, despesa e EBITDA do grupo. Aprovações pendentes acima do
-          limite por marca.
+        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 16px" }}>
+          Lê só do razão (lançamentos → snapshot). Número incompleto aparece como incompleto, nunca como zero.
         </p>
+        <Seletores unidade={unidadeParam} competencia={competenciaParam} competencias={competenciasDisponiveis} />
       </header>
 
-      {/* KPIs do grupo */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 12,
-          marginBottom: 28,
-        }}
-      >
-        <KpiCard
-          label="Receita do grupo"
-          value={formatBRLCompact(resumo.receita_mes_atual)}
-          sub={competenciaLabel(comp)}
-        />
-        <KpiCard
-          label="Despesa do grupo"
-          value={formatBRLCompact(resumo.despesa_mes_atual)}
-          sub={
-            resumo.cmv_pct_medio !== null
-              ? `CMV médio ${formatPct(resumo.cmv_pct_medio)}`
-              : "Sem dados de CMV"
-          }
-        />
-        <KpiCard
-          label="EBITDA"
-          value={formatBRLCompact(resumo.ebitda_mes_atual)}
-          sub={
-            resumo.ebitda_pct_medio !== null
-              ? `${formatPct(resumo.ebitda_pct_medio)} sobre receita`
-              : "Sem receita registrada"
-          }
-        >
-          {resumo.ebitda_pct_medio !== null && (
-            <ProgressBar
-              value={Math.max(0, resumo.ebitda_pct_medio)}
-              max={20}
-              color="var(--brand)"
-            />
-          )}
-        </KpiCard>
-        <KpiCard
-          label="Aprovações pendentes"
-          value={resumo.aprovacoes_pendentes}
-          sub={
-            resumo.itens_cmv_criticos > 0
-              ? `${resumo.itens_cmv_criticos} itens CMV > 40%`
-              : "CMV sob controle"
-          }
-        />
-      </section>
-
-      {/* Aprovações pendentes inline */}
-      {aprovacoes.length > 0 && (
-        <section style={{ marginBottom: 28 }}>
-          <h2
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: 1,
-              textTransform: "uppercase",
-              color: "var(--text-3)",
-              margin: "0 0 10px",
-            }}
-          >
-            Aprovações pendentes
-          </h2>
-          <div
-            style={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 12,
-              overflow: "hidden",
-            }}
-          >
-            {aprovacoes.map((a, i) => (
-              <div
-                key={a.id}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr auto auto",
-                  gap: 16,
-                  padding: "14px 18px",
-                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "var(--text)",
-                      marginBottom: 2,
-                    }}
-                  >
-                    {a.descricao}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-3)",
-                      letterSpacing: 0.3,
-                    }}
-                  >
-                    {a.brand_name}
-                    {a.categoria_despesa
-                      ? ` · ${CATEGORIA_DESPESA_LABELS[a.categoria_despesa as CategoriaDespesa]}`
-                      : ""}
-                    {a.fornecedor ? ` · ${a.fornecedor}` : ""}
-                    {a.solicitante_email ? ` · ${a.solicitante_email}` : ""}
-                  </div>
-                  {a.justificativa && (
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text-2)",
-                        marginTop: 4,
-                        fontStyle: "italic",
-                      }}
-                    >
-                      “{a.justificativa}”
-                    </div>
-                  )}
-                </div>
-                <div
-                  style={{
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: "var(--text)",
-                    textAlign: "right",
-                  }}
-                >
-                  {formatBRL(a.valor)}
-                </div>
-                <AprovacaoActions
-                  approvalId={a.id}
-                  canRespond={isAprovador}
-                />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Cards por marca operacional */}
-      <h2
-        style={{
-          fontSize: 12,
-          fontWeight: 700,
-          letterSpacing: 1,
-          textTransform: "uppercase",
-          color: "var(--text-3)",
-          margin: "0 0 10px",
-        }}
-      >
-        Marcas operacionais
-      </h2>
-      {operacionais.length === 0 ? (
-        <div
-          style={{
-            padding: 28,
-            textAlign: "center",
-            background: "var(--surface)",
-            border: "1px dashed var(--border)",
-            borderRadius: 14,
-            fontSize: 13,
-            color: "var(--text-3)",
-          }}
-        >
-          Nenhuma marca tem período financeiro aberto. Crie um período pra
-          começar a registrar lançamentos.
+      {!competenciaParam ? (
+        <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
+          border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
+          Nenhum snapshot gerado ainda. Rode gerarRazao() pra alguma unidade/competência primeiro.
         </div>
       ) : (
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-            gap: 12,
-            marginBottom: 28,
-          }}
-        >
-          {operacionais.map((b) => {
-            const dre = dreByBrand.get(b.id);
-            return (
-              <Link
-                key={b.id}
-                href={`/financeiro/${b.slug}`}
-                style={{
-                  textDecoration: "none",
-                  color: "inherit",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 14,
-                  padding: "16px 18px 18px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                  position: "relative",
-                  overflow: "hidden",
-                  transition: "border-color var(--t)",
-                }}
-              >
-                <span
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 3,
-                    background: b.color || "var(--brand)",
-                  }}
-                />
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 99,
-                      background: b.color || "var(--brand)",
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: "var(--text)",
-                      letterSpacing: -0.2,
-                    }}
-                  >
-                    {b.name}
-                  </span>
-                </div>
-
-                {dre ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <Row
-                      label="Receita bruta"
-                      value={formatBRLCompact(dre.receita_bruta)}
-                    />
-                    <Row
-                      label="CMV"
-                      value={
-                        <SeverityBadge severity={getCmvSeverity(dre.cmv_pct)}>
-                          {formatPct(dre.cmv_pct)}
-                        </SeverityBadge>
-                      }
-                    />
-                    <Row
-                      label="EBITDA"
-                      value={
-                        <SeverityBadge severity={getEbitdaSeverity(dre.ebitda_pct)}>
-                          {formatPct(dre.ebitda_pct)}
-                        </SeverityBadge>
-                      }
-                    />
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-3)",
-                      fontStyle: "italic",
-                    }}
-                  >
-                    Sem lançamentos no mês ainda.
-                  </div>
-                )}
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginTop: "auto",
-                    paddingTop: 8,
-                    borderTop: "1px solid var(--border)",
-                    fontSize: 11,
-                  }}
-                >
-                  <span style={{ color: "var(--text-3)" }}>
-                    {/* Indicador de gap (placeholder até gap aggregado) */}
-                    {dre?.cmv_pct !== undefined && dre?.cmv_pct !== null
-                      ? `Gap CMV: ${getGapSeverity(dre.cmv_pct - 28)}`
-                      : "—"}
-                  </span>
-                  <span
-                    style={{
-                      color: "var(--brand)",
-                      fontWeight: 700,
-                      letterSpacing: 0.6,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Ver DRE →
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
-        </section>
-      )}
-
-      {/* Top 30 produtos do mês */}
-      <section style={{ marginBottom: 28 }}>
-        <h2
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            color: "var(--text-3)",
-            margin: "0 0 10px",
-          }}
-        >
-          Top 60 produtos · {competenciaLabel(comp)}
-        </h2>
-        <TopProdutosTable produtos={topProdutos} />
-      </section>
-
-      {semOperacao.length > 0 && (
-        <details>
-          <summary
-            style={{
-              fontSize: 11,
-              color: "var(--text-3)",
-              cursor: "pointer",
-              fontWeight: 600,
-              letterSpacing: 0.6,
-              textTransform: "uppercase",
-            }}
-          >
-            {semOperacao.length} marcas sem período financeiro
-          </summary>
-          <p
-            style={{
-              fontSize: 12,
-              color: "var(--text-3)",
-              marginTop: 8,
-              lineHeight: 1.6,
-            }}
-          >
-            {semOperacao.map((b) => b.name).join(" · ")}. Crie o período pela
-            página da marca pra começar a registrar lançamentos.
-          </p>
-        </details>
+        <PainelData
+          db={db}
+          unidadeParam={unidadeParam}
+          competenciaParam={competenciaParam}
+          unitIdsTodos={unitIdsTodos}
+        />
       )}
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+async function PainelData({ db, unidadeParam, competenciaParam, unitIdsTodos }: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any; unidadeParam: string; competenciaParam: string; unitIdsTodos: string[];
+}) {
+  const unitIds = unidadeParam === "consolidado" ? unitIdsTodos : [unidadeParam];
+
+  const janela: string[] = [];
+  for (let i = JANELA_MESES - 1; i >= 0; i--) janela.push(competenciaShift(competenciaParam, -i));
+
+  const kpiRows = (await fetchAll((from, to) =>
+    db.from("kpi_snapshot").select("*").in("unit_id", unitIds).in("competencia", janela).range(from, to),
+  )) as KpiSnapshotRow[];
+
+  // Metas só fazem sentido pra uma unidade específica — combinar metas de
+  // duas units num "Consolidado" exigiria uma regra que não foi definida.
+  const metas = unidadeParam === "consolidado"
+    ? []
+    : ((await fetchAll((from, to) =>
+        db.from("metas").select("chave,valor,tipo,origem").eq("unit_id", unidadeParam).eq("competencia", competenciaParam).range(from, to),
+      )) as MetaRow[]);
+
+  const dreRows = (await fetchAll((from, to) =>
+    db.from("dre_snapshot").select("unit_id,conta_codigo,valor,qtd_lancamentos").in("unit_id", unitIds).eq("competencia", competenciaParam).range(from, to),
+  )) as DreSnapshotRow[];
+
+  const planoContas = (await fetchAll((from, to) =>
+    db.from("plano_contas").select("codigo,nome,grupo,ordem").order("ordem").range(from, to),
+  )) as PlanoContaRow[];
+
+  const fontes = (await fetchAll((from, to) =>
+    db.from("v_fonte_saude").select("fonte,ultima_escrita,dias_sem_atualizacao,status_fonte").range(from, to),
+  )) as FonteSaudeRow[];
+
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        fontSize: 12,
-      }}
-    >
-      <span style={{ color: "var(--text-3)" }}>{label}</span>
-      <span style={{ fontWeight: 600, color: "var(--text)" }}>{value}</span>
+    <CockpitPainel
+      unidade={unidadeParam}
+      competencia={competenciaParam}
+      janela={janela}
+      kpiRows={kpiRows}
+      metas={metas}
+      dreRows={dreRows}
+      planoContas={planoContas}
+      fontes={fontes}
+    />
+  );
+}
+
+function Seletores({ unidade, competencia, competencias }: {
+  unidade: string; competencia: string | null; competencias: string[];
+}) {
+  const linkStyle = (ativo: boolean): React.CSSProperties => ({
+    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: ativo ? 700 : 500,
+    textDecoration: "none", whiteSpace: "nowrap",
+    background: ativo ? "var(--brand, #C4622D)" : "var(--surface-2)",
+    color: ativo ? "var(--primary-foreground)" : "var(--text-3)",
+    border: "1px solid var(--border)",
+  });
+  const href = (unidadeVal: string, competenciaVal: string | null) => {
+    const params = new URLSearchParams();
+    params.set("unidade", unidadeVal);
+    if (competenciaVal) params.set("competencia", competenciaVal);
+    return `/financeiro?${params.toString()}`;
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <Link href={href("consolidado", competencia)} style={linkStyle(unidade === "consolidado")}>Consolidado</Link>
+        <Link href={href(UNIDADES[0].id, competencia)} style={linkStyle(unidade === UNIDADES[0].id)}>{UNIDADES[0].nome}</Link>
+        <Link href={href(UNIDADES[1].id, competencia)} style={linkStyle(unidade === UNIDADES[1].id)}>{UNIDADES[1].nome}</Link>
+      </div>
+      {competencias.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {competencias.map((c) => (
+            <Link key={c} href={href(unidade, c)} style={linkStyle(c === competencia)}>
+              {competenciaLabel(c)}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

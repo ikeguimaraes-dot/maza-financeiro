@@ -33,7 +33,6 @@ import type {
 import type {
   CmvFilters,
   EntryFilters,
-  FinanceiroResumoGrupo,
 } from "@/lib/financeiro/types";
 
 // ── Period ─────────────────────────────────────────────────────
@@ -585,72 +584,6 @@ export async function updateMenuItem(
       ok: false,
       error: e instanceof Error ? e.message : "Erro inesperado",
     };
-  }
-}
-
-// ── Resumo do grupo (pro dashboard executivo) ──────────────────
-
-export async function getFinanceiroResumoGrupo(): Promise<FinanceiroResumoGrupo> {
-  const empty: FinanceiroResumoGrupo = {
-    aprovacoes_pendentes: 0,
-    receita_mes_atual: 0,
-    despesa_mes_atual: 0,
-    ebitda_mes_atual: 0,
-    ebitda_pct_medio: null,
-    cmv_pct_medio: null,
-    itens_cmv_criticos: 0,
-  };
-  try {
-    const supabase = await createSupabaseServerClient();
-    if (!supabase) return empty;
-    const comp = getCompetenciaAtual();
-
-    const [aprovRes, dreRes, cmvRes] = await Promise.all([
-      supabase
-        .from("v_aprovacoes_pendentes")
-        .select("id", { count: "exact", head: true }),
-      supabase
-        .from("v_dre_consolidado")
-        .select("*")
-        .eq("competencia", comp),
-      supabase.from("v_cmv_dashboard").select("*"),
-    ]);
-
-    const dreRows = (dreRes.data ?? []) as DreConsolidadoRow[];
-    const cmvRows = (cmvRes.data ?? []) as CmvDashboardRow[];
-
-    const receita = dreRows.reduce((s, r) => s + Number(r.receita_bruta ?? 0), 0);
-    const despesa = dreRows.reduce((s, r) => s + Number(r.despesa_total ?? 0), 0);
-    const ebitda = dreRows.reduce((s, r) => s + Number(r.ebitda ?? 0), 0);
-
-    const ebitda_pct_medio = receita > 0 ? (ebitda / receita) * 100 : null;
-    const cmvSomatorio = dreRows.reduce(
-      (s, r) =>
-        s +
-        (r.cmv_pct !== null && r.receita_bruta > 0
-          ? Number(r.cmv_pct) * Number(r.receita_bruta)
-          : 0),
-      0,
-    );
-    const cmv_pct_medio = receita > 0 ? cmvSomatorio / receita : null;
-
-    const itens_cmv_criticos = cmvRows.reduce(
-      (s, c) => s + Number(c.itens_criticos_acima_40 ?? 0),
-      0,
-    );
-
-    return {
-      aprovacoes_pendentes: aprovRes.count ?? 0,
-      receita_mes_atual: receita,
-      despesa_mes_atual: despesa,
-      ebitda_mes_atual: ebitda,
-      ebitda_pct_medio,
-      cmv_pct_medio,
-      itens_cmv_criticos,
-    };
-  } catch (e) {
-    console.error("[getFinanceiroResumoGrupo] exceção:", e);
-    return empty;
   }
 }
 
