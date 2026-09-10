@@ -128,15 +128,21 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     const ownNomeOf = (note: NfeImportNota) =>
       payload.direcao === "saida" ? note.emitenteNome : note.destinatarioNome
 
+    // units.cnpj é legado (um CNPJ por unidade) — a fonte de verdade pra
+    // resolução fiscal é unit_cnpjs (N CNPJs por unidade, por papel), desde
+    // a FASE 6: a mesma empresa pode pagar folha e comprar com CNPJs
+    // diferentes, ou ter mais de um CNPJ de compras. Aceita QUALQUER papel
+    // aqui — uma nota de entrada não sabe (nem precisa saber) se o CNPJ
+    // destinatário está cadastrado como folha, compras ou faturamento.
     const distinctCnpjs = [...new Set(
       payload.notas.map(ownCnpjOf).filter((cnpj): cnpj is string => Boolean(cnpj))
     )]
-    const { data: unitsData, error: unitsError } = distinctCnpjs.length
-      ? await raw.from("units").select("id,cnpj").in("cnpj", distinctCnpjs)
+    const { data: unitCnpjsData, error: unitCnpjsError } = distinctCnpjs.length
+      ? await raw.from("unit_cnpjs").select("unit_id,cnpj").eq("ativo", true).in("cnpj", distinctCnpjs)
       : { data: [], error: null }
-    if (unitsError) return { ...empty, error: unitsError.message }
+    if (unitCnpjsError) return { ...empty, error: unitCnpjsError.message }
     const unitIdByCnpj = new Map<string, string>(
-      (unitsData ?? []).map((u: { id: string; cnpj: string }) => [u.cnpj, u.id])
+      (unitCnpjsData ?? []).map((u: { unit_id: string; cnpj: string }) => [u.cnpj, u.unit_id])
     )
 
     const resolvidas: Array<NfeImportNota & { unitId: string }> = []
