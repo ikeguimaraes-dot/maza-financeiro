@@ -45,8 +45,16 @@ export async function importarLinhasCompra(
         roteadosParaIky += 1
         valorRoteadoParaIky += l.vTitulo
       }
+      const id = crypto.randomUUID()
       return {
-        id: crypto.randomUUID(),
+        id,
+        // uq_titulos_chave é um índice legado (n_titulo, parcela,
+        // fantasia_empresa, ref_mes) NULLS NOT DISTINCT, pensado pro
+        // formato antigo de ERP — sem popular esses 4 campos, todas as
+        // linhas novas colidiriam entre si (Postgres trata NULL=NULL
+        // aqui). n_titulo = id da própria linha resolve trivialmente,
+        // sem precisar migrar ou derrubar o índice.
+        n_titulo: id,
         tipo,
         origem,
         unit_id: unitId,
