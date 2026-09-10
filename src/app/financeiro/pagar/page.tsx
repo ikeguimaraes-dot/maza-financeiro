@@ -100,6 +100,16 @@ export default async function ContasAPagarPage({
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <FiltroCategoria categorias={categorias} atual={categoriaFiltro} />
           <ImportPagarButton />
+          <Link
+            href="/financeiro/pagar/importar"
+            style={{
+              padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+              border: "1px solid var(--border)", background: "var(--surface-2)",
+              color: "var(--text-2)", textDecoration: "none", whiteSpace: "nowrap",
+            }}
+          >
+            Importar NF_PEDIDOS / Contas a Pagar
+          </Link>
           <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <NavMonth href={`?competencia=${compPrev}`} label="←" title="Mês anterior" />
             <span
