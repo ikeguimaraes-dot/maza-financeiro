@@ -143,6 +143,18 @@ export async function gerarFornecedoresAutomatico(
     // a mesma normalização do nome bruto, não contra o texto literal.
     const jaVinculados = new Set(deparaExistente.map((r) => `${r.origem}|${r.nome_origem}`))
 
+    // CNPJ é identidade legal, vem da NF-e (produtos_relatorio.fornecedor_codigo)
+    // — só o lado 'nfe' tem CNPJ, título nunca tem (cnpj_cpf_fornecedor é
+    // 100% nulo). Quando dois nomes têm o mesmo CNPJ, são o mesmo
+    // fornecedor, PONTO — checado antes de qualquer heurística de texto.
+    const fornecedoresExistentes = await fetchAllPaginado((from, to) =>
+      db.from("fornecedores").select("id,cnpj").range(from, to)
+    ) as Array<{ id: string; cnpj: string | null }>
+    const fornecedorIdPorCnpjAncora = new Map<string, string>()
+    for (const f of fornecedoresExistentes) {
+      if (f.cnpj) fornecedorIdPorCnpjAncora.set(f.cnpj, f.id)
+    }
+
     const pendentesNovos = [...pendentesMap.values()].filter((p) => !jaVinculados.has(`${p.origem}|${upperTrim(p.nomeOrigem)}`))
     if (pendentesNovos.length === 0) {
       return { ok: true, criados: 0, vinculados: 0, ignoradosPorConflito: 0 }
@@ -174,6 +186,25 @@ export async function gerarFornecedoresAutomatico(
     const listaNormalizados = [...todosNormalizados]
 
     const uf = new UnionFind()
+
+    // Precedência 1: CNPJ igual — dois normalizados novos que compartilham
+    // CNPJ são o mesmo fornecedor, mesmo sem nenhuma relação textual (ex.
+    // "FRESCATTO" e "Jahu - Sao Paulo", se emitirem com o mesmo CNPJ).
+    const normalizadosPorCnpj = new Map<string, string[]>()
+    for (const [norm, info] of porNormalizadoNovo) {
+      if (!info.cnpj) continue
+      const arr = normalizadosPorCnpj.get(info.cnpj) ?? []
+      arr.push(norm)
+      normalizadosPorCnpj.set(info.cnpj, arr)
+    }
+    for (const normsComMesmoCnpj of normalizadosPorCnpj.values()) {
+      for (let i = 1; i < normsComMesmoCnpj.length; i++) {
+        uf.union(normsComMesmoCnpj[0]!, normsComMesmoCnpj[i]!)
+      }
+    }
+
+    // Precedência 2 e 3: contenção com fronteira, depois bigrama ≥ 0,84 —
+    // só entram pra nomes que o CNPJ não decidiu sozinho.
     for (let i = 0; i < listaNormalizados.length; i++) {
       for (let j = i + 1; j < listaNormalizados.length; j++) {
         if (nomesRelacionados(listaNormalizados[i]!, listaNormalizados[j]!)) {
@@ -199,6 +230,12 @@ export async function gerarFornecedoresAutomatico(
     }
     for (const [norm, fornecedorId] of fornecedorIdPorNormalizadoAncora) {
       gruposPorRaiz.get(uf.find(norm))!.fornecedorIdsAncora.add(fornecedorId)
+    }
+    // CNPJ de um pendente batendo com CNPJ de um fornecedor JÁ catalogado
+    // também é âncora — mesma força que uma âncora por nome.
+    for (const [norm, info] of porNormalizadoNovo) {
+      const fornecedorIdPorCnpj = info.cnpj ? fornecedorIdPorCnpjAncora.get(info.cnpj) : undefined
+      if (fornecedorIdPorCnpj) gruposPorRaiz.get(uf.find(norm))!.fornecedorIdsAncora.add(fornecedorIdPorCnpj)
     }
 
     let ignoradosPorConflito = 0
