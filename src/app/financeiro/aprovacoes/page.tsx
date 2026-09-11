@@ -65,8 +65,8 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
           valor do alerta mudar depois, ele volta a aparecer.
         </p>
         <p style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 720, margin: "0 0 16px" }}>
-          Grupos ativos: 1 (Identidade) e 2 (Cobertura). Grupos 3 (Valor fora de faixa) e 4
-          (Anomalia) chegam nas próximas entregas.
+          Grupos ativos: 1 (Identidade), 2 (Cobertura) e 3 (Valor fora de faixa). Grupo 4
+          (Anomalia) chega na próxima entrega.
         </p>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 6 }}>
