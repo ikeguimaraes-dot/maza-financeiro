@@ -373,6 +373,28 @@ export async function gerarLancamentosTitulos(
       competenciaPorChave.set(p.chave_nfe, `${p.ano_lancamento}-${String(p.mes_lancamento).padStart(2, "0")}-01`)
     }
 
+    // Match título↔NF-e passa a ser por fornecedor_id (catálogo de
+    // fornecedores), exato — nunca mais por similaridade de nome. "TREZE DE
+    // MAIO" (título) e "TREZE DE MAIO COMERCIO DE HORTIFRUTIGRANJEIROS LTDA"
+    // (NF-e) só casam porque fornecedores_depara já resolveu os dois pro
+    // mesmo fornecedor_id — gerarFornecedoresAutomatico() faz essa ligação
+    // fora do caminho crítico. Nome sem vínculo no catálogo simplesmente não
+    // casa com nada (mesmo comportamento de "não encontrou XML").
+    const deparaRows = await fetchAllPaginado((from, to) =>
+      db.from("fornecedores_depara").select("nome_origem,origem,fornecedor_id").range(from, to)
+    ) as Array<{ nome_origem: string; origem: "nfe" | "titulo"; fornecedor_id: string }>
+    const fornecedorIdPorNomeTitulo = new Map(
+      deparaRows.filter((d) => d.origem === "titulo").map((d) => [d.nome_origem, d.fornecedor_id])
+    )
+    const fornecedorIdPorNomeNfe = new Map(
+      deparaRows.filter((d) => d.origem === "nfe").map((d) => [d.nome_origem, d.fornecedor_id])
+    )
+    const fornecedorIdPorChaveNota = new Map<string, string>()
+    for (const nota of notasCandidatas) {
+      const fornecedorId = fornecedorIdPorNomeNfe.get(nota.emitente_nome ?? "")
+      if (fornecedorId) fornecedorIdPorChaveNota.set(nota.chave, fornecedorId)
+    }
+
     // ALIMENTOS/BEBIDAS de contas_pagar só é descartado (já vem por
     // NF_PEDIDOS) quando a unidade realmente TEM NF_PEDIDOS naquela
     // competência — a IKY não tem planilha de NF_PEDIDOS nenhuma, então
@@ -436,28 +458,39 @@ export async function gerarLancamentosTitulos(
       return !(t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS") && temNfPedidosEstaCompetencia)
     })
 
-    // Agrupa por (fornecedor, número da nota) — a nota pode vir parcelada em
-    // várias linhas de título (2P. X 1/2, 2P. X 2/2, ...) e nenhuma parcela
-    // sozinha bate ±2% contra o valor cheio da nota. O match tem que ser da
-    // NOTA (soma das parcelas) contra a NF-e — se casar, NENHUMA parcela do
-    // grupo gera lançamento; se não casar, TODAS geram.
+    // Agrupa por (fornecedor_id, número da nota) — a nota pode vir parcelada
+    // em várias linhas de título (2P. X 1/2, 2P. X 2/2, ...) e nenhuma
+    // parcela sozinha bate ±2% contra o valor cheio da nota. O match tem que
+    // ser da NOTA (soma das parcelas) contra a NF-e — se casar, NENHUMA
+    // parcela do grupo gera lançamento; se não casar, TODAS geram. Título
+    // sem fornecedor_id resolvido no catálogo nunca casa — cai direto no
+    // "não achou XML", igual a título sem número.
     const gruposComNumero = new Map<string, Titulo[]>()
-    const titulosSemNumero: Titulo[] = []
+    const titulosSemMatchPossivel: Array<{ titulo: Titulo; nNota: string | null }> = []
     for (const t of titulosProcessaveis) {
-      if (!t.n_nota_fiscal) { titulosSemNumero.push(t); continue }
-      const nome = (t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase()
-      const chave = `${nome}|${t.n_nota_fiscal}`
+      if (!t.n_nota_fiscal) { titulosSemMatchPossivel.push({ titulo: t, nNota: null }); continue }
+      const fornecedorId = fornecedorIdPorNomeTitulo.get(t.fantasia_fornecedor ?? t.razao_fornecedor ?? "")
+      if (!fornecedorId) { titulosSemMatchPossivel.push({ titulo: t, nNota: t.n_nota_fiscal }); continue }
+      const chave = `${fornecedorId}|${t.n_nota_fiscal}`
       const arr = gruposComNumero.get(chave) ?? []
       arr.push(t)
       gruposComNumero.set(chave, arr)
     }
 
-    for (const t of titulosSemNumero) gerarLancamento(t)
+    for (const { titulo: t, nNota } of titulosSemMatchPossivel) {
+      gerarLancamento(t)
+      if (nNota) {
+        sugestoesRows.push({
+          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: `SEM_XML:${nNota}`,
+          score: 0, valor_titulo: valorTitulo(t), valor_nfe: 0, dias_diferenca: 0, status: "sem_xml",
+        })
+      }
+    }
 
     for (const membros of gruposComNumero.values()) {
       const primeiro = membros[0]!
-      const nomeFornecedor = primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? null
       const nNota = primeiro.n_nota_fiscal!
+      const fornecedorId = fornecedorIdPorNomeTitulo.get(primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? "")!
 
       // valor_total_nf_origem é o valor CHEIO da nota, repetido em toda
       // parcela — usa ele quando existir (uma vez, não somado — já é o
@@ -465,19 +498,19 @@ export async function gerarLancamentosTitulos(
       const valorTotalOrigem = membros.map((m) => m.valor_total_nf_origem).find((v): v is number => v != null)
       const valorGrupo = valorTotalOrigem ?? membros.reduce((s, m) => s + valorTitulo(m), 0)
 
-      // Dedup: mesmo número de NF + fornecedor por similaridade + valor
+      // Dedup: mesmo fornecedor_id (catálogo, exato) + número de NF + valor
       // ±2% + mesma competência → já foi gerado via XML (com detalhe por
       // item) — não duplica. Sem a competência bater, número igual em mês
       // diferente não é a mesma compra.
-      let matchConfirmado: { chave: string; score: number; valorNfe: number } | null = null
+      let matchConfirmado: { chave: string; diffValor: number; valorNfe: number } | null = null
       const candidatas = notasPorNumero.get(nNota) ?? []
       for (const nota of candidatas) {
+        if (fornecedorIdPorChaveNota.get(nota.chave) !== fornecedorId) continue
         if (competenciaPorChave.get(nota.chave) !== inicio) continue
         const diffValor = Math.abs(nota.valor_total - valorGrupo) / Math.max(valorGrupo, 0.01)
         if (diffValor > 0.02) continue
-        const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
-        if (!matchConfirmado || score > matchConfirmado.score) {
-          matchConfirmado = { chave: nota.chave, score, valorNfe: nota.valor_total }
+        if (!matchConfirmado || diffValor < matchConfirmado.diffValor) {
+          matchConfirmado = { chave: nota.chave, diffValor, valorNfe: nota.valor_total }
         }
       }
 
@@ -485,7 +518,7 @@ export async function gerarLancamentosTitulos(
         for (const t of membros) {
           sugestoesRows.push({
             unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
-            score: Math.round(matchConfirmado.score * 100) / 100,
+            score: Math.round((1 - matchConfirmado.diffValor) * 100) / 100,
             valor_titulo: valorTitulo(t), valor_nfe: matchConfirmado.valorNfe,
             dias_diferenca: 0, status: "confirmada",
           })

@@ -3,15 +3,15 @@
 // pra o CMV bater e, em vez disso, EXPOR a divergência entre a planilha de
 // contas a pagar e as NF-e importadas, deixando o dado mostrar qual fonte
 // está errada. Reaplica o MESMO critério de match de
-// gerarLancamentosTitulos() (agrupar por fornecedor+nº da nota, comparar
-// valor_total_nf_origem ou soma das parcelas contra a NF-e, ±2%, mesma
-// competência) só pra CLASSIFICAR e MOSTRAR — nunca escreve em
+// gerarLancamentosTitulos() (agrupar por fornecedor_id (catálogo) + nº da
+// nota, comparar valor_total_nf_origem ou soma das parcelas contra a NF-e,
+// ±2%, mesma competência) só pra CLASSIFICAR e MOSTRAR — nunca escreve em
 // titulos_a_pagar, lancamentos ou reconciliacoes_sugeridas. Roda a
 // classificação para TODOS os títulos, inclusive os que
 // gerarLancamentosTitulos() descartaria por outras regras (ex. ALIMENTOS de
 // contas_pagar quando há NF_PEDIDOS) — aqui queremos ver o universo inteiro,
 // não o que o pipeline de lançamento escolheu processar.
-import { fetchAllPaginado, similaridadeNome } from "@/lib/financeiro/razao/gerar"
+import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 
 function competenciaFim(competencia: string): string {
   const ano = Number(competencia.slice(0, 4))
@@ -139,6 +139,24 @@ export async function calcularDivergenciasContasPagarNotas(
     competenciaPorChave.set(p.chave_nfe, `${p.ano_lancamento}-${String(p.mes_lancamento).padStart(2, "0")}-01`)
   }
 
+  // Mesmo catálogo de fornecedores usado em gerarLancamentosTitulos() — o
+  // match aqui é só pra CLASSIFICAR/MOSTRAR, mas tem que refletir o mesmo
+  // critério exato por fornecedor_id, não texto.
+  const deparaRows = await fetchAllPaginado((from, to) =>
+    db.from("fornecedores_depara").select("nome_origem,origem,fornecedor_id").range(from, to)
+  ) as Array<{ nome_origem: string; origem: "nfe" | "titulo"; fornecedor_id: string }>
+  const fornecedorIdPorNomeTitulo = new Map(
+    deparaRows.filter((d) => d.origem === "titulo").map((d) => [d.nome_origem, d.fornecedor_id])
+  )
+  const fornecedorIdPorNomeNfe = new Map(
+    deparaRows.filter((d) => d.origem === "nfe").map((d) => [d.nome_origem, d.fornecedor_id])
+  )
+  const fornecedorIdPorChaveNota = new Map<string, string>()
+  for (const nota of notasCandidatas) {
+    const fornecedorId = fornecedorIdPorNomeNfe.get(nota.emitente_nome ?? "")
+    if (fornecedorId) fornecedorIdPorChaveNota.set(nota.chave, fornecedorId)
+  }
+
   type Titulo = (typeof titulos)[number]
 
   function valorTitulo(t: Titulo): number {
@@ -155,39 +173,52 @@ export async function calcularDivergenciasContasPagarNotas(
   const comNumero = titulos.filter((t) => t.n_nota_fiscal)
   const semNumeroTitulos = titulos.filter((t) => !t.n_nota_fiscal)
 
-  // Agrupa por (fornecedor, número da nota) — mesmo critério de
+  const comNotaComXml: ComNotaComXml[] = []
+  const comNotaSemXml: ComNotaSemXml[] = []
+  const chavesUsadas = new Set<string>()
+
+  // Agrupa por (fornecedor_id, número da nota) — mesmo critério de
   // gerarLancamentosTitulos(): uma nota parcelada em várias linhas de
   // título só pode ser comparada como grupo, nunca parcela a parcela.
+  // Título sem fornecedor_id resolvido no catálogo nunca casa — cai direto
+  // em "com nota, sem XML".
   const grupos = new Map<string, Titulo[]>()
   for (const t of comNumero) {
-    const nome = (t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase()
-    const chave = `${nome}|${t.n_nota_fiscal}`
+    const fornecedorId = fornecedorIdPorNomeTitulo.get(t.fantasia_fornecedor ?? t.razao_fornecedor ?? "")
+    if (!fornecedorId) {
+      comNotaSemXml.push({
+        fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor ?? null,
+        nNota: t.n_nota_fiscal!,
+        valor: round2(valorTitulo(t)),
+        data: dataTitulo(t),
+        categoria: t.c_gerencial,
+      })
+      continue
+    }
+    const chave = `${fornecedorId}|${t.n_nota_fiscal}`
     const arr = grupos.get(chave) ?? []
     arr.push(t)
     grupos.set(chave, arr)
   }
 
-  const comNotaComXml: ComNotaComXml[] = []
-  const comNotaSemXml: ComNotaSemXml[] = []
-  const chavesUsadas = new Set<string>()
-
   for (const membros of grupos.values()) {
     const primeiro = membros[0]!
     const nomeFornecedor = primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? null
     const nNota = primeiro.n_nota_fiscal!
+    const fornecedorId = fornecedorIdPorNomeTitulo.get(nomeFornecedor ?? "")!
 
     const valorTotalOrigem = membros.map((m) => m.valor_total_nf_origem).find((v): v is number => v != null)
     const valorGrupo = valorTotalOrigem ?? membros.reduce((s, m) => s + valorTitulo(m), 0)
 
-    let matchConfirmado: { chave: string; score: number; valorNfe: number; emissao: string | null } | null = null
+    let matchConfirmado: { chave: string; diffValor: number; valorNfe: number; emissao: string | null } | null = null
     const candidatas = notasPorNumero.get(nNota) ?? []
     for (const nota of candidatas) {
+      if (fornecedorIdPorChaveNota.get(nota.chave) !== fornecedorId) continue
       if (competenciaPorChave.get(nota.chave) !== competencia) continue
       const diffValor = Math.abs(nota.valor_total - valorGrupo) / Math.max(valorGrupo, 0.01)
       if (diffValor > 0.02) continue
-      const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
-      if (!matchConfirmado || score > matchConfirmado.score) {
-        matchConfirmado = { chave: nota.chave, score, valorNfe: nota.valor_total, emissao: nota.emissao }
+      if (!matchConfirmado || diffValor < matchConfirmado.diffValor) {
+        matchConfirmado = { chave: nota.chave, diffValor, valorNfe: nota.valor_total, emissao: nota.emissao }
       }
     }
 
