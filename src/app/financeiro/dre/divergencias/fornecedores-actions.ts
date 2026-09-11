@@ -14,7 +14,7 @@ export async function gerarFornecedoresAutomaticoAction(): Promise<ResultadoGera
   return gerarFornecedoresAutomatico(db)
 }
 
-export type NomeOrigemVinculado = { deparaId: string; nomeOrigem: string; origem: "nfe" | "titulo" }
+export type NomeOrigemVinculado = { deparaId: string; nomeOrigem: string; nomeOrigemLiteral: string; origem: "nfe" | "titulo" }
 
 export type FornecedorCatalogado = {
   id: string
@@ -46,11 +46,14 @@ export async function listarFornecedores(): Promise<ListarFornecedoresResultado>
     ) as Array<{ id: string; codigo: string; nome: string; cnpj: string | null; ativo: boolean }>
 
     const deparaRows = await fetchAllPaginado((from, to) =>
-      dbAny.from("fornecedores_depara").select("id,fornecedor_id,nome_origem,origem").range(from, to)
-    ) as Array<{ id: string; fornecedor_id: string; nome_origem: string; origem: "nfe" | "titulo" }>
+      dbAny.from("fornecedores_depara").select("id,fornecedor_id,nome_origem,nome_origem_literal,origem").range(from, to)
+    ) as Array<{ id: string; fornecedor_id: string; nome_origem: string; nome_origem_literal: string; origem: "nfe" | "titulo" }>
 
-    const nomesNfe = [...new Set(deparaRows.filter((d) => d.origem === "nfe").map((d) => d.nome_origem))]
-    const nomesTitulo = [...new Set(deparaRows.filter((d) => d.origem === "titulo").map((d) => d.nome_origem))]
+    // nome_origem é sempre upper+trim (não bate com a grafia original das
+    // fontes) — o join de volta pra produtos_relatorio/titulos_a_pagar tem
+    // que usar nome_origem_literal, a grafia exata como veio de lá.
+    const nomesNfe = [...new Set(deparaRows.filter((d) => d.origem === "nfe").map((d) => d.nome_origem_literal))]
+    const nomesTitulo = [...new Set(deparaRows.filter((d) => d.origem === "titulo").map((d) => d.nome_origem_literal))]
 
     const linhasNfe = nomesNfe.length === 0 ? [] : await fetchAllPaginado((from, to) =>
       dbAny.from("produtos_relatorio").select("fornecedor_nome,v_custo_total,chave_nfe").in("fornecedor_nome", nomesNfe).range(from, to)
@@ -88,16 +91,16 @@ export async function listarFornecedores(): Promise<ListarFornecedoresResultado>
       let valorTotalNfe = 0, qtdNotas = 0, valorTotalTitulo = 0, qtdTitulos = 0
       for (const v of vinculos) {
         if (v.origem === "nfe") {
-          const agregado = nfePorNome.get(v.nome_origem)
+          const agregado = nfePorNome.get(v.nome_origem_literal)
           if (agregado) { valorTotalNfe += agregado.valor; qtdNotas += agregado.chaves.size }
         } else {
-          const agregado = tituloPorNome.get(v.nome_origem)
+          const agregado = tituloPorNome.get(v.nome_origem_literal)
           if (agregado) { valorTotalTitulo += agregado.valor; qtdTitulos += agregado.qtd }
         }
       }
       return {
         id: f.id, codigo: f.codigo, nome: f.nome, cnpj: f.cnpj, ativo: f.ativo,
-        nomesOrigem: vinculos.map((v) => ({ deparaId: v.id, nomeOrigem: v.nome_origem, origem: v.origem })),
+        nomesOrigem: vinculos.map((v) => ({ deparaId: v.id, nomeOrigem: v.nome_origem, nomeOrigemLiteral: v.nome_origem_literal, origem: v.origem })),
         valorTotalNfe, qtdNotas, valorTotalTitulo, qtdTitulos,
       }
     })

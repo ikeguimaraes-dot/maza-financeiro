@@ -389,9 +389,11 @@ export async function gerarLancamentosTitulos(
     const fornecedorIdPorNomeNfe = new Map(
       deparaRows.filter((d) => d.origem === "nfe").map((d) => [d.nome_origem, d.fornecedor_id])
     )
+    // fornecedores_depara.nome_origem é sempre upper+trim — a chave de
+    // busca precisa da mesma normalização, não o nome literal da fonte.
     const fornecedorIdPorChaveNota = new Map<string, string>()
     for (const nota of notasCandidatas) {
-      const fornecedorId = fornecedorIdPorNomeNfe.get(nota.emitente_nome ?? "")
+      const fornecedorId = fornecedorIdPorNomeNfe.get((nota.emitente_nome ?? "").toUpperCase().trim())
       if (fornecedorId) fornecedorIdPorChaveNota.set(nota.chave, fornecedorId)
     }
 
@@ -469,7 +471,7 @@ export async function gerarLancamentosTitulos(
     const titulosSemMatchPossivel: Array<{ titulo: Titulo; nNota: string | null }> = []
     for (const t of titulosProcessaveis) {
       if (!t.n_nota_fiscal) { titulosSemMatchPossivel.push({ titulo: t, nNota: null }); continue }
-      const fornecedorId = fornecedorIdPorNomeTitulo.get(t.fantasia_fornecedor ?? t.razao_fornecedor ?? "")
+      const fornecedorId = fornecedorIdPorNomeTitulo.get((t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase().trim())
       if (!fornecedorId) { titulosSemMatchPossivel.push({ titulo: t, nNota: t.n_nota_fiscal }); continue }
       const chave = `${fornecedorId}|${t.n_nota_fiscal}`
       const arr = gruposComNumero.get(chave) ?? []
@@ -490,7 +492,7 @@ export async function gerarLancamentosTitulos(
     for (const membros of gruposComNumero.values()) {
       const primeiro = membros[0]!
       const nNota = primeiro.n_nota_fiscal!
-      const fornecedorId = fornecedorIdPorNomeTitulo.get(primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? "")!
+      const fornecedorId = fornecedorIdPorNomeTitulo.get((primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? "").toUpperCase().trim())!
 
       // valor_total_nf_origem é o valor CHEIO da nota, repetido em toda
       // parcela — usa ele quando existir (uma vez, não somado — já é o

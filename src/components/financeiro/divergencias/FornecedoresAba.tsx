@@ -234,7 +234,7 @@ export function FornecedoresAba() {
                               <tbody>
                                 {f.nomesOrigem.map((v) => (
                                   <tr key={v.deparaId} style={{ borderTop: "1px solid var(--border)" }}>
-                                    <td style={tdS()}>{v.nomeOrigem}</td>
+                                    <td style={tdS()}>{v.nomeOrigemLiteral}</td>
                                     <td style={tdS()}>{v.origem === "nfe" ? "NF-e" : "Título"}</td>
                                     <td style={{ padding: "7px 12px", display: "flex", gap: 4, alignItems: "center" }}>
                                       <select

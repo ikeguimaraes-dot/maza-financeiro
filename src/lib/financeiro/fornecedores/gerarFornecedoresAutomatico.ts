@@ -20,6 +20,14 @@ const SUFIXOS_SOCIETARIOS = [
 const LIMIAR_SIMILARIDADE = 0.84
 const MIN_CHARS_CONTIDO = 5
 
+// Chave de armazenamento — só maiúsculas/trim, sem stemming. nome_origem
+// é SEMPRE gravado assim; nome_origem_literal guarda o texto como veio da
+// fonte. Consultas que comparam com upper(trim()) (ex. telas de
+// investigação) encontram a linha independente da grafia original.
+function upperTrim(nome: string): string {
+  return nome.toUpperCase().trim()
+}
+
 function normalizarNomeFornecedor(nome: string): string {
   let n = nome.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Z0-9]+/g, " ").trim()
@@ -131,9 +139,11 @@ export async function gerarFornecedoresAutomatico(
     const deparaExistente = await fetchAllPaginado((from, to) =>
       db.from("fornecedores_depara").select("nome_origem,origem,fornecedor_id").range(from, to)
     ) as Array<{ nome_origem: string; origem: string; fornecedor_id: string }>
+    // nome_origem já vem normalizado (upper+trim) do banco — compara contra
+    // a mesma normalização do nome bruto, não contra o texto literal.
     const jaVinculados = new Set(deparaExistente.map((r) => `${r.origem}|${r.nome_origem}`))
 
-    const pendentesNovos = [...pendentesMap.values()].filter((p) => !jaVinculados.has(`${p.origem}|${p.nomeOrigem}`))
+    const pendentesNovos = [...pendentesMap.values()].filter((p) => !jaVinculados.has(`${p.origem}|${upperTrim(p.nomeOrigem)}`))
     if (pendentesNovos.length === 0) {
       return { ok: true, criados: 0, vinculados: 0, ignoradosPorConflito: 0 }
     }
@@ -255,10 +265,24 @@ export async function gerarFornecedoresAutomatico(
       if (inserido) fornecedorIdPorChaveGrupo.set(g.chave, inserido.id)
     })
 
+    // nome_origem é a chave única (upper+trim) — duas grafias que só
+    // diferem em caixa/espaço (ex. "IMCOPESC" e "IMCOPESC ") colapsam na
+    // MESMA linha aqui, senão violam UNIQUE(nome_origem, origem). Mantém a
+    // primeira grafia literal encontrada como nome_origem_literal.
     const deparaInserts = gruposProcessados.flatMap((g) => {
       const fornecedorId = fornecedorIdPorChaveGrupo.get(g.chave)
       if (!fornecedorId) return []
-      return g.entradasNovas.map((e) => ({ fornecedor_id: fornecedorId, nome_origem: e.nomeOrigem, origem: e.origem }))
+      const porChaveUnica = new Map<string, Pendente>()
+      for (const e of g.entradasNovas) {
+        const chaveUnica = `${e.origem}|${upperTrim(e.nomeOrigem)}`
+        if (!porChaveUnica.has(chaveUnica)) porChaveUnica.set(chaveUnica, e)
+      }
+      return [...porChaveUnica.values()].map((e) => ({
+        fornecedor_id: fornecedorId,
+        nome_origem: upperTrim(e.nomeOrigem),
+        nome_origem_literal: e.nomeOrigem,
+        origem: e.origem,
+      }))
     })
 
     for (let i = 0; i < deparaInserts.length; i += 500) {

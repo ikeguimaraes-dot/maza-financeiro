@@ -151,9 +151,11 @@ export async function calcularDivergenciasContasPagarNotas(
   const fornecedorIdPorNomeNfe = new Map(
     deparaRows.filter((d) => d.origem === "nfe").map((d) => [d.nome_origem, d.fornecedor_id])
   )
+  // fornecedores_depara.nome_origem é sempre upper+trim — a chave de busca
+  // precisa da mesma normalização, não o nome literal da fonte.
   const fornecedorIdPorChaveNota = new Map<string, string>()
   for (const nota of notasCandidatas) {
-    const fornecedorId = fornecedorIdPorNomeNfe.get(nota.emitente_nome ?? "")
+    const fornecedorId = fornecedorIdPorNomeNfe.get((nota.emitente_nome ?? "").toUpperCase().trim())
     if (fornecedorId) fornecedorIdPorChaveNota.set(nota.chave, fornecedorId)
   }
 
@@ -184,7 +186,7 @@ export async function calcularDivergenciasContasPagarNotas(
   // em "com nota, sem XML".
   const grupos = new Map<string, Titulo[]>()
   for (const t of comNumero) {
-    const fornecedorId = fornecedorIdPorNomeTitulo.get(t.fantasia_fornecedor ?? t.razao_fornecedor ?? "")
+    const fornecedorId = fornecedorIdPorNomeTitulo.get((t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase().trim())
     if (!fornecedorId) {
       comNotaSemXml.push({
         fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor ?? null,
@@ -205,7 +207,7 @@ export async function calcularDivergenciasContasPagarNotas(
     const primeiro = membros[0]!
     const nomeFornecedor = primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? null
     const nNota = primeiro.n_nota_fiscal!
-    const fornecedorId = fornecedorIdPorNomeTitulo.get(nomeFornecedor ?? "")!
+    const fornecedorId = fornecedorIdPorNomeTitulo.get((nomeFornecedor ?? "").toUpperCase().trim())!
 
     const valorTotalOrigem = membros.map((m) => m.valor_total_nf_origem).find((v): v is number => v != null)
     const valorGrupo = valorTotalOrigem ?? membros.reduce((s, m) => s + valorTitulo(m), 0)
