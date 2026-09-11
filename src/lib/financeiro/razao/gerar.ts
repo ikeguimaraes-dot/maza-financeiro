@@ -372,6 +372,22 @@ export async function gerarLancamentosTitulos(
       competenciaPorChave.set(p.chave_nfe, `${p.ano_lancamento}-${String(p.mes_lancamento).padStart(2, "0")}-01`)
     }
 
+    // ALIMENTOS/BEBIDAS de contas_pagar só é descartado (já vem por
+    // NF_PEDIDOS) quando a unidade realmente TEM NF_PEDIDOS naquela
+    // competência — a IKY não tem planilha de NF_PEDIDOS nenhuma, então
+    // esse descarte incondicional zerava seu CMV inteiro. Carregado uma
+    // vez por execução, não por título.
+    const nfPedidosRows = await fetchAllPaginado((from, to) =>
+      db.from("titulos_a_pagar")
+        .select("unit_id,d_competencia")
+        .eq("origem", "nf_pedidos")
+        .range(from, to)
+    ) as Array<{ unit_id: string; d_competencia: string | null }>
+    const competenciasComNfPedidos = new Set(
+      nfPedidosRows.filter(r => r.d_competencia).map(r => `${r.unit_id}|${r.d_competencia}`)
+    )
+    const temNfPedidosEstaCompetencia = competenciasComNfPedidos.has(`${unitId}|${inicio}`)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lancamentosRows: any[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -380,8 +396,11 @@ export async function gerarLancamentosTitulos(
     for (const t of titulos) {
       const categoria = (t.c_gerencial ?? "").toUpperCase()
       // CONTAS_A_PAGAR duplica ALIMENTOS/BEBIDAS que já vêm por NF_PEDIDOS
-      // (mesma compra, dois ângulos) — ignora pra não contar duas vezes.
-      if (t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS")) continue
+      // (mesma compra, dois ângulos) — ignora pra não contar duas vezes, MAS
+      // só quando a unidade tem NF_PEDIDOS pra cobrir (ver Set acima). Sem
+      // NF_PEDIDOS, contas_pagar é a ÚNICA fonte de CMV — descartar
+      // incondicionalmente zerava o CMV de quem não tem essa planilha.
+      if (t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS") && temNfPedidosEstaCompetencia) continue
 
       const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
       const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia ?? inicio
