@@ -17,7 +17,8 @@ const SUFIXOS_SOCIETARIOS = [
   "EIRELI", "LTDA", "EPP", "S A", "ME",
 ]
 
-const LIMIAR_SIMILARIDADE = 0.85
+const LIMIAR_SIMILARIDADE = 0.84
+const MIN_CHARS_CONTIDO = 5
 
 function normalizarNomeFornecedor(nome: string): string {
   let n = nome.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -28,18 +29,22 @@ function normalizarNomeFornecedor(nome: string): string {
   return n.replace(/\s+/g, " ").trim()
 }
 
-// Prefixo só conta se parar numa fronteira de palavra — "MAC" ⊂ "MAC
-// ORIENTAL" é válido, "MAC" ⊂ "MACARRAO" não é (esconderia dois fornecedores
-// diferentes atrás do mesmo canônico).
-function prefixoComFronteira(curto: string, longo: string): boolean {
-  if (curto.length < 3) return false
-  return longo === curto || longo.startsWith(`${curto} `)
+// Contenção em QUALQUER posição — início, fim ou meio — mas só com fronteira
+// de palavra completa dos dois lados. "IRMAOS AVELINO" ⊂ "DISTRIB. E IMP.
+// IRMAOS AVELINO" (no fim) e "SETBRAS" ⊂ "MATRIZ SC - SETBRAS" (no fim)
+// passam; "SCALA" ⊂ "SCALAPEIS" não passa (sem fronteira depois de SCALA).
+// Mínimo de 5 caracteres pra não casar "MZ" ou "RD" dentro de qualquer coisa.
+function contidoComFronteira(curto: string, longo: string): boolean {
+  if (curto.length < MIN_CHARS_CONTIDO) return false
+  if (longo === curto) return true
+  const regex = new RegExp(`(^|\\s)${curto}(\\s|$)`)
+  return regex.test(longo)
 }
 
 function nomesRelacionados(a: string, b: string): boolean {
   if (a === b) return true
   const [curto, longo] = a.length <= b.length ? [a, b] : [b, a]
-  if (prefixoComFronteira(curto, longo)) return true
+  if (contidoComFronteira(curto, longo)) return true
   return similaridadeNome(a, b) >= LIMIAR_SIMILARIDADE
 }
 
