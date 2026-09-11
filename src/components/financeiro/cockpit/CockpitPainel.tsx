@@ -41,6 +41,12 @@ function faltantes(faltaCmv: boolean, faltaFolha: boolean): string {
   return [faltaCmv && "CMV", faltaFolha && "folha"].filter(Boolean).join(" e ");
 }
 
+// Todo card de PERCENTUAL depende de receita como denominador — sem
+// receita importada, "sem NF-e"/"sem folha" é verdade mas não é a causa
+// raiz, e um "—" genérico esconde que o número seria inválido (dividir
+// por zero), não apenas ausente.
+const CARDS_PERCENTUAIS = new Set(["cmv_compras_pct", "mo_pct", "prime_cost_pct", "ebitda_pct"]);
+
 // Total real da conta 9.99 (a classificar) na competência — direto do
 // dre_snapshot, não uma estimativa. "unidade" pode ser um unit_id ou
 // "consolidado" (soma as duas).
@@ -73,12 +79,16 @@ export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dr
         {CARDS.map((card) => {
           const faltaCmv = !atual.tem_nfe;
           const faltaFolha = !atual.tem_folha;
+          const semReceita = !atual.receita_bruta || atual.receita_bruta === 0;
 
           let semDado = false;
           let semDadoTexto: string | undefined;
           let avisoParcial: string | undefined;
 
-          if (card.chave === "cmv_compras_pct") {
+          if (semReceita && CARDS_PERCENTUAIS.has(card.chave)) {
+            semDado = true;
+            semDadoTexto = "sem receita importada";
+          } else if (card.chave === "cmv_compras_pct") {
             semDado = faltaCmv;
             if (semDado) semDadoTexto = "sem dado (sem NF-e no mês)";
           } else if (card.chave === "mo_pct") {

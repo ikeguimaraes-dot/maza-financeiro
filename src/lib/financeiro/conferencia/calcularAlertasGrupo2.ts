@@ -14,48 +14,146 @@ async function getKpiSnapshot(db: Db, unitId: string, competencia: string) {
   return data as { receita_liquida: number | null; tem_nfe: boolean; tem_folha: boolean; confianca_pct: number | null } | null
 }
 
-// ── 2.1 · Competência com receita mas sem NF-e ──────────────────────────────
+async function existeLancamento(db: Db, unitId: string, competencia: string): Promise<boolean> {
+  const { data } = await db.from("lancamentos").select("id")
+    .eq("unit_id", unitId).eq("competencia", competencia).limit(1)
+  return (data?.length ?? 0) > 0
+}
+
+// Soma lancamentos por grupo de plano_contas (custo = cmv+mao_de_obra+
+// despesa_operacional; deducao = grupo deducao) e a receita bruta real do
+// mês, direto de receita_dias — não de kpi_snapshot, pra não depender de
+// snapshot recém-regenerado. Serve às 2.9/2.10.
+async function getCustoDeducaoReceita(db: Db, unitId: string, competencia: string) {
+  const fim = competenciaFim(competencia)
+  const linhas = await fetchAllPaginado((from, to) =>
+    db.from("lancamentos").select("valor,conta_codigo")
+      .eq("unit_id", unitId).eq("competencia", competencia).range(from, to)
+  ) as Array<{ valor: number; conta_codigo: string }>
+
+  const codigos = [...new Set(linhas.map((l) => l.conta_codigo))]
+  const planoContas = codigos.length === 0 ? [] : await fetchAllPaginado((from, to) =>
+    db.from("plano_contas").select("codigo,grupo").in("codigo", codigos).range(from, to)
+  ) as Array<{ codigo: string; grupo: string }>
+  const grupoPorConta = new Map(planoContas.map((p) => [p.codigo, p.grupo]))
+
+  let custo = 0
+  let deducao = 0
+  for (const l of linhas) {
+    const grupo = grupoPorConta.get(l.conta_codigo)
+    const valor = Math.abs(Number(l.valor ?? 0))
+    if (grupo === "cmv" || grupo === "mao_de_obra" || grupo === "despesa_operacional") custo += valor
+    if (grupo === "deducao") deducao += valor
+  }
+
+  const dias = await fetchAllPaginado((from, to) =>
+    db.from("receita_dias").select("receita_bruta")
+      .eq("unit_id", unitId).gte("data", competencia).lt("data", fim).range(from, to)
+  ) as Array<{ receita_bruta: number | null }>
+  const receitaBruta = dias.reduce((s, d) => s + Number(d.receita_bruta ?? 0), 0)
+
+  return { custo, deducao, receitaBruta }
+}
+
+// ── 2.1 · Competência com lançamento mas sem NF-e ───────────────────────────
+// Antes exigia receita_liquida > 0 pra disparar — isso escondia exatamente
+// o pior caso (custo lançado sem nenhuma receita, ver 2.9/2.10), já que
+// receita zerada nunca é positiva. Dispara sempre que existe QUALQUER
+// lançamento na competência.
 export async function calcularAlertaReceitaSemNfe(db: Db, unitId: string, competencia: string): Promise<Alerta | null> {
-  const kpi = await getKpiSnapshot(db, unitId, competencia)
-  const receitaLiquida = Number(kpi?.receita_liquida ?? 0)
+  const [kpi, temLancamento] = await Promise.all([
+    getKpiSnapshot(db, unitId, competencia),
+    existeLancamento(db, unitId, competencia),
+  ])
   const ocorrencias: AlertaOcorrencia[] = []
-  if (kpi && !kpi.tem_nfe && receitaLiquida > 0) {
+  if (kpi && temLancamento && !kpi.tem_nfe) {
     ocorrencias.push({
       chave: `${unitId}|${competencia}`,
-      descricao: "Competência com receita líquida lançada, mas nenhuma NF-e de entrada importada.",
-      valor: round2(receitaLiquida),
+      descricao: "Competência com lançamento registrado, mas nenhuma NF-e de entrada importada.",
+      valor: round2(Math.abs(Number(kpi.receita_liquida ?? 0))),
     })
   }
   return montarAlerta({
     alertaChave: "2.1_receita_sem_nfe",
     grupo: 2,
-    titulo: "Competência com receita mas sem NF-e",
-    motivo: "Há receita líquida lançada nesta competência, mas nenhuma NF-e de entrada foi importada para o período.",
+    titulo: "Competência com lançamento mas sem NF-e",
+    motivo: "Há lançamento nesta competência, mas nenhuma NF-e de entrada foi importada para o período.",
     severidade: "critico",
     link: "/financeiro/dre/cmv",
     ocorrencias,
   })
 }
 
-// ── 2.2 · Competência com receita mas sem folha ─────────────────────────────
+// ── 2.2 · Competência com lançamento mas sem folha ──────────────────────────
 export async function calcularAlertaReceitaSemFolha(db: Db, unitId: string, competencia: string): Promise<Alerta | null> {
-  const kpi = await getKpiSnapshot(db, unitId, competencia)
-  const receitaLiquida = Number(kpi?.receita_liquida ?? 0)
+  const [kpi, temLancamento] = await Promise.all([
+    getKpiSnapshot(db, unitId, competencia),
+    existeLancamento(db, unitId, competencia),
+  ])
   const ocorrencias: AlertaOcorrencia[] = []
-  if (kpi && !kpi.tem_folha && receitaLiquida > 0) {
+  if (kpi && temLancamento && !kpi.tem_folha) {
     ocorrencias.push({
       chave: `${unitId}|${competencia}`,
-      descricao: "Competência com receita líquida lançada, mas nenhum extrato de folha importado.",
-      valor: round2(receitaLiquida),
+      descricao: "Competência com lançamento registrado, mas nenhum extrato de folha importado.",
+      valor: round2(Math.abs(Number(kpi.receita_liquida ?? 0))),
     })
   }
   return montarAlerta({
     alertaChave: "2.2_receita_sem_folha",
     grupo: 2,
-    titulo: "Competência com receita mas sem folha",
-    motivo: "Há receita líquida lançada nesta competência, mas nenhum extrato de folha (Domínio) foi importado.",
+    titulo: "Competência com lançamento mas sem folha",
+    motivo: "Há lançamento nesta competência, mas nenhum extrato de folha (Domínio) foi importado.",
     severidade: "critico",
     link: "/financeiro/dre/folha",
+    ocorrencias,
+  })
+}
+
+// ── 2.9 · Competência com custo mas sem receita ─────────────────────────────
+// O pior estado possível: todo percentual calculado sobre esta competência
+// (CMV%, MO%, prime cost%, EBITDA%) é inválido — divisão por zero.
+export async function calcularAlertaCustoSemReceita(
+  db: Db, unitId: string, unitNome: string, competencia: string
+): Promise<Alerta | null> {
+  const { custo, receitaBruta } = await getCustoDeducaoReceita(db, unitId, competencia)
+  const ocorrencias: AlertaOcorrencia[] = custo > 0 && receitaBruta === 0
+    ? [{
+        chave: `${unitId}|${competencia}`,
+        descricao: `${round2(custo)} de custo lançado sem nenhuma receita importada. Importe a receita de ${competencia.slice(0, 7)} para ${unitNome}.`,
+        valor: round2(custo),
+      }]
+    : []
+  return montarAlerta({
+    alertaChave: "2.9_custo_sem_receita",
+    grupo: 2,
+    titulo: "Competência com custo mas sem receita",
+    motivo: "Existe lançamento de CMV, mão de obra ou despesa operacional nesta competência, mas nenhuma receita foi importada.",
+    severidade: "critico",
+    link: "/financeiro/dre/receita",
+    ocorrencias,
+  })
+}
+
+// ── 2.10 · Dedução sem receita ──────────────────────────────────────────────
+// É o que produz receita líquida negativa (dedução descontada de zero).
+export async function calcularAlertaDeducaoSemReceita(
+  db: Db, unitId: string, unitNome: string, competencia: string
+): Promise<Alerta | null> {
+  const { deducao, receitaBruta } = await getCustoDeducaoReceita(db, unitId, competencia)
+  const ocorrencias: AlertaOcorrencia[] = deducao > 0 && receitaBruta === 0
+    ? [{
+        chave: `${unitId}|${competencia}`,
+        descricao: `${round2(deducao)} de dedução (impostos/cancelamentos) lançada sem nenhuma receita importada para ${unitNome} — é isso que produz receita líquida negativa.`,
+        valor: round2(deducao),
+      }]
+    : []
+  return montarAlerta({
+    alertaChave: "2.10_deducao_sem_receita",
+    grupo: 2,
+    titulo: "Dedução sem receita",
+    motivo: "Existe lançamento no grupo dedução nesta competência, mas nenhuma receita foi importada.",
+    severidade: "critico",
+    link: "/financeiro/dre/receita",
     ocorrencias,
   })
 }
@@ -253,6 +351,8 @@ export async function calcularAlertasGrupo2(
     calcularAlertaReceitaSemDetalheForma(db, unitId, competencia),
     calcularAlertaUnidadeSemContaBancaria(db, unitId, unitNome),
     calcularAlertaConfiancaBaixa(db, unitId, competencia),
+    calcularAlertaCustoSemReceita(db, unitId, unitNome, competencia),
+    calcularAlertaDeducaoSemReceita(db, unitId, unitNome, competencia),
   ])
   return alertas.filter((a): a is Alerta => a !== null)
 }
