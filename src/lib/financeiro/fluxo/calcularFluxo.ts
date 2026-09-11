@@ -220,8 +220,17 @@ export async function calcularFluxo(
   }
 
   // ── Receita por forma de pagamento (prazo D+N) ────────────────────────
+  // Janela de busca com folga de 40 dias pro maior prazo hoje (30, cartão de
+  // crédito) — sem isso o fetch cresce sem limite conforme mais competências
+  // são importadas, e venda antiga (que já devia ter virado caixa há meses)
+  // voltaria a aparecer como "a receber" de novo.
+  const MAIOR_PRAZO_MAIS_FOLGA = 40
   const receitaDias = await fetchAllPaginado((from: number, to: number) =>
-    db.from("receita_dias").select("id,data").eq("unit_id", unitId).range(from, to)
+    db.from("receita_dias").select("id,data")
+      .eq("unit_id", unitId)
+      .gte("data", somarDias(dataInicio, -MAIOR_PRAZO_MAIS_FOLGA))
+      .lte("data", dataFim)
+      .range(from, to)
   ) as Array<{ id: string; data: string }>
   const dataPorWorkdayId = new Map(receitaDias.map((r) => [r.id, r.data]))
   const workdayIds = receitaDias.map((r) => r.id)
@@ -240,6 +249,11 @@ export async function calcularFluxo(
     const valor = Math.abs(Number(p.valor_recebido ?? 0))
     const { dias: prazoDias, conhecida } = prazoDiasPorForma(p.forma)
     const dataEfetiva = somarDias(dataVenda, prazoDias)
+    // Venda com dataEfetiva fora da janela exibida já devia ter virado caixa
+    // (ou ainda nem entrou na janela) — "a receber" mostra só o que pousa
+    // dentro do período selecionado, senão soma histórico inteiro pra sempre.
+    if (dataEfetiva < dataInicio || dataEfetiva > dataFim) continue
+
     entradasPrevistasPorDia.set(dataEfetiva, (entradasPrevistasPorDia.get(dataEfetiva) ?? 0) + valor)
 
     const atual = recebivelPorForma.get(p.forma) ?? { formaConhecida: conhecida, prazoDias, valorBruto: 0 }
