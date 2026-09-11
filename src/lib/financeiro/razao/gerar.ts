@@ -276,7 +276,7 @@ export async function gerarLancamentosTitulos(
     // Competência: usa d_competencia; se nula, cai no mês de d_vencimento.
     const titulos = await fetchAllPaginado((from, to) =>
       db.from("titulos_a_pagar")
-        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
+        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,valor_total_nf_origem,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
         .eq("unit_id", unitId)
         .in("origem", ["nf_pedidos", "contas_pagar"])
         .or(`d_competencia.eq.${inicio},and(d_competencia.is.null,d_vencimento.gte.${inicio},d_vencimento.lt.${fim})`)
@@ -284,7 +284,8 @@ export async function gerarLancamentosTitulos(
     ) as Array<{
       id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
       cnpj_cpf_fornecedor: string | null; c_gerencial: string | null; descricao_c_gerencial: string | null
-      v_titulo: number | null; d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
+      v_titulo: number | null; valor_total_nf_origem: number | null
+      d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
       n_nota_fiscal: string | null; origem: string
     }>
 
@@ -393,57 +394,28 @@ export async function gerarLancamentosTitulos(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sugestoesRows: any[] = []
 
-    for (const t of titulos) {
+    type Titulo = typeof titulos[number]
+
+    function valorTitulo(t: Titulo): number {
+      return Math.abs(Number(t.v_titulo ?? 0))
+    }
+
+    function contaParaTitulo(t: Titulo): string {
       const categoria = (t.c_gerencial ?? "").toUpperCase()
-      // CONTAS_A_PAGAR duplica ALIMENTOS/BEBIDAS que já vêm por NF_PEDIDOS
-      // (mesma compra, dois ângulos) — ignora pra não contar duas vezes, MAS
-      // só quando a unidade tem NF_PEDIDOS pra cobrir (ver Set acima). Sem
-      // NF_PEDIDOS, contas_pagar é a ÚNICA fonte de CMV — descartar
-      // incondicionalmente zerava o CMV de quem não tem essa planilha.
-      if (t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS") && temNfPedidosEstaCompetencia) continue
-
-      const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
-      const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia ?? inicio
-      const valorTitulo = Math.abs(Number(t.v_titulo ?? 0))
-
-      // Dedup: mesmo número de NF + fornecedor por similaridade + valor
-      // ±2% + mesma competência → já foi gerado via XML (com detalhe por
-      // item) — não duplica. Sem a competência bater, número igual em mês
-      // diferente não é a mesma compra.
-      let matchConfirmado: { chave: string; score: number; valorNfe: number } | null = null
-      if (t.n_nota_fiscal) {
-        const candidatas = notasPorNumero.get(t.n_nota_fiscal) ?? []
-        for (const nota of candidatas) {
-          if (competenciaPorChave.get(nota.chave) !== inicio) continue
-          const diffValor = Math.abs(nota.valor_total - valorTitulo) / Math.max(valorTitulo, 0.01)
-          if (diffValor > 0.02) continue
-          const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
-          if (!matchConfirmado || score > matchConfirmado.score) {
-            matchConfirmado = { chave: nota.chave, score, valorNfe: nota.valor_total }
-          }
-        }
-      }
-
-      if (matchConfirmado) {
-        sugestoesRows.push({
-          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
-          score: Math.round(matchConfirmado.score * 100) / 100,
-          valor_titulo: valorTitulo, valor_nfe: matchConfirmado.valorNfe,
-          dias_diferenca: 0, status: "confirmada",
-        })
-        continue // já coberto pela NF-e — não gera lançamento
-      }
-
-      const contaCodigo = !temFolhaExtrato && FALLBACK_MAO_DE_OBRA[categoria]
+      return !temFolhaExtrato && FALLBACK_MAO_DE_OBRA[categoria]
         ? FALLBACK_MAO_DE_OBRA[categoria]
         : classificar(t)
+    }
 
+    function gerarLancamento(t: Titulo): void {
+      const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
+      const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia ?? inicio
       lancamentosRows.push({
         unit_id: unitId,
         data: dataTitulo,
         competencia: inicio,
-        conta_codigo: contaCodigo,
-        valor: valorTitulo,
+        conta_codigo: contaParaTitulo(t),
+        valor: valorTitulo(t),
         origem: "titulo",
         origem_id: t.id,
         descricao: t.descricao_c_gerencial,
@@ -452,13 +424,83 @@ export async function gerarLancamentosTitulos(
         produto_id: null,
         reconciliado: false,
       })
+    }
 
-      // Tinha número de nota mas não achou XML correspondente — a nota
-      // existe, só falta importar o XML. Sinaliza pro Ike.
-      if (t.n_nota_fiscal) {
+    // CONTAS_A_PAGAR duplica ALIMENTOS/BEBIDAS que já vêm por NF_PEDIDOS
+    // (mesma compra, dois ângulos) — ignora pra não contar duas vezes, MAS
+    // só quando a unidade tem NF_PEDIDOS pra cobrir (ver Set acima). Sem
+    // NF_PEDIDOS, contas_pagar é a ÚNICA fonte de CMV — descartar
+    // incondicionalmente zerava o CMV de quem não tem essa planilha.
+    const titulosProcessaveis = titulos.filter((t) => {
+      const categoria = (t.c_gerencial ?? "").toUpperCase()
+      return !(t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS") && temNfPedidosEstaCompetencia)
+    })
+
+    // Agrupa por (fornecedor, número da nota) — a nota pode vir parcelada em
+    // várias linhas de título (2P. X 1/2, 2P. X 2/2, ...) e nenhuma parcela
+    // sozinha bate ±2% contra o valor cheio da nota. O match tem que ser da
+    // NOTA (soma das parcelas) contra a NF-e — se casar, NENHUMA parcela do
+    // grupo gera lançamento; se não casar, TODAS geram.
+    const gruposComNumero = new Map<string, Titulo[]>()
+    const titulosSemNumero: Titulo[] = []
+    for (const t of titulosProcessaveis) {
+      if (!t.n_nota_fiscal) { titulosSemNumero.push(t); continue }
+      const nome = (t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase()
+      const chave = `${nome}|${t.n_nota_fiscal}`
+      const arr = gruposComNumero.get(chave) ?? []
+      arr.push(t)
+      gruposComNumero.set(chave, arr)
+    }
+
+    for (const t of titulosSemNumero) gerarLancamento(t)
+
+    for (const membros of gruposComNumero.values()) {
+      const primeiro = membros[0]!
+      const nomeFornecedor = primeiro.fantasia_fornecedor ?? primeiro.razao_fornecedor ?? null
+      const nNota = primeiro.n_nota_fiscal!
+
+      // valor_total_nf_origem é o valor CHEIO da nota, repetido em toda
+      // parcela — usa ele quando existir (uma vez, não somado — já é o
+      // total). Some as parcelas (v_titulo) só cobre linha sem esse campo.
+      const valorTotalOrigem = membros.map((m) => m.valor_total_nf_origem).find((v): v is number => v != null)
+      const valorGrupo = valorTotalOrigem ?? membros.reduce((s, m) => s + valorTitulo(m), 0)
+
+      // Dedup: mesmo número de NF + fornecedor por similaridade + valor
+      // ±2% + mesma competência → já foi gerado via XML (com detalhe por
+      // item) — não duplica. Sem a competência bater, número igual em mês
+      // diferente não é a mesma compra.
+      let matchConfirmado: { chave: string; score: number; valorNfe: number } | null = null
+      const candidatas = notasPorNumero.get(nNota) ?? []
+      for (const nota of candidatas) {
+        if (competenciaPorChave.get(nota.chave) !== inicio) continue
+        const diffValor = Math.abs(nota.valor_total - valorGrupo) / Math.max(valorGrupo, 0.01)
+        if (diffValor > 0.02) continue
+        const score = similaridadeNome(nomeFornecedor ?? "", nota.emitente_nome ?? "")
+        if (!matchConfirmado || score > matchConfirmado.score) {
+          matchConfirmado = { chave: nota.chave, score, valorNfe: nota.valor_total }
+        }
+      }
+
+      if (matchConfirmado) {
+        for (const t of membros) {
+          sugestoesRows.push({
+            unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
+            score: Math.round(matchConfirmado.score * 100) / 100,
+            valor_titulo: valorTitulo(t), valor_nfe: matchConfirmado.valorNfe,
+            dias_diferenca: 0, status: "confirmada",
+          })
+        }
+        continue // nota inteira já coberta pelo XML — nenhuma parcela gera lançamento
+      }
+
+      // Não casou: todas as parcelas geram lançamento. Tinha número de nota
+      // mas não achou XML correspondente — a nota existe, só falta
+      // importar o XML. Sinaliza pro Ike.
+      for (const t of membros) {
+        gerarLancamento(t)
         sugestoesRows.push({
-          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: `SEM_XML:${t.n_nota_fiscal}`,
-          score: 0, valor_titulo: valorTitulo, valor_nfe: 0, dias_diferenca: 0, status: "sem_xml",
+          unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: `SEM_XML:${nNota}`,
+          score: 0, valor_titulo: valorTitulo(t), valor_nfe: 0, dias_diferenca: 0, status: "sem_xml",
         })
       }
     }
