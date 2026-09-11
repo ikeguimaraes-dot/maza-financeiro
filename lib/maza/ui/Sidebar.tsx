@@ -3,68 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import {
-  // shell
-  ChevronDown, ChevronRight, Check, LogOut, Circle,
-  // dashboard
-  LayoutDashboard,
-  // operacao
-  TrendingUp, MapPin, Activity, UserCheck, ClipboardList, BookOpen,
-  // compras
-  ShoppingCart, Package, Truck, Building2, FileText, PackageCheck, PieChart, Star, Carrot,
-  // financeiro
-  Wallet, Gauge, ArrowLeftRight, Sheet, CreditCard, Banknote, CheckSquare, RefreshCw, PiggyBank,
-  Zap, Settings, Wrench, Landmark, BadgeDollarSign,
-  // pessoas
-  Users, User, Briefcase, CalendarDays, Clock, Plane, CalendarX2, Timer,
-  ShieldAlert, Receipt, DollarSign, Bus, GraduationCap, ClipboardCheck,
-  FolderOpen, Upload, FileBarChart2, MessageCircle, Repeat2, LayoutGrid, ListChecks, CalendarClock, Network, UserPlus, BarChart2,
-  // comercial
-  Handshake, MessageSquare, CalendarCheck, Bot, Megaphone, Filter,
-  // marca
-  Bookmark, Info, Globe, Award,
-  // inteligencia
-  Brain, Target, LineChart, Layers, Bug, Map, BarChart3, Workflow,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, LogOut } from "lucide-react";
 import { useAuth, useUnit } from "@maza/auth/context";
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-type NavItem = {
-  href?: string;
-  label: string;
-  icon: LucideIcon;
-  roles?: string[];
-  defaultOpen?: boolean;
-  children?: NavItem[];
-};
-
-type NavGroup = {
-  id: string;
-  title: string | null;
-  icon: LucideIcon | null;
-  items: NavItem[];
-  defaultOpen: boolean;
-};
-
-// Schema that /api/nav returns
-type RemoteNavItem = {
-  href?: string;
-  label: string;
-  icon: string;
-  roles?: string[];
-  defaultOpen?: boolean;
-  children?: RemoteNavItem[];
-};
-
-type RemoteNavGroup = {
-  id: string;
-  label: string | null;
-  icon: string | null;
-  defaultOpen: boolean;
-  items: RemoteNavItem[];
-};
+import { flattenHrefs, type NavGroup, type NavItem } from "./nav/types";
 
 function getZone(pathname: string): string {
   if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
@@ -74,259 +15,39 @@ function getZone(pathname: string): string {
   return match?.[1] ?? "shell";
 }
 
-function getNavigationHref(href: string | undefined, pathname: string): string {
+function getNavigationHref(href: string | undefined, pathname: string, shellUrl: string): string {
   if (!href) return "#";
   if (getZone(href) === getZone(pathname)) return href;
-  const configuredShell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "");
-  const shell = process.env.NODE_ENV === "production"
-    ? (!configuredShell || /localhost|127\.0\.0\.1/.test(configuredShell)
-      ? "https://maza-maza.vercel.app"
-      : configuredShell)
-    : configuredShell;
-  return shell ? `${shell}${href}` : href;
+  return shellUrl ? `${shellUrl}${href}` : href;
 }
 
 function NavigationLink({
   href,
   pathname,
+  shellUrl,
   children,
   style,
 }: {
   href?: string;
   pathname: string;
+  shellUrl: string;
   children: ReactNode;
   style?: CSSProperties;
 }) {
-  const destination = getNavigationHref(href, pathname);
+  const destination = getNavigationHref(href, pathname, shellUrl);
   return <a href={destination} style={style}>{children}</a>;
 }
 
-// ── Icon resolver ───────────────────────────────────────────────────────────
-
-const ICON_MAP: Record<string, LucideIcon> = {
-  Circle, LayoutDashboard,
-  TrendingUp, MapPin, Activity, UserCheck, ClipboardList, BookOpen,
-  ShoppingCart, Package, Truck, Building2, FileText, PackageCheck, PieChart, Star, Carrot,
-  Wallet, Gauge, ArrowLeftRight, Sheet, CreditCard, Banknote, CheckSquare, RefreshCw, PiggyBank,
-  Zap, Settings, Wrench, Landmark, BadgeDollarSign,
-  Users, User, Briefcase, CalendarDays, Clock, Plane, CalendarX2, Timer,
-  ShieldAlert, Receipt, DollarSign, Bus, GraduationCap, ClipboardCheck,
-  FolderOpen, Upload, FileBarChart2, MessageCircle, Repeat2, LayoutGrid, ListChecks, CalendarClock, Network, UserPlus, BarChart2,
-  Handshake, MessageSquare, CalendarCheck, Bot, Megaphone, Filter,
-  Bookmark, Info, Globe, Award,
-  Brain, Target, LineChart, Layers, Bug, Map, BarChart3, Workflow,
-};
-
-function resolveIcon(name: string | null): LucideIcon {
-  if (!name) return Circle;
-  return ICON_MAP[name] ?? Circle;
-}
-
-// ── Remote → local conversion ───────────────────────────────────────────────
-
-function convertItem(item: RemoteNavItem): NavItem {
-  return {
-    href: item.href,
-    label: item.label,
-    icon: resolveIcon(item.icon),
-    roles: item.roles,
-    defaultOpen: item.defaultOpen,
-    children: item.children?.map(convertItem),
-  };
-}
-
-function convertRemoteGroups(remote: RemoteNavGroup[]): NavGroup[] {
-  return remote.map((g) => ({
-    id: g.id,
-    title: g.label,
-    icon: g.icon ? resolveIcon(g.icon) : null,
-    defaultOpen: g.defaultOpen,
-    items: g.items.map(convertItem),
-  }));
-}
-
-// ── Flatten all leaf hrefs (including children) ─────────────────────────────
-
-function flattenHrefs(groups: NavGroup[]): { href: string; groupId: string }[] {
-  return groups.flatMap((g) =>
-    g.items.flatMap((it) => {
-      if (it.children) {
-        return it.children.filter((c) => c.href).map((c) => ({ href: c.href!, groupId: g.id }));
-      }
-      return it.href ? [{ href: it.href, groupId: g.id }] : [];
-    }),
-  );
-}
-
-// ── Hardcoded fallback (used if shell is unreachable) ───────────────────────
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    id: "home",
-    title: null,
-    icon: null,
-    defaultOpen: true,
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    ],
-  },
-  {
-    id: "operacao",
-    title: "Operação",
-    icon: TrendingUp,
-    defaultOpen: false,
-    items: [
-      { href: "/operacao/mapa",          label: "Mapa da Casa",  icon: MapPin },
-      { href: "/operacao/performance",   label: "Performance",   icon: Activity },
-      { href: "/operacao/vendedores",    label: "Vendedores",    icon: UserCheck },
-      { href: "/operacao/auditorias",    label: "Auditorias",    icon: ClipboardList },
-    ],
-  },
-  {
-    id: "compras",
-    title: "Compras",
-    icon: ShoppingCart,
-    defaultOpen: false,
-    items: [
-      { href: "/cardapio",               label: "Cardápio",          icon: BookOpen },
-      { href: "/compras/ingredientes",   label: "Ingredientes",      icon: Carrot },
-      { href: "/compras",                label: "Pedidos",           icon: ShoppingCart },
-      { href: "/compras/estoque",        label: "Estoque",           icon: Package },
-      { href: "/compras/logistica",      label: "Logística",         icon: Truck },
-      { href: "/compras/fornecedores",   label: "Fornecedores",      icon: Building2 },
-      { href: "/compras/cotacoes",       label: "Cotações",          icon: FileText },
-      { href: "/compras/recebimento",    label: "Recebimento",       icon: PackageCheck },
-      { href: "/compras/analise",        label: "Análise CMV",       icon: PieChart },
-      { href: "/compras/feedback",       label: "Feedback Produto",  icon: Star },
-    ],
-  },
-  {
-    id: "financeiro",
-    title: "Financeiro",
-    icon: Wallet,
-    defaultOpen: false,
-    items: [
-      { href: "/financeiro",              label: "Cockpit",              icon: Gauge },
-      { href: "/financeiro/fluxo",        label: "Fluxo de Caixa",      icon: ArrowLeftRight },
-      {
-        label: "DRE", icon: Sheet, defaultOpen: true,
-        children: [
-          { href: "/financeiro/dre",                      label: "DRE Gerencial",     icon: LayoutGrid },
-          { href: "/financeiro/dre/gerencial",           label: "Gerencial",         icon: LayoutDashboard },
-          { href: "/financeiro/dre/receita",              label: "Receita",           icon: TrendingUp },
-          { href: "/financeiro/dre/folha",                label: "Folha",             icon: Users },
-          { href: "/financeiro/dre/cmv",                  label: "NF-e Entrada",       icon: ShoppingCart },
-          { href: "/financeiro/dre/nfe-saida",            label: "NF-e Saída",         icon: Package },
-          { href: "/financeiro/dre/ocupacao",             label: "Ocupação",          icon: Building2 },
-          { href: "/financeiro/dre/utilidades",           label: "Utilidades",        icon: Zap },
-          { href: "/financeiro/dre/operacao",             label: "Operação",          icon: Settings },
-          { href: "/financeiro/dre/manutencao",           label: "Manutenção",        icon: Wrench },
-          { href: "/financeiro/dre/administrativo",       label: "Administrativo",    icon: Briefcase },
-          { href: "/financeiro/dre/marketing",            label: "Marketing",         icon: Megaphone },
-          { href: "/financeiro/dre/taxas-cartao",         label: "Taxas de Cartão",   icon: CreditCard },
-          { href: "/financeiro/dre/impostos",             label: "Impostos",          icon: Landmark },
-          { href: "/financeiro/dre/despesas-financeiras", label: "Desp. Financeiras", icon: BadgeDollarSign },
-          { href: "/financeiro/orcamento",                label: "Budget",            icon: PiggyBank },
-          { href: "/financeiro/dre/classificacao",        label: "Classificação",     icon: ListChecks },
-          { href: "/financeiro/dre/receita/analise-vendas", label: "Análise de Vendas", icon: BarChart3 },
-        ],
-      },
-      { href: "/financeiro/dre/cmv",      label: "Relatório de Produtos", icon: Package },
-      { href: "/financeiro/contratos",    label: "Contratos",            icon: FileText },
-      { href: "/financeiro/importacao-maza", label: "Importar Pacotes",  icon: Upload },
-      { href: "/financeiro/pagar",        label: "Contas a Pagar",       icon: CreditCard },
-      { href: "/financeiro/receber",      label: "Contas a Receber",     icon: Banknote },
-      { href: "/financeiro/aprovacoes",   label: "Aprovações",            icon: CheckSquare },
-      { href: "/financeiro/conciliacao",  label: "Conciliação",           icon: RefreshCw },
-      { href: "/financeiro/orcamento",    label: "Orçamento",             icon: PiggyBank },
-    ],
-  },
-  {
-    id: "pessoas",
-    title: "Pessoas",
-    icon: Users,
-    defaultOpen: true,
-    items: [
-      { href: "/pessoas/headcount",       label: "Headcount",         icon: BarChart3 },
-      { href: "/pessoas/colaboradores",   label: "Colaboradores",     icon: User },
-      { href: "/recrutamento/vagas",      label: "Recrutamento",      icon: Briefcase },
-      { href: "/pessoas/escala",          label: "Escala",            icon: CalendarDays },
-      { href: "/pessoas/ponto",           label: "Ponto",             icon: Clock },
-      { href: "/pessoas/ferias",          label: "Férias",            icon: Plane },
-      { href: "/pessoas/faltas",          label: "Faltas",            icon: CalendarX2 },
-      { href: "/pessoas/horas-extras",    label: "Horas Extras",      icon: Timer },
-      { href: "/pessoas/disciplina",      label: "Disciplina & Score", icon: ShieldAlert },
-      { href: "/pessoas/holerites",       label: "Holerites",         icon: Receipt },
-      { href: "/pessoas/gorjetas",        label: "Gorjetas",          icon: DollarSign },
-      { href: "/pessoas/vale-transporte", label: "Vale Transporte",   icon: Bus },
-      { href: "/pessoas/treinamentos",    label: "Treinamentos",      icon: GraduationCap },
-      { href: "/pessoas/avaliacoes",        label: "Avaliações",        icon: ClipboardCheck },
-      { href: "/pessoas/avaliacoes/ciclos", label: "Ciclos 360°",     icon: Repeat2 },
-      { href: "/pessoas/avaliacoes/9box",   label: "Matriz 9Box",     icon: LayoutGrid },
-      { href: "/pessoas/pdi",               label: "PDI",             icon: ListChecks },
-      { href: "/pessoas/analytics",         label: "Analytics",       icon: BarChart2 },
-      { href: "/pessoas/reunioes",          label: "Reuniões 1:1",    icon: CalendarClock },
-      { href: "/pessoas/organograma",       label: "Organograma",     icon: Network },
-      { href: "/pessoas/onboarding",        label: "Onboarding",      icon: UserPlus },
-      { href: "/pessoas/feedback",          label: "Feedback",        icon: MessageCircle },
-      { href: "/pessoas/documentos",      label: "Documentos",        icon: FolderOpen },
-      { href: "/pessoas/importacao",      label: "Importar Dados",    icon: Upload },
-      { href: "/pessoas/relatorio-ponto", label: "Relatório de Ponto", icon: FileBarChart2 },
-    ],
-  },
-  {
-    id: "comercial",
-    title: "Comercial",
-    icon: Handshake,
-    defaultOpen: false,
-    items: [
-      { href: "/cliente",               label: "CRM Clientes", icon: MessageSquare },
-      { href: "/comercial/reservas",    label: "Reservas",     icon: CalendarCheck },
-      { href: "/eventos",               label: "Eventos / OS", icon: CalendarDays },
-      { href: "/comercial/serena",      label: "Serena",       icon: Bot },
-      { href: "/campanhas",             label: "Campanhas",    icon: Megaphone },
-      { href: "/comercial/funil",       label: "Funil",        icon: Filter },
-    ],
-  },
-  {
-    id: "marca",
-    title: "Marca",
-    icon: Bookmark,
-    defaultOpen: false,
-    items: [
-      { href: "/marcas",              label: "Diretório",    icon: Building2 },
-      { href: "/marca/brandbook",     label: "BrandBook",    icon: BookOpen },
-      { href: "/marca/quem-somos",    label: "Quem Somos",   icon: Info },
-      { href: "/marca/canais",        label: "Site & Canais", icon: Globe },
-      { href: "/marca/reputacao",     label: "Reputação",    icon: Award },
-    ],
-  },
-  {
-    id: "inteligencia",
-    title: "Inteligência",
-    icon: Brain,
-    defaultOpen: false,
-    items: [
-      { href: "/inteligencia/metas",    label: "Metas",           icon: Target },
-      { href: "/inteligencia/wbr",      label: "WBR",             icon: LineChart },
-      { href: "/inteligencia/cross",    label: "Cross-módulo",    icon: Layers },
-      { href: "/inteligencia/adocao",   label: "Adoção",          icon: Activity },
-      { href: "/inteligencia/feedback", label: "Bugs & Feedback", icon: Bug },
-      { href: "/inteligencia/roadmap",  label: "Roadmap",         icon: Map },
-      { href: "/orquestrador",          label: "Orquestrador",    icon: Workflow },
-    ],
-  },
-];
-
-const STORAGE_KEY = "kph_sidebar_groups";
+const STORAGE_KEY = "maza_sidebar_groups";
 
 // ── Main Sidebar component ──────────────────────────────────────────────────
 
-export function Sidebar(_props?: {
-  tierLevel?: number;
-  approvalsCount?: number;
-  punchAdjCount?: number;
+export function Sidebar(props: {
+  navGroups: NavGroup[];
+  shellUrl: string;
+  navOffline: boolean;
 }) {
+  const { navGroups, shellUrl, navOffline } = props;
   const pathname = usePathname();
   const { user } = useAuth();
   const { hasRegisteredUnits } = useAuth();
@@ -334,7 +55,6 @@ export function Sidebar(_props?: {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [remoteGroups, setRemoteGroups] = useState<NavGroup[] | null>(null);
 
   useEffect(() => {
     const syncSessionCookie = () => {
@@ -375,32 +95,11 @@ export function Sidebar(_props?: {
     setMobileOpen(false);
   }, [pathname]);
 
-  // ── (b) Fetch nav from shell; fall back to NAV_GROUPS on error
-  useEffect(() => {
-    const configuredShell = process.env.NEXT_PUBLIC_SHELL_URL?.replace(/\/$/, "") ?? "";
-    const shellUrl = process.env.NODE_ENV === "production"
-      ? (!configuredShell || /localhost|127\.0\.0\.1/.test(configuredShell)
-        ? "https://maza-maza.vercel.app"
-        : configuredShell)
-      : configuredShell;
-    fetch(`${shellUrl}/api/nav`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { groups?: RemoteNavGroup[] } | null) => {
-        if (data?.groups?.length) {
-          setRemoteGroups(convertRemoteGroups(data.groups));
-        }
-      })
-      .catch((error) => {
-        console.warn("[sidebar] Não foi possível carregar o menu do shell; usando fallback sincronizado.", error);
-      });
-  }, []);
-
   const userRoles = useMemo(
     () => new Set<string>((user?.roles ?? []).map((entry) => entry.role)),
     [user?.roles],
   );
   const effectiveGroups = useMemo(() => {
-    const source = remoteGroups ?? NAV_GROUPS;
     const hasFullAccess = userRoles.has("founder");
     const filterItem = (item: NavItem): NavItem | null => {
       if (!hasFullAccess && item.roles?.length && !item.roles.some((role) => userRoles.has(role))) {
@@ -412,13 +111,13 @@ export function Sidebar(_props?: {
       if (item.children && !children?.length) return null;
       return { ...item, children };
     };
-    return source
+    return navGroups
       .map((group) => ({
         ...group,
         items: group.items.map(filterItem).filter((item): item is NavItem => item !== null),
       }))
       .filter((group) => group.items.length > 0);
-  }, [remoteGroups, userRoles]);
+  }, [navGroups, userRoles]);
 
   const displayName = user?.displayName?.trim() || user?.email?.split("@")[0] || "—";
   const initials = displayName
@@ -454,6 +153,19 @@ export function Sidebar(_props?: {
             Operations
           </div>
         </div>
+
+        {navOffline && (
+          <div
+            title="Não foi possível carregar o menu do shell — mostrando apenas as rotas desta zona."
+            style={{
+              margin: "10px 16px 0", padding: "6px 10px", borderRadius: 8,
+              background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)",
+              color: "#F59E0B", fontSize: 10, fontWeight: 600, textAlign: "center",
+            }}
+          >
+            Menu em modo offline
+          </div>
+        )}
 
         {/* (a) Unit switcher — unchanged */}
         <div style={{ padding: "12px 16px" }}>
@@ -516,7 +228,7 @@ export function Sidebar(_props?: {
         </div>
 
         {/* (b) Navigation — driven by effectiveGroups */}
-        <SidebarNav pathname={pathname} groups={effectiveGroups} />
+        <SidebarNav pathname={pathname} groups={effectiveGroups} shellUrl={shellUrl} />
 
         {/* (c) User footer — unchanged */}
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sidebar-border)", display: "flex", alignItems: "center", gap: 10 }}>
@@ -564,7 +276,7 @@ export function Sidebar(_props?: {
 
 // ── SidebarNav ──────────────────────────────────────────────────────────────
 
-function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
+function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: NavGroup[]; shellUrl: string }) {
   // Flatten all leaf hrefs for active-detection
   const allHrefs = useMemo(() => flattenHrefs(groups), [groups]);
 
@@ -683,6 +395,24 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
   return (
     <nav className="sidebar-nav-scroll" style={{ flex: 1, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
       {groups.map((g) => {
+        if (!g.habilitado) {
+          return (
+            <div
+              key={g.id}
+              aria-disabled="true"
+              title="Módulo não habilitado"
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 8px", fontSize: 10, fontWeight: 700,
+                letterSpacing: 1.2, textTransform: "uppercase",
+                color: "var(--text-3)", opacity: 0.45, cursor: "not-allowed",
+              }}
+            >
+              {g.icon && <g.icon size={11} />}
+              <span>{g.title}</span>
+            </div>
+          );
+        }
         const isOpen = openMap[g.id] ?? g.defaultOpen;
         return (
           <details key={g.id} className="sidebar-disclosure" open={isOpen}
@@ -769,6 +499,7 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                           key={child.href ?? child.label}
                           href={child.href}
                           pathname={pathname}
+                          shellUrl={shellUrl}
                           style={{
                             position: "relative",
                             display: "flex", alignItems: "center", gap: 10,
@@ -808,6 +539,7 @@ function SidebarNav({ pathname, groups }: { pathname: string; groups: NavGroup[]
                   key={it.href ?? it.label + idx}
                   href={it.href}
                   pathname={pathname}
+                  shellUrl={shellUrl}
                   style={{
                     position: "relative",
                     display: "flex", alignItems: "center", gap: 12,

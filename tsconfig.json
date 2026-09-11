@@ -45,7 +45,9 @@
       "@maza/auth/context": ["./lib/maza/auth/context.tsx"],
       "@maza/auth/server": ["./lib/maza/auth/server.ts"],
       "@maza/auth/unit": ["./lib/maza/auth/unit.ts"],
-      "@maza/ui/sidebar": ["./lib/maza/ui/Sidebar.tsx"]
+      "@maza/ui/sidebar": ["./lib/maza/ui/Sidebar.tsx"],
+      "@maza/ui/nav/fetchNavConfig": ["./lib/maza/ui/nav/fetchNavConfig.ts"],
+      "@maza/ui/nav/types": ["./lib/maza/ui/nav/types.ts"]
     }
   },
   "include": [

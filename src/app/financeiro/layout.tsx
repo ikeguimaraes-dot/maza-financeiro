@@ -3,6 +3,7 @@ import { requireUser } from "@maza/auth/server";
 import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server";
 import type { Unit } from "@maza/db/types/database";
 import { Sidebar } from "@maza/ui/sidebar";
+import { fetchNavConfig } from "@maza/ui/nav/fetchNavConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +11,16 @@ export default async function FinanceiroLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const user = await requireUser();
-  const [units, hasRegisteredUnits] = await Promise.all([loadAccessibleUnits(), hasAnyActiveUnit()]);
+  const [units, hasRegisteredUnits, navConfig] = await Promise.all([
+    loadAccessibleUnits(),
+    hasAnyActiveUnit(),
+    fetchNavConfig(),
+  ]);
 
   return (
     <AuthProvider user={user} units={units} hasRegisteredUnits={hasRegisteredUnits}>
       <div style={{ display: "flex", height: "100vh" }}>
-        <Sidebar />
+        <Sidebar navGroups={navConfig.groups} shellUrl={navConfig.shellUrl} navOffline={navConfig.offline} />
         <main className="shell-main maza-page-main" style={{ flex: 1, overflowY: "auto", padding: "32px 28px" }}>
           {children}
         </main>
