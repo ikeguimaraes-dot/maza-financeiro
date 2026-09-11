@@ -41,11 +41,24 @@ function competenciaRange(competencia: string): { mes: number; ano: number; inic
   return { mes, ano, inicio, fim }
 }
 
+// Apaga por (origem, origem_id) — NUNCA por competência. A linha segue o
+// dado, não o mês: se a competência de uma origem_id muda entre execuções
+// (ex. título recalculado pra outro mês), isso garante que a linha antiga
+// (em QUALQUER competência) é removida antes da nova ser inserida — sem
+// isso, a unique constraint (origem, origem_id, conta_codigo), que não
+// tem competência, rejeita o insert. Lotes pequenos (100, não 500) porque
+// PostgREST manda o IN como query string — origem_id de nfe_entrada é
+// "chave_nfe:item_codigo" (~55 chars); 500 desses estoura o limite de
+// tamanho de URL e volta "Bad Request", diferente do origem_id curto
+// (uuid) de título, que aguentaria bem mais.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function deleteEscopo(db: any, origem: string, unitId: string, competencia: string): Promise<void> {
-  const { error } = await db.from("lancamentos").delete()
-    .eq("origem", origem).eq("unit_id", unitId).eq("competencia", competencia)
-  if (error) throw new Error(error.message)
+async function deletarPorOrigemId(db: any, origem: string, origemIds: Array<string | number>): Promise<void> {
+  const CHUNK = 100
+  for (let i = 0; i < origemIds.length; i += CHUNK) {
+    const chunk = origemIds.slice(i, i + CHUNK).map(String)
+    const { error } = await db.from("lancamentos").delete().eq("origem", origem).in("origem_id", chunk)
+    if (error) throw new Error(error.message)
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -134,7 +147,7 @@ export async function gerarLancamentosNfeEntrada(
       }
     })
 
-    await deleteEscopo(db, "nfe_entrada", unitId, inicio)
+    await deletarPorOrigemId(db, "nfe_entrada", rows.map((r) => r.origem_id))
     await inserirLancamentos(db, rows)
 
     return { ok: true, inseridos: rows.length }
@@ -224,7 +237,7 @@ export async function gerarLancamentosReceita(
       }
     }
 
-    await deleteEscopo(db, "receita", unitId, inicio)
+    await deletarPorOrigemId(db, "receita", rows.map((r) => r.origem_id))
     await inserirLancamentos(db, rows)
 
     return { ok: true, inseridos: rows.length }
@@ -335,7 +348,6 @@ export async function gerarLancamentosTitulos(
     const titulos = todosOsTitulos.filter((t) => resolverCompetencia(t) === inicio)
 
     if (titulos.length === 0) {
-      await deleteEscopo(db, "titulo", unitId, inicio)
       return { ok: true, inseridos: 0 }
     }
 
@@ -566,7 +578,7 @@ export async function gerarLancamentosTitulos(
       }
     }
 
-    await deleteEscopo(db, "titulo", unitId, inicio)
+    await deletarPorOrigemId(db, "titulo", titulos.map((t) => t.id))
     await inserirLancamentos(db, lancamentosRows)
 
     // Idempotência: sem isso, sugestão de um match que a lógica não faz
@@ -690,7 +702,7 @@ export async function gerarLancamentosFolha(
       })
     }
 
-    await deleteEscopo(db, "folha", unitId, inicio)
+    await deletarPorOrigemId(db, "folha", rows.map((r) => r.origem_id))
     await inserirLancamentos(db, rows)
 
     return { ok: true, inseridos: rows.length }
