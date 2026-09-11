@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Check, LogOut } from "lucide-react";
 import { useAuth, useUnit } from "@maza/auth/context";
-import { flattenHrefs, type NavGroup, type NavItem } from "./nav/types";
+import { convertRemoteGroups, flattenHrefs, type NavGroup, type NavItem, type RemoteNavGroup } from "./nav/types";
 
 function getZone(pathname: string): string {
   if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
@@ -43,11 +43,16 @@ const STORAGE_KEY = "maza_sidebar_groups";
 // ── Main Sidebar component ──────────────────────────────────────────────────
 
 export function Sidebar(props: {
-  navGroups: NavGroup[];
+  navGroups: RemoteNavGroup[];
   shellUrl: string;
   navOffline: boolean;
 }) {
-  const { navGroups, shellUrl, navOffline } = props;
+  const { navGroups: rawNavGroups, shellUrl, navOffline } = props;
+  // Resolução de ícone (string → componente Lucide) tem que acontecer aqui,
+  // no client — o server só pode entregar dado serializável (string), nunca
+  // o componente em si, senão o Next quebra a fronteira Server→Client
+  // Component ("Functions cannot be passed directly to Client Components").
+  const navGroups = useMemo(() => convertRemoteGroups(rawNavGroups), [rawNavGroups]);
   const pathname = usePathname();
   const { user } = useAuth();
   const { hasRegisteredUnits } = useAuth();
