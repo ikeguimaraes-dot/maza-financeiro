@@ -46,11 +46,11 @@ export type ConferenciaInfo = {
 
 export type AlertaComStatus = Alerta & { conferencia: ConferenciaInfo | null }
 
-function round2(v: number): number {
+export function round2(v: number): number {
   return Math.round(v * 100) / 100
 }
 
-function competenciaFim(competencia: string): string {
+export function competenciaFim(competencia: string): string {
   const ano = Number(competencia.slice(0, 4))
   const mes = Number(competencia.slice(5, 7))
   return mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`
@@ -63,7 +63,7 @@ function calcularAssinatura(ocorrencias: AlertaOcorrencia[]): string {
 
 type ParametrosAlerta = Omit<Alerta, "assinatura" | "valorEnvolvido">
 
-function montarAlerta(params: ParametrosAlerta): Alerta | null {
+export function montarAlerta(params: ParametrosAlerta): Alerta | null {
   if (params.ocorrencias.length === 0) return null
   const valorEnvolvido = round2(params.ocorrencias.reduce((s, o) => s + o.valor, 0))
   return { ...params, valorEnvolvido, assinatura: calcularAssinatura(params.ocorrencias) }

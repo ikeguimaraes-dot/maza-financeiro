@@ -10,6 +10,7 @@ import {
   type ConferenciaRow,
   type UnidadeTag,
 } from "@/lib/financeiro/conferencia/calcularAlertas"
+import { calcularAlertasGrupo2 } from "@/lib/financeiro/conferencia/calcularAlertasGrupo2"
 
 export type { AlertaComStatus } from "@/lib/financeiro/conferencia/calcularAlertas"
 
@@ -24,6 +25,7 @@ export type ConferenciaResultado = {
 // que já foi conferido nesta unidade+competência.
 export async function getConferencia(
   unitId: string,
+  unitNome: string,
   unitTag: UnidadeTag,
   competencia: string
 ): Promise<ConferenciaResultado> {
@@ -31,7 +33,11 @@ export async function getConferencia(
   const db = createServiceClient()
   if (!db) return null
 
-  const alertas = await calcularAlertasGrupo1(db, unitId, unitTag, competencia)
+  const [grupo1, grupo2] = await Promise.all([
+    calcularAlertasGrupo1(db, unitId, unitTag, competencia),
+    calcularAlertasGrupo2(db, unitId, unitNome, competencia),
+  ])
+  const alertas = [...grupo1, ...grupo2]
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any

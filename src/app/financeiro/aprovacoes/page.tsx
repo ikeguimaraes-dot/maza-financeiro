@@ -45,7 +45,7 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
     border: "1px solid var(--border)",
   })
 
-  const dados = await getConferencia(unidade.id, unidade.tag, competencia)
+  const dados = await getConferencia(unidade.id, unidade.nome, unidade.tag, competencia)
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -65,7 +65,7 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
           valor do alerta mudar depois, ele volta a aparecer.
         </p>
         <p style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 720, margin: "0 0 16px" }}>
-          Primeira entrega: GRUPO 1 (Identidade). Grupos 2 (Cobertura), 3 (Valor fora de faixa) e 4
+          Grupos ativos: 1 (Identidade) e 2 (Cobertura). Grupos 3 (Valor fora de faixa) e 4
           (Anomalia) chegam nas próximas entregas.
         </p>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
