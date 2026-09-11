@@ -5,10 +5,15 @@ import { APagarPorFaixa } from "./APagarPorFaixa"
 import { AReceberPorForma } from "./AReceberPorForma"
 import { ConfiancaIndex } from "./ConfiancaIndex"
 
-export function FluxoPainel({ dados }: { dados: ResultadoFluxo }) {
+type Props = {
+  dados: ResultadoFluxo
+  temContaCadastrada: boolean
+}
+
+export function FluxoPainel({ dados, temContaCadastrada }: Props) {
   return (
     <div>
-      <CardsResumo resumo={dados.resumo} confianca={dados.confianca} />
+      <CardsResumo resumo={dados.resumo} confianca={dados.confianca} temContaCadastrada={temContaCadastrada} />
       <FluxoCalendario dias={dados.dias} hoje={dados.hoje} diaCruzaZero={dados.resumo.diaCruzaZero} />
       <APagarPorFaixa aPagarPorFaixa={dados.aPagarPorFaixa} aPagarSemData={dados.aPagarSemData} />
       <AReceberPorForma

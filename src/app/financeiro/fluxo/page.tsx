@@ -3,6 +3,7 @@ import Link from "next/link"
 import { requireUser } from "@maza/auth/server"
 import { getFluxoCaixa, getContasBancarias } from "./actions"
 import { FluxoPainel } from "@/components/financeiro/fluxo/FluxoPainel"
+import { ContasBancariasPainel } from "@/components/financeiro/fluxo/ContasBancariasPainel"
 
 export const dynamic = "force-dynamic"
 
@@ -101,12 +102,9 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
             ))}
           </div>
         </div>
-        {contas.length === 0 && (
-          <p style={{ fontSize: 11, color: "var(--text-3)", margin: "10px 0 0" }}>
-            Nenhuma conta bancária cadastrada — saldo inicial considerado R$ 0,00.
-          </p>
-        )}
       </header>
+
+      <ContasBancariasPainel unitId={unitId} contas={contas} />
 
       {!dados ? (
         <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
@@ -114,7 +112,7 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
           Erro ao carregar fluxo de caixa — sem conexão com o banco.
         </div>
       ) : (
-        <FluxoPainel dados={dados} />
+        <FluxoPainel dados={dados} temContaCadastrada={contas.length > 0} />
       )}
     </div>
   )

@@ -5,9 +5,10 @@ import type { ResultadoFluxo } from "@/lib/financeiro/fluxo/calcularFluxo"
 type Props = {
   resumo: ResultadoFluxo["resumo"]
   confianca: ResultadoFluxo["confianca"]
+  temContaCadastrada: boolean
 }
 
-export function CardsResumo({ resumo, confianca }: Props) {
+export function CardsResumo({ resumo, confianca, temContaCadastrada }: Props) {
   const diaCruzaZeroFmt = resumo.diaCruzaZero
     ? new Date(`${resumo.diaCruzaZero}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
     : null
@@ -23,11 +24,19 @@ export function CardsResumo({ resumo, confianca }: Props) {
         marginBottom: 28,
       }}
     >
-      <KpiCard label="Saldo hoje" value={formatBRLCompact(resumo.saldoHoje)} sub="Consolidado das contas" />
+      <KpiCard
+        label="Saldo hoje"
+        value={
+          temContaCadastrada
+            ? formatBRLCompact(resumo.saldoHoje)
+            : <span style={{ fontSize: 15, color: "#F59E0B" }}>Saldo não cadastrado</span>
+        }
+        sub={temContaCadastrada ? "Consolidado das contas" : "Cadastre uma conta bancária abaixo"}
+      />
       <KpiCard
         label="A pagar vencido"
         value={formatBRLCompact(resumo.aPagarVencido)}
-        sub="Não pago ou sem confirmação"
+        sub="Não pago, com d_vencimento < hoje"
         accent={resumo.aPagarVencido > 0 ? "#EF4444" : undefined}
       />
       <KpiCard label="A pagar 7 dias" value={formatBRLCompact(resumo.aPagar7Dias)} sub="Vencimento até 7 dias" />
@@ -35,18 +44,24 @@ export function CardsResumo({ resumo, confianca }: Props) {
       <KpiCard
         label="Projeção 30 dias"
         value={
-          <span style={{ color: resumo.cruzaZero ? "#EF4444" : "var(--text)" }}>
-            {formatBRLCompact(resumo.projecao30Dias)}
-          </span>
+          !temContaCadastrada
+            ? <span style={{ fontSize: 15, color: "#F59E0B" }}>Saldo não cadastrado</span>
+            : (
+              <span style={{ color: resumo.cruzaZero ? "#EF4444" : "var(--text)" }}>
+                {formatBRLCompact(resumo.projecao30Dias)}
+              </span>
+            )
         }
         sub={
-          resumo.cruzaZero
-            ? `Falta caixa em ${diaCruzaZeroFmt}`
-            : indefinidoAlto
-              ? `${formatBRLCompact(confianca.valorIndefinido)} sem confirmação de pagamento — projeção pode estar superestimando saída.`
-              : "Saldo projetado"
+          !temContaCadastrada
+            ? "Cadastre uma conta bancária abaixo"
+            : resumo.cruzaZero
+              ? `Falta caixa em ${diaCruzaZeroFmt}`
+              : indefinidoAlto
+                ? `${formatBRLCompact(confianca.valorIndefinido)} sem confirmação de pagamento — projeção pode estar superestimando saída.`
+                : "Saldo projetado"
         }
-        accent={resumo.cruzaZero || indefinidoAlto ? "#EF4444" : undefined}
+        accent={temContaCadastrada && (resumo.cruzaZero || indefinidoAlto) ? "#EF4444" : undefined}
       />
     </section>
   )
