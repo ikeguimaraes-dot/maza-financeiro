@@ -20,3 +20,18 @@ export async function getFluxoCaixa(
   if (!db) return null
   return calcularFluxo(db, unitId, contaId, dataInicio, dataFim)
 }
+
+export type ContaBancaria = { id: string; banco: string; apelido: string | null }
+
+export async function getContasBancarias(unitId: string): Promise<ContaBancaria[]> {
+  await requireUser()
+  const db = createServiceClient()
+  if (!db) return []
+  const { data } = await db
+    .from("contas_bancarias")
+    .select("id,banco,apelido")
+    .eq("unit_id", unitId)
+    .eq("ativo", true)
+    .order("banco")
+  return data ?? []
+}
