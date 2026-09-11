@@ -243,7 +243,7 @@ function bigramas(s: string): Set<string> {
   return set
 }
 
-function similaridadeNome(a: string, b: string): number {
+export function similaridadeNome(a: string, b: string): number {
   const setA = bigramas(a)
   const setB = bigramas(b)
   if (setA.size === 0 || setB.size === 0) return 0
