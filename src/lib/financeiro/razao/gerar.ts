@@ -268,26 +268,71 @@ export async function gerarLancamentosTitulos(
   competencia: string
 ): Promise<GerarLancamentosResultado> {
   try {
-    const { inicio, fim } = competenciaRange(competencia)
+    const { inicio } = competenciaRange(competencia)
+
+    // Candidatas a NF-e: nfe_documentos (nível de nota) da mesma unidade,
+    // entrada, todo o histórico — o match é por NÚMERO exato, não por
+    // proximidade de data. Buscado ANTES dos títulos porque agora também
+    // decide a competência de cada título (ver resolverCompetencia).
+    const notasCandidatas = await fetchAllPaginado((from, to) =>
+      db.from("nfe_documentos")
+        .select("chave,numero,emitente_nome,valor_total,emissao")
+        .eq("unit_id", unitId)
+        .eq("direcao", "entrada")
+        .eq("cancelada", false)
+        .not("numero", "is", null)
+        .range(from, to)
+    ) as Array<{ chave: string; numero: string | null; emitente_nome: string | null; valor_total: number; emissao: string | null }>
+    const notasPorNumero = new Map<string, typeof notasCandidatas>()
+    for (const nota of notasCandidatas) {
+      const arr = notasPorNumero.get(nota.numero!) ?? []
+      arr.push(nota)
+      notasPorNumero.set(nota.numero!, arr)
+    }
+
+    // FASE 7 CORREÇÃO 2: titulos_a_pagar.d_competencia é derivado do
+    // vencimento na origem (na compra parcelada, do vencimento da 2ª
+    // parcela) — sistematicamente um mês depois da entrada real da
+    // mercadoria. Competência de compra é quando a mercadoria ENTROU, não
+    // quando se paga; a projeção (não a fonte) decide isso, em ordem de
+    // precedência: (1) emissão da NF-e, quando o nº do título casa com uma
+    // nota no banco; (2) d_lancamento (entrada na planilha); (3)
+    // d_vencimento, só como último recurso. d_competencia nunca é lido
+    // aqui — a fonte guarda o que a planilha disse, o razão decide a
+    // competência.
+    function resolverCompetencia(t: {
+      n_nota_fiscal: string | null; d_lancamento: string | null; d_vencimento: string | null
+    }): string | null {
+      if (t.n_nota_fiscal) {
+        const emissoes = (notasPorNumero.get(t.n_nota_fiscal) ?? [])
+          .map((n) => n.emissao).filter((e): e is string => e != null).sort()
+        if (emissoes.length > 0) return `${emissoes[0]!.slice(0, 7)}-01`
+      }
+      if (t.d_lancamento) return `${t.d_lancamento.slice(0, 7)}-01`
+      if (t.d_vencimento) return `${t.d_vencimento.slice(0, 7)}-01`
+      return null
+    }
 
     // FASE 7 PASSO 5: fonte é titulos_a_pagar origem in (nf_pedidos,
     // contas_pagar) — a origem antiga ('PLANILHA MAZA', ~2.000 linhas de
     // fonte desconhecida) é ignorada por design, não só por estar apagada.
-    // Competência: usa d_competencia; se nula, cai no mês de d_vencimento.
-    const titulos = await fetchAllPaginado((from, to) =>
+    // Sem filtro de data aqui — a competência de cada título só se sabe
+    // depois de resolverCompetencia(), então busca-se TUDO da unidade e
+    // filtra-se em memória.
+    const todosOsTitulos = await fetchAllPaginado((from, to) =>
       db.from("titulos_a_pagar")
-        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,valor_total_nf_origem,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
+        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,valor_total_nf_origem,d_vencimento,d_lancamento,n_nota_fiscal,origem")
         .eq("unit_id", unitId)
         .in("origem", ["nf_pedidos", "contas_pagar"])
-        .or(`d_competencia.eq.${inicio},and(d_competencia.is.null,d_vencimento.gte.${inicio},d_vencimento.lt.${fim})`)
         .range(from, to)
     ) as Array<{
       id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
       cnpj_cpf_fornecedor: string | null; c_gerencial: string | null; descricao_c_gerencial: string | null
       v_titulo: number | null; valor_total_nf_origem: number | null
-      d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
+      d_vencimento: string | null; d_lancamento: string | null
       n_nota_fiscal: string | null; origem: string
     }>
+    const titulos = todosOsTitulos.filter((t) => resolverCompetencia(t) === inicio)
 
     if (titulos.length === 0) {
       await deleteEscopo(db, "titulo", unitId, inicio)
@@ -335,32 +380,13 @@ export async function gerarLancamentosTitulos(
       return "9.99"
     }
 
-    // Candidatas a NF-e: nfe_documentos (nível de nota) da mesma unidade,
-    // entrada, todo o histórico — o match é por NÚMERO exato, não por
-    // proximidade de data, então não precisa de janela. nfe_documentos não
-    // tem coluna de competência (só "emissao", a data real da nota); a
-    // competência RECONHECIDA internamente é a de produtos_relatorio
-    // (mes_lancamento/ano_lancamento, mesma fonte usada em
-    // gerarLancamentosNfeEntrada). Sem esse cruzamento, duas notas com o
-    // mesmo número em meses diferentes (ex. maio e junho) colidiam: o
-    // título de maio casava com a nota de junho, sumindo do CMV de maio
-    // sem culpa nenhuma da nota.
-    const notasCandidatas = await fetchAllPaginado((from, to) =>
-      db.from("nfe_documentos")
-        .select("chave,numero,emitente_nome,valor_total")
-        .eq("unit_id", unitId)
-        .eq("direcao", "entrada")
-        .eq("cancelada", false)
-        .not("numero", "is", null)
-        .range(from, to)
-    ) as Array<{ chave: string; numero: string | null; emitente_nome: string | null; valor_total: number }>
-    const notasPorNumero = new Map<string, typeof notasCandidatas>()
-    for (const nota of notasCandidatas) {
-      const arr = notasPorNumero.get(nota.numero!) ?? []
-      arr.push(nota)
-      notasPorNumero.set(nota.numero!, arr)
-    }
-
+    // nfe_documentos não tem coluna de competência (só "emissao", a data
+    // real da nota); a competência RECONHECIDA internamente pro match
+    // título↔NF-e é a de produtos_relatorio (mes_lancamento/ano_lancamento,
+    // mesma fonte usada em gerarLancamentosNfeEntrada). Sem esse
+    // cruzamento, duas notas com o mesmo número em meses diferentes (ex.
+    // maio e junho) colidiam. notasCandidatas/notasPorNumero já foram
+    // buscados no topo da função.
     const produtosCompetencia = await fetchAllPaginado((from, to) =>
       db.from("produtos_relatorio")
         .select("chave_nfe,mes_lancamento,ano_lancamento")
@@ -433,7 +459,7 @@ export async function gerarLancamentosTitulos(
 
     function gerarLancamento(t: Titulo): void {
       const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
-      const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia ?? inicio
+      const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? inicio
       lancamentosRows.push({
         unit_id: unitId,
         data: dataTitulo,
