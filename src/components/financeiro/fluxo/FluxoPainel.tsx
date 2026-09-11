@@ -11,7 +11,11 @@ export function FluxoPainel({ dados }: { dados: ResultadoFluxo }) {
       <CardsResumo resumo={dados.resumo} confianca={dados.confianca} />
       <FluxoCalendario dias={dados.dias} hoje={dados.hoje} diaCruzaZero={dados.resumo.diaCruzaZero} />
       <APagarPorFaixa aPagarPorFaixa={dados.aPagarPorFaixa} aPagarSemData={dados.aPagarSemData} />
-      <AReceberPorForma aReceberPorForma={dados.aReceberPorForma} antecipacaoRegistrada={dados.antecipacaoRegistrada} />
+      <AReceberPorForma
+        aReceberPorForma={dados.aReceberPorForma}
+        antecipacaoRegistrada={dados.antecipacaoRegistrada}
+        ultimaReceitaImportada={dados.ultimaReceitaImportada}
+      />
       <ConfiancaIndex confianca={dados.confianca} />
     </div>
   )

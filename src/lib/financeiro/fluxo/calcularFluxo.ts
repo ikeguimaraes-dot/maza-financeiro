@@ -98,6 +98,7 @@ export type ResultadoFluxo = {
   aPagarPorFaixa: FaixaAPagar[]
   aPagarSemData: { titulos: TituloAPagar[]; total: number }
   aReceberPorForma: RecebivelPorForma[]
+  ultimaReceitaImportada: string | null
   antecipacaoRegistrada: boolean
   confianca: {
     totalTitulos: number
@@ -269,6 +270,19 @@ export async function calcularFluxo(
   ) as Array<{ id: string; data: string }>
   const dataPorWorkdayId = new Map(receitaDias.map((r) => [r.id, r.data]))
   const workdayIds = receitaDias.map((r) => r.id)
+
+  // Data da última receita importada pra essa unidade, sem limite de janela —
+  // é só pra mensagem de confiança ("importação está desatualizada há X
+  // dias"), não entra em nenhum cálculo. Consulta de 1 linha, não precisa de
+  // fetchAllPaginado.
+  const { data: ultimaReceitaRow } = await db
+    .from("receita_dias")
+    .select("data")
+    .eq("unit_id", unitId)
+    .order("data", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const ultimaReceitaImportada: string | null = ultimaReceitaRow?.data ?? null
   const receitaPagamentos = workdayIds.length === 0 ? [] : await fetchAllPaginado((from: number, to: number) =>
     db.from("receita_pagamentos").select("workday_id_fk,forma,valor_recebido").in("workday_id_fk", workdayIds).range(from, to)
   ) as Array<{ workday_id_fk: string; forma: string; valor_recebido: number | null }>
@@ -405,6 +419,7 @@ export async function calcularFluxo(
     aPagarPorFaixa,
     aPagarSemData,
     aReceberPorForma,
+    ultimaReceitaImportada,
     antecipacaoRegistrada,
     confianca: {
       totalTitulos,

@@ -4,9 +4,14 @@ import type { RecebivelPorForma } from "@/lib/financeiro/fluxo/calcularFluxo"
 type Props = {
   aReceberPorForma: RecebivelPorForma[]
   antecipacaoRegistrada: boolean
+  ultimaReceitaImportada: string | null
 }
 
-export function AReceberPorForma({ aReceberPorForma, antecipacaoRegistrada }: Props) {
+function formatData(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
+}
+
+export function AReceberPorForma({ aReceberPorForma, antecipacaoRegistrada, ultimaReceitaImportada }: Props) {
   return (
     <div style={{ marginBottom: 28 }}>
       <h2 style={sectionTitle}>A receber por forma de pagamento</h2>
@@ -15,6 +20,25 @@ export function AReceberPorForma({ aReceberPorForma, antecipacaoRegistrada }: Pr
           Prazo contratual — antecipação não registrada.
         </p>
       )}
+
+      {aReceberPorForma.length === 0 && (
+        <div
+          style={{
+            padding: "10px 14px",
+            marginBottom: 12,
+            borderRadius: 10,
+            border: "1px solid var(--border)",
+            background: "var(--surface-2)",
+            color: "var(--text-2)",
+            fontSize: 12,
+          }}
+        >
+          {ultimaReceitaImportada
+            ? `Última receita importada: ${formatData(ultimaReceitaImportada)} — nenhuma venda com recebimento previsto no período.`
+            : "Nenhuma receita importada para esta unidade."}
+        </div>
+      )}
+
       <div style={{ overflowX: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
         <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", minWidth: 560 }}>
           <thead>
