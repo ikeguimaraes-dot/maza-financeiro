@@ -1,0 +1,366 @@
+// Fluxo de caixa — DESEMBOLSO, não competência. Não lê lancamentos nem
+// dre_snapshot (são projeções por competência); lê as fontes com data de
+// movimentação real: titulos_a_pagar (d_vencimento + liquidacao_origem),
+// receita_pagamentos (com prazo por forma), payroll_extrato_dominio_* (dia
+// de pagamento estimado), e movimentacoes_caixa/recebiveis_cartao — hoje
+// vazias (importador de extrato é fase separada), mas já consultadas pra
+// quando existirem. Puro, sem escrita.
+import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
+import { classificarLiquidacao } from "./liquidacao"
+import { prazoDiasPorForma, somarDias } from "./prazoRecebimento"
+
+const TZ = "America/Sao_Paulo"
+
+function hojeIso(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now).reduce<Record<string, string>>((acc, p) => {
+    if (p.type !== "literal") acc[p.type] = p.value
+    return acc
+  }, {})
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100
+}
+
+// Folha não tem data de pagamento exata por competência — estimativa:
+// competência M paga no dia 5 do mês seguinte (convenção comum de folha no
+// Brasil). Reportado como estimativa na tela, não como dado confirmado.
+const DIA_PAGAMENTO_FOLHA_ESTIMADO = 5
+function dataPagamentoFolhaEstimada(competenciaTexto: string): string {
+  const [anoStr, mesStr] = competenciaTexto.split("-")
+  let ano = Number(anoStr)
+  let mes = Number(mesStr) + 1
+  if (mes > 12) { mes = 1; ano += 1 }
+  return `${ano}-${String(mes).padStart(2, "0")}-${String(DIA_PAGAMENTO_FOLHA_ESTIMADO).padStart(2, "0")}`
+}
+
+export type DiaFluxo = {
+  data: string
+  saldoInicial: number
+  entradasRealizadas: number
+  entradasPrevistas: number
+  saidasRealizadas: number
+  saidasPrevistas: number
+  saldoFinal: number
+  status: "realizado" | "previsto"
+}
+
+export type TituloAPagar = {
+  id: string
+  fornecedor: string | null
+  nNotaFiscal: string | null
+  valor: number
+  vencimento: string | null
+  categoria: string | null
+}
+
+export type FaixaAPagar = {
+  faixa: "vencido" | "hoje" | "7dias" | "15dias" | "30dias" | "mais30"
+  titulos: TituloAPagar[]
+  total: number
+}
+
+export type RecebivelPorForma = {
+  forma: string
+  formaConhecida: boolean
+  prazoDias: number
+  valorBruto: number
+  valorLiquido: number
+  custoAntecipacao: number
+}
+
+export type ResultadoFluxo = {
+  unitId: string
+  contaId: string | null
+  dataInicio: string
+  dataFim: string
+  hoje: string
+  dias: DiaFluxo[]
+  resumo: {
+    saldoHoje: number
+    aPagarVencido: number
+    aPagar7Dias: number
+    aReceber7Dias: number
+    projecao30Dias: number
+    cruzaZero: boolean
+    diaCruzaZero: string | null
+  }
+  aPagarPorFaixa: FaixaAPagar[]
+  aReceberPorForma: RecebivelPorForma[]
+  antecipacaoRegistrada: boolean
+  confianca: {
+    totalTitulos: number
+    pctTitulosComVencimento: number | null
+    valorPago: number
+    valorNaoPago: number
+    valorIndefinido: number
+    pctValorIndefinido: number | null
+    diasComExtrato: number
+    totalDiasPeriodo: number
+    pctDiasComExtrato: number
+    dataUltimoExtrato: string | null
+    diasSemDetalheForma: number
+    valorSemDetalheForma: number
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function calcularFluxo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  unitId: string,
+  contaId: string | null,
+  dataInicio: string,
+  dataFim: string
+): Promise<ResultadoFluxo> {
+  const hoje = hojeIso()
+
+  // ── Contas bancárias (saldo inicial consolidado) ──────────────────────
+  let queryContas = db.from("contas_bancarias").select("id,saldo_inicial,data_saldo_inicial").eq("unit_id", unitId).eq("ativo", true)
+  if (contaId) queryContas = queryContas.eq("id", contaId)
+  const contas = await fetchAllPaginado((from: number, to: number) => queryContas.range(from, to)) as Array<{
+    id: string; saldo_inicial: number; data_saldo_inicial: string
+  }>
+  // Simplificação assumida: data_saldo_inicial de cada conta é sempre <=
+  // dataInicio (a tela só existe pra período >= hoje) — soma direta cobre
+  // o caso real de hoje (nenhuma conta cadastrada, saldo 0).
+  const saldoInicialConsolidado = contas.reduce((s, c) => s + Number(c.saldo_inicial ?? 0), 0)
+
+  // ── Movimentações realizadas (extrato) ────────────────────────────────
+  let queryMov = db.from("movimentacoes_caixa").select("data,tipo,valor,origem,origem_id,conciliado").eq("unit_id", unitId).lte("data", dataFim)
+  if (contaId) queryMov = queryMov.eq("conta_id", contaId)
+  const movimentacoes = await fetchAllPaginado((from: number, to: number) => queryMov.range(from, to)) as Array<{
+    data: string; tipo: string; valor: number; origem: string; origem_id: string | null; conciliado: boolean
+  }>
+  const titulosConciliadosIds = new Set(
+    movimentacoes.filter((m) => m.origem === "titulo" && m.conciliado).map((m) => m.origem_id)
+  )
+
+  const entradasRealizadasPorDia = new Map<string, number>()
+  const saidasRealizadasPorDia = new Map<string, number>()
+  for (const m of movimentacoes) {
+    const mapa = m.tipo === "entrada" ? entradasRealizadasPorDia : saidasRealizadasPorDia
+    mapa.set(m.data, (mapa.get(m.data) ?? 0) + Math.abs(Number(m.valor ?? 0)))
+  }
+
+  // ── Títulos a pagar ────────────────────────────────────────────────────
+  const titulos = await fetchAllPaginado((from: number, to: number) =>
+    db.from("titulos_a_pagar")
+      .select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal,v_titulo,d_vencimento,d_lancamento,d_competencia,c_gerencial,liquidacao_origem")
+      .eq("unit_id", unitId)
+      .in("origem", ["nf_pedidos", "contas_pagar"])
+      .range(from, to)
+  ) as Array<{
+    id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
+    n_nota_fiscal: string | null; v_titulo: number | null
+    d_vencimento: string | null; d_lancamento: string | null; d_competencia: string | null
+    c_gerencial: string | null; liquidacao_origem: string | null
+  }>
+
+  const saidasPrevistasPorDia = new Map<string, number>()
+  let valorPago = 0, valorNaoPago = 0, valorIndefinido = 0
+  const titulosNaoPagos: Array<TituloAPagar & { dataEfetiva: string | null }> = []
+
+  for (const t of titulos) {
+    const valor = Math.abs(Number(t.v_titulo ?? 0))
+    const dataEfetiva = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia
+    const status = classificarLiquidacao(t.liquidacao_origem)
+
+    if (status === "pago") {
+      valorPago += valor
+      if (dataEfetiva && !titulosConciliadosIds.has(t.id)) {
+        saidasRealizadasPorDia.set(dataEfetiva, (saidasRealizadasPorDia.get(dataEfetiva) ?? 0) + valor)
+      }
+      continue
+    }
+
+    if (status === "indefinido") valorIndefinido += valor
+    else valorNaoPago += valor
+
+    if (titulosConciliadosIds.has(t.id)) continue // já confirmado pago via extrato — não duplica como previsto
+
+    if (dataEfetiva) {
+      saidasPrevistasPorDia.set(dataEfetiva, (saidasPrevistasPorDia.get(dataEfetiva) ?? 0) + valor)
+    }
+    titulosNaoPagos.push({
+      id: t.id,
+      fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor,
+      nNotaFiscal: t.n_nota_fiscal,
+      valor,
+      vencimento: dataEfetiva,
+      categoria: t.c_gerencial,
+      dataEfetiva,
+    })
+  }
+
+  // ── Folha (extrato Domínio) — dia de pagamento estimado ───────────────
+  const folhaLinhas = await fetchAllPaginado((from: number, to: number) =>
+    db.from("payroll_extrato_dominio_linha").select("competencia,natureza,rubrica_codigo,valor").eq("unit_id", unitId).range(from, to)
+  ) as Array<{ competencia: string; natureza: string; rubrica_codigo: number; valor: number }>
+  const folhaCompetencias = await fetchAllPaginado((from: number, to: number) =>
+    db.from("payroll_extrato_dominio_competencia").select("competencia,valor_fgts,valor_fgts_rescisorio").eq("unit_id", unitId).range(from, to)
+  ) as Array<{ competencia: string; valor_fgts: number | null; valor_fgts_rescisorio: number | null }>
+
+  const RUBRICA_DESCONTO_ENCARGO = 843
+  const folhaPorCompetencia = new Map<string, number>()
+  for (const l of folhaLinhas) {
+    if (l.natureza === "DESCONTO" && l.rubrica_codigo !== RUBRICA_DESCONTO_ENCARGO) continue
+    folhaPorCompetencia.set(l.competencia, (folhaPorCompetencia.get(l.competencia) ?? 0) + Math.abs(Number(l.valor ?? 0)))
+  }
+  for (const c of folhaCompetencias) {
+    const extra = Number(c.valor_fgts ?? 0) + Number(c.valor_fgts_rescisorio ?? 0)
+    if (extra > 0) folhaPorCompetencia.set(c.competencia, (folhaPorCompetencia.get(c.competencia) ?? 0) + extra)
+  }
+  for (const [competencia, valor] of folhaPorCompetencia) {
+    const dataEfetiva = dataPagamentoFolhaEstimada(competencia)
+    saidasPrevistasPorDia.set(dataEfetiva, (saidasPrevistasPorDia.get(dataEfetiva) ?? 0) + valor)
+  }
+
+  // ── Receita por forma de pagamento (prazo D+N) ────────────────────────
+  const receitaDias = await fetchAllPaginado((from: number, to: number) =>
+    db.from("receita_dias").select("id,data").eq("unit_id", unitId).range(from, to)
+  ) as Array<{ id: string; data: string }>
+  const dataPorWorkdayId = new Map(receitaDias.map((r) => [r.id, r.data]))
+  const workdayIds = receitaDias.map((r) => r.id)
+  const receitaPagamentos = workdayIds.length === 0 ? [] : await fetchAllPaginado((from: number, to: number) =>
+    db.from("receita_pagamentos").select("workday_id_fk,forma,valor_recebido").in("workday_id_fk", workdayIds).range(from, to)
+  ) as Array<{ workday_id_fk: string; forma: string; valor_recebido: number | null }>
+
+  const entradasPrevistasPorDia = new Map<string, number>()
+  const recebivelPorForma = new Map<string, { formaConhecida: boolean; prazoDias: number; valorBruto: number }>()
+  const diasSemDetalheFormaSet = new Set<string>()
+  let valorSemDetalheForma = 0
+
+  for (const p of receitaPagamentos) {
+    const dataVenda = dataPorWorkdayId.get(p.workday_id_fk)
+    if (!dataVenda) continue
+    const valor = Math.abs(Number(p.valor_recebido ?? 0))
+    const { dias: prazoDias, conhecida } = prazoDiasPorForma(p.forma)
+    const dataEfetiva = somarDias(dataVenda, prazoDias)
+    entradasPrevistasPorDia.set(dataEfetiva, (entradasPrevistasPorDia.get(dataEfetiva) ?? 0) + valor)
+
+    const atual = recebivelPorForma.get(p.forma) ?? { formaConhecida: conhecida, prazoDias, valorBruto: 0 }
+    recebivelPorForma.set(p.forma, { ...atual, valorBruto: atual.valorBruto + valor })
+
+    if (!conhecida) {
+      diasSemDetalheFormaSet.add(dataVenda)
+      valorSemDetalheForma += valor
+    }
+  }
+
+  // ── Recebíveis de cartão (antecipação) — hoje sempre vazia; dado real só
+  // chega com o extrato bancário / integração de adquirente (fase futura).
+  // Consultada já no padrão certo pra quando existir. ─────────────────────
+  const queryRecebiveis = db.from("recebiveis_cartao").select("id").eq("unit_id", unitId)
+  const recebiveisCartao = await fetchAllPaginado((from: number, to: number) => queryRecebiveis.range(from, to)) as Array<{ id: number }>
+  const antecipacaoRegistrada = recebiveisCartao.length > 0
+
+  // ── Série diária ───────────────────────────────────────────────────────
+  const dias: DiaFluxo[] = []
+  let saldoAcumulado = saldoInicialConsolidado
+  let cruzaZero = false
+  let diaCruzaZero: string | null = null
+
+  for (let d = dataInicio; d <= dataFim; d = somarDias(d, 1)) {
+    const entradasRealizadas = entradasRealizadasPorDia.get(d) ?? 0
+    const entradasPrevistas = entradasPrevistasPorDia.get(d) ?? 0
+    const saidasRealizadas = saidasRealizadasPorDia.get(d) ?? 0
+    const saidasPrevistas = saidasPrevistasPorDia.get(d) ?? 0
+    const saldoInicialDia = saldoAcumulado
+    const saldoFinalDia = saldoInicialDia + entradasRealizadas + entradasPrevistas - saidasRealizadas - saidasPrevistas
+    if (saldoFinalDia < 0 && !cruzaZero) { cruzaZero = true; diaCruzaZero = d }
+    dias.push({
+      data: d,
+      saldoInicial: round2(saldoInicialDia),
+      entradasRealizadas: round2(entradasRealizadas),
+      entradasPrevistas: round2(entradasPrevistas),
+      saidasRealizadas: round2(saidasRealizadas),
+      saidasPrevistas: round2(saidasPrevistas),
+      saldoFinal: round2(saldoFinalDia),
+      status: d <= hoje ? "realizado" : "previsto",
+    })
+    saldoAcumulado = saldoFinalDia
+  }
+
+  // ── Resumo (cards) ─────────────────────────────────────────────────────
+  const em7Dias = somarDias(hoje, 7)
+  const em30Dias = somarDias(hoje, 30)
+  const diaHoje = dias.find((d) => d.data === hoje)
+  const dia30 = dias.find((d) => d.data === em30Dias)
+
+  const aPagarVencido = titulosNaoPagos.filter((t) => t.dataEfetiva && t.dataEfetiva < hoje).reduce((s, t) => s + t.valor, 0)
+  const aPagar7Dias = titulosNaoPagos.filter((t) => t.dataEfetiva && t.dataEfetiva >= hoje && t.dataEfetiva <= em7Dias).reduce((s, t) => s + t.valor, 0)
+  const aReceber7Dias = [...entradasPrevistasPorDia.entries()].filter(([d]) => d >= hoje && d <= em7Dias).reduce((s, [, v]) => s + v, 0)
+
+  // ── A pagar por faixa de vencimento ────────────────────────────────────
+  const em15Dias = somarDias(hoje, 15)
+  function faixaDe(dataEfetiva: string): FaixaAPagar["faixa"] {
+    if (dataEfetiva < hoje) return "vencido"
+    if (dataEfetiva === hoje) return "hoje"
+    if (dataEfetiva <= em7Dias) return "7dias"
+    if (dataEfetiva <= em15Dias) return "15dias"
+    if (dataEfetiva <= em30Dias) return "30dias"
+    return "mais30"
+  }
+  const ORDEM_FAIXAS: FaixaAPagar["faixa"][] = ["vencido", "hoje", "7dias", "15dias", "30dias", "mais30"]
+  const titulosPorFaixa = new Map<FaixaAPagar["faixa"], TituloAPagar[]>()
+  for (const t of titulosNaoPagos) {
+    if (!t.dataEfetiva) continue
+    const faixa = faixaDe(t.dataEfetiva)
+    const arr = titulosPorFaixa.get(faixa) ?? []
+    arr.push({ id: t.id, fornecedor: t.fornecedor, nNotaFiscal: t.nNotaFiscal, valor: round2(t.valor), vencimento: t.vencimento, categoria: t.categoria })
+    titulosPorFaixa.set(faixa, arr)
+  }
+  const aPagarPorFaixa: FaixaAPagar[] = ORDEM_FAIXAS.map((faixa) => {
+    const lista = (titulosPorFaixa.get(faixa) ?? []).sort((a, b) => b.valor - a.valor)
+    return { faixa, titulos: lista, total: round2(lista.reduce((s, t) => s + t.valor, 0)) }
+  })
+
+  // ── A receber por forma ────────────────────────────────────────────────
+  const aReceberPorForma: RecebivelPorForma[] = [...recebivelPorForma.entries()]
+    .map(([forma, v]) => ({
+      forma, formaConhecida: v.formaConhecida, prazoDias: v.prazoDias,
+      valorBruto: round2(v.valorBruto), valorLiquido: round2(v.valorBruto), custoAntecipacao: 0,
+    }))
+    .sort((a, b) => b.valorBruto - a.valorBruto)
+
+  // ── Confiança ──────────────────────────────────────────────────────────
+  const totalTitulos = titulos.length
+  const titulosComVencimento = titulos.filter((t) => t.d_vencimento).length
+  const totalDiasPeriodo = dias.length
+  const diasComExtratoNoPeriodo = new Set(movimentacoes.filter((m) => m.data >= dataInicio && m.data <= dataFim).map((m) => m.data)).size
+  const dataUltimoExtrato = movimentacoes.length > 0 ? [...movimentacoes].map((m) => m.data).sort().at(-1)! : null
+  const valorTotalTitulos = valorPago + valorNaoPago + valorIndefinido
+
+  return {
+    unitId, contaId, dataInicio, dataFim, hoje, dias,
+    resumo: {
+      saldoHoje: diaHoje ? diaHoje.saldoFinal : round2(saldoInicialConsolidado),
+      aPagarVencido: round2(aPagarVencido),
+      aPagar7Dias: round2(aPagar7Dias),
+      aReceber7Dias: round2(aReceber7Dias),
+      projecao30Dias: dia30 ? dia30.saldoFinal : round2(saldoAcumulado),
+      cruzaZero, diaCruzaZero,
+    },
+    aPagarPorFaixa,
+    aReceberPorForma,
+    antecipacaoRegistrada,
+    confianca: {
+      totalTitulos,
+      pctTitulosComVencimento: totalTitulos > 0 ? titulosComVencimento / totalTitulos : null,
+      valorPago: round2(valorPago),
+      valorNaoPago: round2(valorNaoPago),
+      valorIndefinido: round2(valorIndefinido),
+      pctValorIndefinido: valorTotalTitulos > 0 ? valorIndefinido / valorTotalTitulos : null,
+      diasComExtrato: diasComExtratoNoPeriodo,
+      totalDiasPeriodo,
+      pctDiasComExtrato: totalDiasPeriodo > 0 ? diasComExtratoNoPeriodo / totalDiasPeriodo : 0,
+      dataUltimoExtrato,
+      diasSemDetalheForma: diasSemDetalheFormaSet.size,
+      valorSemDetalheForma: round2(valorSemDetalheForma),
+    },
+  }
+}
