@@ -5,6 +5,7 @@ import type { CSSProperties } from "react"
 import * as XLSX from "xlsx"
 import { formatBRL } from "@/lib/financeiro/utils"
 import type { DivergenciasResultado } from "@/app/financeiro/dre/divergencias/actions"
+import { FornecedoresAba } from "./FornecedoresAba"
 
 // ── Style helpers (mesmo padrão de ConciliacaoTab.tsx) ──────────────────────
 const thS = (align: "left" | "right" = "left"): CSSProperties => ({
@@ -91,7 +92,7 @@ function baixarXlsx(dados: DivergenciasResultado) {
   URL.revokeObjectURL(url)
 }
 
-type Aba = "contas-notas"
+type Aba = "contas-notas" | "fornecedores"
 
 export function DivergenciasPainel({ dados }: { dados: DivergenciasResultado }) {
   const [aba, setAba] = useState<Aba>("contas-notas")
@@ -101,26 +102,35 @@ export function DivergenciasPainel({ dados }: { dados: DivergenciasResultado }) 
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", borderRadius: 8, border: "1px solid var(--border)", overflow: "hidden", width: "fit-content" }}>
-          <button onClick={() => setAba("contas-notas")} style={{
-            padding: "7px 14px", fontSize: 12, fontWeight: 700,
-            background: "var(--brand, #D4A574)", color: "var(--primary-foreground, #1A1208)",
-            border: "none", cursor: "pointer", whiteSpace: "nowrap",
-          }}>
-            Contas a pagar × Notas
-          </button>
+          {([
+            { id: "contas-notas" as const, label: "Contas a pagar × Notas" },
+            { id: "fornecedores" as const, label: "Fornecedores" },
+          ]).map((t) => (
+            <button key={t.id} onClick={() => setAba(t.id)} style={{
+              padding: "7px 14px", fontSize: 12, fontWeight: aba === t.id ? 700 : 500,
+              background: aba === t.id ? "var(--brand, #D4A574)" : "var(--surface)",
+              color: aba === t.id ? "var(--primary-foreground, #1A1208)" : "var(--text-3)",
+              border: "none", cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+              {t.label}
+            </button>
+          ))}
         </div>
-        <button
-          onClick={() => baixarXlsx(dados)}
-          style={{
-            padding: "8px 16px", borderRadius: 7, border: "1px solid var(--border)",
-            background: "var(--surface)", color: "var(--text)", fontSize: 12, fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          ⬇ Baixar XLSX (4 abas)
-        </button>
+        {aba === "contas-notas" && (
+          <button
+            onClick={() => baixarXlsx(dados)}
+            style={{
+              padding: "8px 16px", borderRadius: 7, border: "1px solid var(--border)",
+              background: "var(--surface)", color: "var(--text)", fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            ⬇ Baixar XLSX (4 abas)
+          </button>
+        )}
       </div>
 
       {aba === "contas-notas" && <ContasNotasAba dados={dados} resumo={resumo} />}
+      {aba === "fornecedores" && <FornecedoresAba />}
     </div>
   )
 }
