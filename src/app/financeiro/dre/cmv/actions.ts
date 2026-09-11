@@ -5,6 +5,7 @@ import { getCurrentUnit } from "@maza/auth/unit"
 import { requireUser } from "@maza/auth/server"
 import { createServiceClient } from "@maza/db/supabase/server"
 import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
+import { extrairCalibre } from "@/lib/financeiro/produtos/extrairCalibre"
 
 // Categorias de desc_gerencial que são despesa administrativa/financeira/folha,
 // não produto comprado. Usada só para linhas SEM NCM (planilha) na geração
@@ -1257,14 +1258,6 @@ function removerPesoEntreParenteses(texto: string): string {
 
 // Fronteira de palavra só à esquerda: "10-20U/LB" precisa capturar "10-20"
 // mesmo com "U" colado logo depois, sem espaço.
-function extrairCalibre(texto: string): { texto: string; calibre: string | null } {
-  const match = texto.match(/\b(\d{1,3})\s*[-/]\s*(\d{1,3})/)
-  if (!match || match.index === undefined) return { texto, calibre: null }
-  const calibre = `${match[1]}-${match[2]}`
-  const semCalibre = texto.slice(0, match.index) + texto.slice(match.index + match[0].length)
-  return { texto: semCalibre, calibre }
-}
-
 function calcularNucleoECalibre(
   itemDescricao: string,
   categorias: Set<string>

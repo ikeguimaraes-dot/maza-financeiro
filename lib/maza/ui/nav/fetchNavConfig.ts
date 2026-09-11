@@ -18,7 +18,7 @@ const FALLBACK_GROUPS: RemoteNavGroup[] = [
       { href: "/financeiro/dre", label: "DRE", icon: "Sheet" },
       { href: "/financeiro/pagar", label: "Contas a Pagar", icon: "CreditCard" },
       { href: "/financeiro/receber", label: "Contas a Receber", icon: "Banknote" },
-      { href: "/financeiro/aprovacoes", label: "Aprovações", icon: "CheckSquare" },
+      { href: "/financeiro/aprovacoes", label: "Conferência", icon: "CheckSquare" },
       { href: "/financeiro/conciliacao", label: "Conciliação", icon: "RefreshCw" },
       { href: "/financeiro/orcamento", label: "Orçamento", icon: "PiggyBank" },
     ],
