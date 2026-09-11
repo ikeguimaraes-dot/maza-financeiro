@@ -59,14 +59,10 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
         <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "0 0 4px" }}>
           Conferência · {unidade.nome} · {competenciaLabel(competencia)}
         </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 720, margin: "0 0 8px" }}>
+        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 720, margin: "0 0 16px" }}>
           Todo alerta abaixo é calculado na hora a partir do dado que já existe — nenhum afirma que
           algo está errado, só que merece conferência. A decisão de conferir ou ignorar é sua; se o
           valor do alerta mudar depois, ele volta a aparecer.
-        </p>
-        <p style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 720, margin: "0 0 16px" }}>
-          Grupos ativos: 1 (Identidade), 2 (Cobertura) e 3 (Valor fora de faixa). Grupo 4
-          (Anomalia) chega na próxima entrega.
         </p>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 6 }}>

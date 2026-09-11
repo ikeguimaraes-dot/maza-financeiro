@@ -12,6 +12,7 @@ import {
 } from "@/lib/financeiro/conferencia/calcularAlertas"
 import { calcularAlertasGrupo2 } from "@/lib/financeiro/conferencia/calcularAlertasGrupo2"
 import { calcularAlertasGrupo3 } from "@/lib/financeiro/conferencia/calcularAlertasGrupo3"
+import { calcularAlertasGrupo4 } from "@/lib/financeiro/conferencia/calcularAlertasGrupo4"
 
 export type { AlertaComStatus } from "@/lib/financeiro/conferencia/calcularAlertas"
 
@@ -34,12 +35,13 @@ export async function getConferencia(
   const db = createServiceClient()
   if (!db) return null
 
-  const [grupo1, grupo2, grupo3] = await Promise.all([
+  const [grupo1, grupo2, grupo3, grupo4] = await Promise.all([
     calcularAlertasGrupo1(db, unitId, unitTag, competencia),
     calcularAlertasGrupo2(db, unitId, unitNome, competencia),
     calcularAlertasGrupo3(db, unitId, unitNome, competencia),
+    calcularAlertasGrupo4(db, unitId, unitNome, competencia),
   ])
-  const alertas = [...grupo1, ...grupo2, ...grupo3]
+  const alertas = [...grupo1, ...grupo2, ...grupo3, ...grupo4]
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any
