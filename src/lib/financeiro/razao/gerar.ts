@@ -293,6 +293,21 @@ export async function gerarLancamentosTitulos(
       return { ok: true, inseridos: 0 }
     }
 
+    // ENCARGO FOLHA/RESCISAO/FERIAS na planilha de compras são o pagamento
+    // de um custo que o extrato Domínio já registra por rubrica (9.98,
+    // fora de KPI — ver migration) — MAS só quando o extrato existe. Sem
+    // ele, o título é a única evidência do custo e tem que contar em
+    // mao_de_obra normalmente (caso do Yoshimori maio, sem extrato ainda).
+    const comp = competencia.slice(0, 7) // "YYYY-MM", mesmo formato de payroll_extrato_dominio_*
+    const { data: folhaProbe, error: folhaProbeError } = await db
+      .from("payroll_extrato_dominio_linha")
+      .select("cod_colaborador").eq("unit_id", unitId).eq("competencia", comp).limit(1)
+    if (folhaProbeError) throw new Error(folhaProbeError.message)
+    const temFolhaExtrato = (folhaProbe?.length ?? 0) > 0
+    const FALLBACK_MAO_DE_OBRA: Record<string, string> = {
+      "ENCARGO FOLHA": "4.02", RESCISAO: "4.05", FERIAS: "4.06",
+    }
+
     // Regras: categoria_gerencial (match exato contra c_gerencial) tem
     // prioridade — é a classificação real das planilhas novas. Os tipos
     // fuzzy antigos (cnpj/nome/descrição) seguem como fallback pra título
@@ -400,11 +415,15 @@ export async function gerarLancamentosTitulos(
         continue // já coberto pela NF-e — não gera lançamento
       }
 
+      const contaCodigo = !temFolhaExtrato && FALLBACK_MAO_DE_OBRA[categoria]
+        ? FALLBACK_MAO_DE_OBRA[categoria]
+        : classificar(t)
+
       lancamentosRows.push({
         unit_id: unitId,
         data: dataTitulo,
         competencia: inicio,
-        conta_codigo: classificar(t),
+        conta_codigo: contaCodigo,
         valor: valorTitulo,
         origem: "titulo",
         origem_id: t.id,
