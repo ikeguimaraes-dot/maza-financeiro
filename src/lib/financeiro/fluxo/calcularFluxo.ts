@@ -63,6 +63,13 @@ export type FaixaAPagar = {
   total: number
 }
 
+export type VencimentoPorCompetencia = {
+  competencia: string
+  total: number
+  comVencimento: number
+  pct: number
+}
+
 export type RecebivelPorForma = {
   forma: string
   formaConhecida: boolean
@@ -89,11 +96,13 @@ export type ResultadoFluxo = {
     diaCruzaZero: string | null
   }
   aPagarPorFaixa: FaixaAPagar[]
+  aPagarSemData: { titulos: TituloAPagar[]; total: number }
   aReceberPorForma: RecebivelPorForma[]
   antecipacaoRegistrada: boolean
   confianca: {
     totalTitulos: number
     pctTitulosComVencimento: number | null
+    vencimentoPorCompetencia: VencimentoPorCompetencia[]
     valorPago: number
     valorNaoPago: number
     valorIndefinido: number
@@ -162,17 +171,29 @@ export async function calcularFluxo(
 
   const saidasPrevistasPorDia = new Map<string, number>()
   let valorPago = 0, valorNaoPago = 0, valorIndefinido = 0
-  const titulosNaoPagos: Array<TituloAPagar & { dataEfetiva: string | null }> = []
+  const titulosNaoPagos: Array<TituloAPagar & { dataEfetiva: string }> = []
+  const titulosSemData: TituloAPagar[] = []
+  // Completude de d_vencimento por competência — pra apontar em qual mês a
+  // planilha de origem está incompleta (LINHA 5), não só o total agregado.
+  const porCompetenciaVencimento = new Map<string, { total: number; comVencimento: number }>()
 
   for (const t of titulos) {
     const valor = Math.abs(Number(t.v_titulo ?? 0))
-    const dataEfetiva = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia
     const status = classificarLiquidacao(t.liquidacao_origem)
+
+    const compKey = t.d_competencia ?? "sem-competencia"
+    const stat = porCompetenciaVencimento.get(compKey) ?? { total: 0, comVencimento: 0 }
+    stat.total += 1
+    if (t.d_vencimento) stat.comVencimento += 1
+    porCompetenciaVencimento.set(compKey, stat)
 
     if (status === "pago") {
       valorPago += valor
-      if (dataEfetiva && !titulosConciliadosIds.has(t.id)) {
-        saidasRealizadasPorDia.set(dataEfetiva, (saidasRealizadasPorDia.get(dataEfetiva) ?? 0) + valor)
+      // Título pago é fato histórico — fallback de data serve só pra registrar
+      // quando o dinheiro já saiu, nunca pra projetar (já aconteceu).
+      const dataEfetivaPago = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia
+      if (dataEfetivaPago && !titulosConciliadosIds.has(t.id)) {
+        saidasRealizadasPorDia.set(dataEfetivaPago, (saidasRealizadasPorDia.get(dataEfetivaPago) ?? 0) + valor)
       }
       continue
     }
@@ -182,17 +203,31 @@ export async function calcularFluxo(
 
     if (titulosConciliadosIds.has(t.id)) continue // já confirmado pago via extrato — não duplica como previsto
 
-    if (dataEfetiva) {
-      saidasPrevistasPorDia.set(dataEfetiva, (saidasPrevistasPorDia.get(dataEfetiva) ?? 0) + valor)
+    // Sem d_vencimento não é "vencido" — é ausência de informação. Cair no
+    // fallback de competência/lançamento (sempre no passado) inflava a faixa
+    // "vencido" com título que pode não estar vencido de verdade. Fica de
+    // fora da projeção e listado à parte, não projetável.
+    if (!t.d_vencimento) {
+      titulosSemData.push({
+        id: t.id,
+        fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor,
+        nNotaFiscal: t.n_nota_fiscal,
+        valor,
+        vencimento: null,
+        categoria: t.c_gerencial,
+      })
+      continue
     }
+
+    saidasPrevistasPorDia.set(t.d_vencimento, (saidasPrevistasPorDia.get(t.d_vencimento) ?? 0) + valor)
     titulosNaoPagos.push({
       id: t.id,
       fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor,
       nNotaFiscal: t.n_nota_fiscal,
       valor,
-      vencimento: dataEfetiva,
+      vencimento: t.d_vencimento,
       categoria: t.c_gerencial,
-      dataEfetiva,
+      dataEfetiva: t.d_vencimento,
     })
   }
 
@@ -322,7 +357,6 @@ export async function calcularFluxo(
   const ORDEM_FAIXAS: FaixaAPagar["faixa"][] = ["vencido", "hoje", "7dias", "15dias", "30dias", "mais30"]
   const titulosPorFaixa = new Map<FaixaAPagar["faixa"], TituloAPagar[]>()
   for (const t of titulosNaoPagos) {
-    if (!t.dataEfetiva) continue
     const faixa = faixaDe(t.dataEfetiva)
     const arr = titulosPorFaixa.get(faixa) ?? []
     arr.push({ id: t.id, fornecedor: t.fornecedor, nNotaFiscal: t.nNotaFiscal, valor: round2(t.valor), vencimento: t.vencimento, categoria: t.categoria })
@@ -332,6 +366,9 @@ export async function calcularFluxo(
     const lista = (titulosPorFaixa.get(faixa) ?? []).sort((a, b) => b.valor - a.valor)
     return { faixa, titulos: lista, total: round2(lista.reduce((s, t) => s + t.valor, 0)) }
   })
+
+  const listaSemData = titulosSemData.sort((a, b) => b.valor - a.valor)
+  const aPagarSemData = { titulos: listaSemData, total: round2(listaSemData.reduce((s, t) => s + t.valor, 0)) }
 
   // ── A receber por forma ────────────────────────────────────────────────
   const aReceberPorForma: RecebivelPorForma[] = [...recebivelPorForma.entries()]
@@ -344,6 +381,12 @@ export async function calcularFluxo(
   // ── Confiança ──────────────────────────────────────────────────────────
   const totalTitulos = titulos.length
   const titulosComVencimento = titulos.filter((t) => t.d_vencimento).length
+  const vencimentoPorCompetencia: VencimentoPorCompetencia[] = [...porCompetenciaVencimento.entries()]
+    .map(([competencia, v]) => ({
+      competencia, total: v.total, comVencimento: v.comVencimento,
+      pct: v.total > 0 ? v.comVencimento / v.total : 0,
+    }))
+    .sort((a, b) => a.competencia.localeCompare(b.competencia))
   const totalDiasPeriodo = dias.length
   const diasComExtratoNoPeriodo = new Set(movimentacoes.filter((m) => m.data >= dataInicio && m.data <= dataFim).map((m) => m.data)).size
   const dataUltimoExtrato = movimentacoes.length > 0 ? [...movimentacoes].map((m) => m.data).sort().at(-1)! : null
@@ -360,11 +403,13 @@ export async function calcularFluxo(
       cruzaZero, diaCruzaZero,
     },
     aPagarPorFaixa,
+    aPagarSemData,
     aReceberPorForma,
     antecipacaoRegistrada,
     confianca: {
       totalTitulos,
       pctTitulosComVencimento: totalTitulos > 0 ? titulosComVencimento / totalTitulos : null,
+      vencimentoPorCompetencia,
       valorPago: round2(valorPago),
       valorNaoPago: round2(valorNaoPago),
       valorIndefinido: round2(valorIndefinido),

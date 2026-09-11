@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { formatBRL } from "@/lib/financeiro/utils"
-import type { FaixaAPagar } from "@/lib/financeiro/fluxo/calcularFluxo"
+import type { FaixaAPagar, TituloAPagar } from "@/lib/financeiro/fluxo/calcularFluxo"
 
 const FAIXA_LABELS: Record<FaixaAPagar["faixa"], string> = {
   vencido: "Vencido",
@@ -18,8 +18,13 @@ function formatData(iso: string | null): string {
   return new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
 }
 
-export function APagarPorFaixa({ aPagarPorFaixa }: { aPagarPorFaixa: FaixaAPagar[] }) {
-  const [aberta, setAberta] = useState<FaixaAPagar["faixa"] | null>(null)
+type Props = {
+  aPagarPorFaixa: FaixaAPagar[]
+  aPagarSemData: { titulos: TituloAPagar[]; total: number }
+}
+
+export function APagarPorFaixa({ aPagarPorFaixa, aPagarSemData }: Props) {
+  const [aberta, setAberta] = useState<FaixaAPagar["faixa"] | "sem-data" | null>(null)
 
   return (
     <div style={{ marginBottom: 28 }}>
@@ -95,6 +100,65 @@ export function APagarPorFaixa({ aPagarPorFaixa }: { aPagarPorFaixa: FaixaAPagar
             </div>
           )
         })}
+
+        {aPagarSemData.titulos.length > 0 && (
+          <div
+            style={{
+              background: "var(--surface)",
+              border: "1px solid #F59E0B",
+              borderRadius: 12,
+              overflow: "hidden",
+            }}
+          >
+            <button
+              onClick={() => setAberta(aberta === "sem-data" ? null : "sem-data")}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "12px 16px",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#F59E0B" }}>Sem data de vencimento</span>
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                  {aPagarSemData.titulos.length} título{aPagarSemData.titulos.length === 1 ? "" : "s"} · não projetável
+                </span>
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#F59E0B" }}>{formatBRL(aPagarSemData.total)}</span>
+            </button>
+
+            {aberta === "sem-data" && (
+              <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ background: "var(--surface-2)", color: "var(--text-3)", textAlign: "left" }}>
+                      <th style={th}>Fornecedor</th>
+                      <th style={th}>Nota</th>
+                      <th style={{ ...th, textAlign: "right" }}>Valor</th>
+                      <th style={th}>Categoria</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aPagarSemData.titulos.map((t) => (
+                      <tr key={t.id} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={td}>{t.fornecedor ?? "—"}</td>
+                        <td style={td}>{t.nNotaFiscal ?? "—"}</td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>{formatBRL(t.valor)}</td>
+                        <td style={{ ...td, color: "var(--text-3)" }}>{t.categoria ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
