@@ -336,6 +336,67 @@ export async function calcularAlertaConfiancaBaixa(db: Db, unitId: string, compe
   })
 }
 
+// ── 2.11 · Nota fiscal existe mas XML não importado (CMV) ───────────────────
+// Recorte de 2.3 (sem_xml) que importa de verdade: título com número de
+// nota E cuja conta no razão é CMV — a nota existe, só falta o XML.
+// Agrupado por fornecedor porque um pacote de XMLs de um único fornecedor
+// costuma resolver dezenas de notas de uma vez.
+export async function calcularAlertaNotaSemXmlCmv(db: Db, unitId: string, competencia: string): Promise<Alerta | null> {
+  const rows = await fetchAllPaginado((from, to) =>
+    db.from("reconciliacoes_sugeridas")
+      .select("id,titulo_id,valor_titulo")
+      .eq("unit_id", unitId).eq("competencia", competencia).eq("status", "sem_xml")
+      .range(from, to)
+  ) as Array<{ id: string; titulo_id: string; valor_titulo: number | null }>
+
+  const tituloIds = [...new Set(rows.map((r) => r.titulo_id))]
+  const titulosInfo = tituloIds.length === 0 ? [] : await fetchAllPaginado((from, to) =>
+    db.from("titulos_a_pagar").select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal").in("id", tituloIds).range(from, to)
+  ) as Array<{ id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null; n_nota_fiscal: string | null }>
+  const lancamentosRows = tituloIds.length === 0 ? [] : await fetchAllPaginado((from, to) =>
+    db.from("lancamentos").select("origem_id,conta_codigo").eq("origem", "titulo").in("origem_id", tituloIds).range(from, to)
+  ) as Array<{ origem_id: string; conta_codigo: string }>
+
+  const contaCodigos = [...new Set(lancamentosRows.map((l) => l.conta_codigo))]
+  const planoContas = contaCodigos.length === 0 ? [] : await fetchAllPaginado((from, to) =>
+    db.from("plano_contas").select("codigo,grupo").in("codigo", contaCodigos).range(from, to)
+  ) as Array<{ codigo: string; grupo: string }>
+  const grupoPorConta = new Map(planoContas.map((p) => [p.codigo, p.grupo]))
+  const contaPorTitulo = new Map(lancamentosRows.map((l) => [l.origem_id, l.conta_codigo]))
+  const infoPorId = new Map(titulosInfo.map((t) => [t.id, t]))
+
+  const porFornecedor = new Map<string, { valor: number; qtd: number }>()
+  for (const r of rows) {
+    const info = infoPorId.get(r.titulo_id)
+    if (!info?.n_nota_fiscal) continue
+    const conta = contaPorTitulo.get(r.titulo_id)
+    if (!conta || grupoPorConta.get(conta) !== "cmv") continue
+    const fornecedor = info.fantasia_fornecedor ?? info.razao_fornecedor ?? "Fornecedor não identificado"
+    const atual = porFornecedor.get(fornecedor) ?? { valor: 0, qtd: 0 }
+    atual.valor += Math.abs(Number(r.valor_titulo ?? 0))
+    atual.qtd += 1
+    porFornecedor.set(fornecedor, atual)
+  }
+
+  const ocorrencias: AlertaOcorrencia[] = [...porFornecedor.entries()]
+    .map(([fornecedor, { valor, qtd }]) => ({
+      chave: fornecedor,
+      descricao: `${fornecedor} · ${qtd} nota${qtd === 1 ? "" : "s"} com número mas sem XML importado`,
+      valor: round2(valor),
+    }))
+    .sort((a, b) => b.valor - a.valor)
+
+  return montarAlerta({
+    alertaChave: "2.11_nota_sem_xml_cmv",
+    grupo: 2,
+    titulo: "Nota fiscal existe mas XML não importado",
+    motivo: "Importar o XML resolve a categorização por NCM e o match título↔NF-e de uma vez para todas as notas do fornecedor.",
+    severidade: "atencao",
+    link: "/financeiro/dre/divergencias",
+    ocorrencias,
+  })
+}
+
 export async function calcularAlertasGrupo2(
   db: Db,
   unitId: string,
@@ -353,6 +414,7 @@ export async function calcularAlertasGrupo2(
     calcularAlertaConfiancaBaixa(db, unitId, competencia),
     calcularAlertaCustoSemReceita(db, unitId, unitNome, competencia),
     calcularAlertaDeducaoSemReceita(db, unitId, unitNome, competencia),
+    calcularAlertaNotaSemXmlCmv(db, unitId, competencia),
   ])
   return alertas.filter((a): a is Alerta => a !== null)
 }
