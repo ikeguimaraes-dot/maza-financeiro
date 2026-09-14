@@ -11,6 +11,7 @@ import { useAuth, useUnit } from "@maza/auth/context";
 import { convertRemoteGroups, flattenHrefs, type NavGroup, type NavItem, type RemoteNavGroup } from "./nav/types";
 
 function getZone(pathname: string): string {
+  if (pathname === "/dashboard") return "financeiro";
   if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
     return "inteligencia";
   }

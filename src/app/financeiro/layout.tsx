@@ -1,5 +1,6 @@
 import { AuthProvider } from "@maza/auth/context";
 import { requireUser } from "@maza/auth/server";
+import { getCurrentUnit } from "@maza/auth/unit";
 import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server";
 import type { Unit } from "@maza/db/types/database";
 import { Sidebar } from "@maza/ui/sidebar";
@@ -13,14 +14,15 @@ export default async function FinanceiroLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const user = await requireUser();
-  const [units, hasRegisteredUnits, navConfig] = await Promise.all([
+  const [units, hasRegisteredUnits, navConfig, currentUnit] = await Promise.all([
     loadAccessibleUnits(),
     hasAnyActiveUnit(),
     fetchNavConfig(),
+    getCurrentUnit(),
   ]);
 
   return (
-    <AuthProvider user={user} units={units} hasRegisteredUnits={hasRegisteredUnits}>
+    <AuthProvider user={user} units={units} hasRegisteredUnits={hasRegisteredUnits} initialUnitId={currentUnit?.id}>
       <div className="maza-workspace">
         <a className="maza-skip-link" href="#conteudo">Pular para o conteúdo</a>
         <Sidebar navGroups={navConfig.groups} shellUrl={navConfig.shellUrl} navOffline={navConfig.offline} />

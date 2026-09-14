@@ -7,8 +7,8 @@ import Link from "next/link";
 import { competenciaLabel } from "@/lib/financeiro/utils";
 import styles from "./cockpit.module.css";
 
-export function CockpitHeader({ unidade, competencia, competencias, consolidado, preview = false }: {
-  unidade: string; competencia: string | null; competencias: string[]; consolidado: boolean; preview?: boolean;
+export function CockpitHeader({ unidade, competencia, competencias, consolidado, preview = false, basePath = "/financeiro" }: {
+  unidade: string; competencia: string | null; competencias: string[]; consolidado: boolean; preview?: boolean; basePath?: "/financeiro" | "/dashboard";
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -16,7 +16,7 @@ export function CockpitHeader({ unidade, competencia, competencias, consolidado,
     const params = new URLSearchParams();
     if (month) params.set("competencia", month);
     if (consolidated) params.set("consolidado", "1");
-    startTransition(() => router.push(`${preview ? "/design-preview.html" : "/financeiro"}?${params}`));
+    startTransition(() => router.push(`${preview ? "/design-preview.html" : basePath}?${params}`));
   }
   return <>
     <header className="maza-page-heading maza-enter">

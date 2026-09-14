@@ -7,6 +7,14 @@ import type { NavConfigResponse, RemoteNavGroup, RemoteNavItem } from "./types"
 // — quem resolve string→componente Lucide é o client (Sidebar), nunca aqui.
 const FALLBACK_GROUPS: RemoteNavGroup[] = [
   {
+    id: "home",
+    label: null,
+    icon: null,
+    defaultOpen: true,
+    habilitado: true,
+    items: [{ href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" }],
+  },
+  {
     id: "financeiro",
     label: "Financeiro",
     icon: "Wallet",

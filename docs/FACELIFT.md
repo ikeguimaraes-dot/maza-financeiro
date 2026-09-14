@@ -14,6 +14,8 @@ O MISE foi clonado do repositório indicado pelo usuário e guardado em uma past
 
 ## O que foi entregue
 
+Correção posterior da aba Dashboard: consulte `DASHBOARD.md`. O Shell encaminha `/dashboard` ao mesmo painel financeiro da referência visual, e a seleção de unidade foi sincronizada entre menu e dados do servidor.
+
 - Identidade comum com Fraunces e Instrument Sans, superfícies marfim, navegação verde escura, destaques tangerina e lima, cores semânticas e tema escuro. Transições breves respeitam a preferência por movimento reduzido.
 - Cockpit financeiro com hierarquia de indicadores, minigráficos, evolução mensal interativa, composição de custos, DRE expansível, qualidade das fontes e pendências. Competência e consolidado preservam os filtros existentes.
 - Navegação móvel com acionador visível, painel sobreposto, fundo inerte, foco contido, Escape e retorno ao acionador. Busca de páginas por nome com Ctrl/Cmd K; seletor de tema persistido.

@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import type { Unit } from "@maza/db/types/database";
 
@@ -23,7 +24,7 @@ async function lerCookieUnidade(): Promise<string | undefined> {
  *
  * Falha em qualquer query NÃO derruba o request — loga e retorna null.
  */
-export async function getCurrentUnit(): Promise<Unit | null> {
+export const getCurrentUnit = cache(async (): Promise<Unit | null> => {
   try {
     const supabase = await createSupabaseServerClient();
     if (!supabase) {
@@ -69,7 +70,7 @@ export async function getCurrentUnit(): Promise<Unit | null> {
     console.error("[getCurrentUnit] exceção:", e);
     return null;
   }
-}
+});
 
 export type UnidadeAtual = { unit: Unit | null; cookiePresente: boolean };
 

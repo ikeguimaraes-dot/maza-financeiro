@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { CurrentUser } from "./server";
 import type { Unit } from "@maza/db/types/database";
 import { getBrowserClient } from "@maza/db/supabase/client";
+import { resolveUnitSelection } from "./unit-selection";
 
 type AuthContextValue = {
   user: CurrentUser | null;
@@ -17,20 +18,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const STORED_UNIT_KEY = "kph_unit_id";
-// Rename kph_unit_id → maza_unit_id em andamento (ver lib/maza/auth/unit.ts)
-// — grava os dois cookies com o mesmo valor: mantém qualquer leitor do
-// nome antigo funcionando enquanto adianta a migração pro nome novo.
-const COOKIE_KEY_NOVO = "maza_unit_id";
+const STORED_UNIT_KEY = "maza_unit_id";
+const LEGACY_UNIT_KEY = "kph_unit_id";
+// The Shell uses maza_unit_id. Keep the legacy preference in sync while migrating.
 // Cookie espelha o localStorage pra Server Components conseguirem ler.
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 ano
 
 function persistUnit(id: string) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORED_UNIT_KEY, id);
+  window.localStorage.setItem(LEGACY_UNIT_KEY, id);
   const encoded = encodeURIComponent(id);
   document.cookie = `${STORED_UNIT_KEY}=${encoded}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
-  document.cookie = `${COOKIE_KEY_NOVO}=${encoded}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+  document.cookie = `${LEGACY_UNIT_KEY}=${encoded}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
 /**
@@ -44,30 +44,28 @@ export function AuthProvider({
   user,
   units,
   hasRegisteredUnits,
+  initialUnitId,
   children,
 }: {
   user: CurrentUser | null;
   units: Unit[];
   hasRegisteredUnits: boolean;
+  initialUnitId?: string | null;
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const [unitId, setUnitIdState] = useState<string | null>(null);
+  const [unitId, setUnitIdState] = useState<string | null>(() => resolveUnitSelection(units, initialUnitId));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = window.localStorage.getItem(STORED_UNIT_KEY);
-    const valid = stored && units.some((u) => u.id === stored) ? stored : null;
-    const fallback = units[0]?.id ?? null;
-    const next = valid ?? fallback;
-    // Hidratação do localStorage — setState dentro de useEffect é intencional
-    // aqui (não dá pra ler localStorage durante render). Cookie já vem do
-    // servidor; este useEffect só cobre o caso "localStorage tem unit que
-    // o cookie expirou" — re-escreve o cookie no `persistUnit` abaixo.
+    const legacy = window.localStorage.getItem(LEGACY_UNIT_KEY);
+    const next = resolveUnitSelection(units, initialUnitId, stored, legacy);
+    // Synchronize browser preferences with the unit already used by the server.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUnitIdState(next);
     if (next) persistUnit(next);
-  }, [units]);
+  }, [units, initialUnitId]);
 
   /**
    * Troca a unit e invalida o tree do servidor.

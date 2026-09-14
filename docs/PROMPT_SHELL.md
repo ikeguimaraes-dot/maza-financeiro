@@ -1,5 +1,7 @@
 # Continuidade do facelift — Shell
 
+A correção posterior está em `DASHBOARD.md`: `/dashboard` é servido pelo Financeiro via rewrite do Shell e compartilha a implementação do Cockpit. Não recriar uma página local do Shell nessa rota.
+
 Continue o facelift Maza v1 já implementado. O repositório correto é `https://github.com/ikeguimaraes-dot/maza.git`, na pasta `/Users/henriqueguimaraes/maza`. Confira `git remote get-url origin`, o estado local e o `AGENTS.md` antes de editar. Consulte os commits do facelift e preserve eventuais alterações locais adicionais.
 
 Leia `/Users/henriqueguimaraes/maza-financeiro/docs/FACELIFT.md` e `facelift-manifest.json`. A referência do cockpit está em `http://localhost:3001/design-preview.html`, quando o servidor financeiro estiver ativo. O HEAD anterior à entrega do Shell era `eb6e4ac`; isso é a base, não um commit que contenha o facelift.
