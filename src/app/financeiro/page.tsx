@@ -1,9 +1,10 @@
 import Link from "next/link";
-
 import { requireUser } from "@maza/auth/server";
+import { getCurrentUnitComOrigem } from "@maza/auth/unit";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import { competenciaLabel, competenciaShift } from "@/lib/financeiro/utils";
 import { CockpitPainel } from "@/components/financeiro/cockpit/CockpitPainel";
+import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallback";
 import type {
   KpiSnapshotRow,
   DreSnapshotRow,
@@ -14,7 +15,10 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-// Únicas duas units operacionais do grupo (sql/026_cmv_bootstrap.sql).
+// Únicas duas units operacionais do grupo (sql/026_cmv_bootstrap.sql) — só
+// usadas pra montar a visão Consolidado (soma das duas). A unidade ÚNICA
+// vem do cookie do shell (getCurrentUnitComOrigem), nunca de um seletor
+// local — evita a tela mostrar uma unidade diferente da selecionada no menu.
 const YOSHIMORI_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909c";
 const IKY_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909b";
 export const UNIDADES = [
@@ -24,7 +28,7 @@ export const UNIDADES = [
 
 const JANELA_MESES = 6;
 
-type SearchParams = Promise<{ unidade?: string; competencia?: string }>;
+type SearchParams = Promise<{ consolidado?: string; competencia?: string }>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchAll(buildQuery: (from: number, to: number) => any) {
@@ -55,9 +59,10 @@ export default async function FinanceiroHubPage({ searchParams }: { searchParams
   )) as Array<{ competencia: string }>;
   const competenciasDisponiveis = [...new Set(todasCompetencias.map((c) => c.competencia))].sort();
 
-  const unidadeParam = sp.unidade && (sp.unidade === "consolidado" || unitIdsTodos.includes(sp.unidade))
-    ? sp.unidade
-    : "consolidado";
+  const consolidado = sp.consolidado === "1";
+  const { unit, cookiePresente } = await getCurrentUnitComOrigem();
+  const unidadeParam = consolidado ? "consolidado" : (unit?.id ?? "consolidado");
+  const unidadeNome = consolidado ? "Consolidado" : (unit?.name ?? "Consolidado");
   const competenciaParam = sp.competencia && competenciasDisponiveis.includes(sp.competencia)
     ? sp.competencia
     : (competenciasDisponiveis.at(-1) ?? null);
@@ -69,12 +74,13 @@ export default async function FinanceiroHubPage({ searchParams }: { searchParams
           Cockpit financeiro
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "8px 0 4px" }}>
-          Financeiro{competenciaParam ? ` · ${competenciaLabel(competenciaParam)}` : ""}
+          Financeiro · {unidadeNome}{competenciaParam ? ` · ${competenciaLabel(competenciaParam)}` : ""}
         </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 16px" }}>
+        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 8px" }}>
           Lê só do razão (lançamentos → snapshot). Número incompleto aparece como incompleto, nunca como zero.
         </p>
-        <Seletores unidade={unidadeParam} competencia={competenciaParam} competencias={competenciasDisponiveis} />
+        {!consolidado && <AvisoUnidadeFallback cookiePresente={cookiePresente} />}
+        <Seletores consolidado={consolidado} competencia={competenciaParam} competencias={competenciasDisponiveis} />
       </header>
 
       {!competenciaParam ? (
@@ -141,8 +147,8 @@ async function PainelData({ db, unidadeParam, competenciaParam, unitIdsTodos }: 
   );
 }
 
-function Seletores({ unidade, competencia, competencias }: {
-  unidade: string; competencia: string | null; competencias: string[];
+function Seletores({ consolidado, competencia, competencias }: {
+  consolidado: boolean; competencia: string | null; competencias: string[];
 }) {
   const linkStyle = (ativo: boolean): React.CSSProperties => ({
     padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: ativo ? 700 : 500,
@@ -151,24 +157,25 @@ function Seletores({ unidade, competencia, competencias }: {
     color: ativo ? "var(--primary-foreground)" : "var(--text-3)",
     border: "1px solid var(--border)",
   });
-  const href = (unidadeVal: string, competenciaVal: string | null) => {
+  const href = (consolidadoVal: boolean, competenciaVal: string | null) => {
     const params = new URLSearchParams();
-    params.set("unidade", unidadeVal);
+    if (consolidadoVal) params.set("consolidado", "1");
     if (competenciaVal) params.set("competencia", competenciaVal);
     return `/financeiro?${params.toString()}`;
   };
 
   return (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-      <div style={{ display: "flex", gap: 6 }}>
-        <Link href={href("consolidado", competencia)} style={linkStyle(unidade === "consolidado")}>Consolidado</Link>
-        <Link href={href(UNIDADES[0].id, competencia)} style={linkStyle(unidade === UNIDADES[0].id)}>{UNIDADES[0].nome}</Link>
-        <Link href={href(UNIDADES[1].id, competencia)} style={linkStyle(unidade === UNIDADES[1].id)}>{UNIDADES[1].nome}</Link>
-      </div>
+      {/* Consolidado é um MODO de exibição (soma as duas unidades), não um
+          seletor de unidade — a unidade única vem exclusivamente do cookie
+          do shell. */}
+      <Link href={href(!consolidado, competencia)} style={linkStyle(consolidado)}>
+        {consolidado ? "✓ Consolidado" : "Ver consolidado"}
+      </Link>
       {competencias.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {competencias.map((c) => (
-            <Link key={c} href={href(unidade, c)} style={linkStyle(c === competencia)}>
+            <Link key={c} href={href(consolidado, c)} style={linkStyle(c === competencia)}>
               {competenciaLabel(c)}
             </Link>
           ))}

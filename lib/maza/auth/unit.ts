@@ -3,7 +3,18 @@ import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import type { Unit } from "@maza/db/types/database";
 
-const COOKIE_KEY = "kph_unit_id";
+// Rename kph_unit_id → maza_unit_id em andamento (mesmo rename kph→maza do
+// menu). O shell ainda grava o nome antigo — migração coordenada nos dois
+// repos. Leitura tolerante aos dois nomes enquanto isso: maza_unit_id tem
+// prioridade se presente, senão cai pro nome antigo. Nunca escreve o
+// cookie aqui (Server Component não pode; e quem grava é o shell).
+const COOKIE_KEY_NOVO = "maza_unit_id";
+const COOKIE_KEY_ANTIGO = "kph_unit_id";
+
+async function lerCookieUnidade(): Promise<string | undefined> {
+  const cookieStore = await cookies();
+  return cookieStore.get(COOKIE_KEY_NOVO)?.value ?? cookieStore.get(COOKIE_KEY_ANTIGO)?.value;
+}
 
 /**
  * Resolve a unit selecionada (server-side) lendo o cookie escrito pelo
@@ -20,8 +31,7 @@ export async function getCurrentUnit(): Promise<Unit | null> {
       return null;
     }
 
-    const cookieStore = await cookies();
-    const cookieId = cookieStore.get(COOKIE_KEY)?.value;
+    const cookieId = await lerCookieUnidade();
 
     // 1) Tenta resolver pela unit no cookie. Se RLS bloquear ou não existir,
     //    cai no fallback abaixo.
@@ -59,4 +69,20 @@ export async function getCurrentUnit(): Promise<Unit | null> {
     console.error("[getCurrentUnit] exceção:", e);
     return null;
   }
+}
+
+export type UnidadeAtual = { unit: Unit | null; cookiePresente: boolean };
+
+/**
+ * Mesma resolução de getCurrentUnit(), mas também informa se o cookie de
+ * unidade existia — pra telas que precisam mostrar um aviso explícito
+ * quando caem no fallback (nenhuma unidade selecionada no shell ainda).
+ * Não substitui getCurrentUnit(): esta função é só para as telas que
+ * removeram seletor local de unidade e precisam do aviso; os callers
+ * existentes de getCurrentUnit() continuam intactos.
+ */
+export async function getCurrentUnitComOrigem(): Promise<UnidadeAtual> {
+  const cookiePresente = !!(await lerCookieUnidade());
+  const unit = await getCurrentUnit();
+  return { unit, cookiePresente };
 }
