@@ -1,24 +1,16 @@
 import Link from "next/link";
 
 import { requireUser } from "@maza/auth/server";
+import { getCurrentUnitComOrigem } from "@maza/auth/unit";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import { competenciaLabel } from "@/lib/financeiro/utils";
 import { getLancamentosNaoClassificados, listarRegras } from "@/app/financeiro/razao/actions";
 import { ClassificacaoPainel } from "@/components/financeiro/classificacao/ClassificacaoPainel";
+import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallback";
 
 export const dynamic = "force-dynamic";
 
-// Mesmas únicas duas units operacionais do grupo usadas no Cockpit
-// (src/app/financeiro/page.tsx) — uma regra de classificação é sempre
-// escopada a uma unidade específica, então não existe "Consolidado" aqui.
-const YOSHIMORI_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909c";
-const IKY_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909b";
-const UNIDADES = [
-  { id: YOSHIMORI_UNIT_ID, nome: "Yoshimori" },
-  { id: IKY_UNIT_ID, nome: "IKY" },
-] as const;
-
-type SearchParams = Promise<{ unidade?: string; competencia?: string }>;
+type SearchParams = Promise<{ competencia?: string }>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchAll(buildQuery: (from: number, to: number) => any) {
@@ -42,19 +34,23 @@ export default async function ClassificacaoPage({ searchParams }: { searchParams
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
 
-  const unitId = sp.unidade && UNIDADES.some((u) => u.id === sp.unidade) ? sp.unidade : UNIDADES[0].id;
+  // Unidade é contexto global (cookie do shell) — uma regra de
+  // classificação é sempre escopada a uma unidade específica, mas QUAL
+  // unidade é decidido no menu, não aqui.
+  const { unit, cookiePresente } = await getCurrentUnitComOrigem();
+  const unitId = unit?.id ?? null;
+  const unitName = unit?.name ?? "—";
 
-  const competenciasRows = (await fetchAll((from, to) =>
+  const competenciasRows = unitId ? (await fetchAll((from, to) =>
     db.from("kpi_snapshot").select("competencia").eq("unit_id", unitId).order("competencia").range(from, to),
-  )) as Array<{ competencia: string }>;
+  )) as Array<{ competencia: string }> : [];
   const competenciasDisponiveis = [...new Set(competenciasRows.map((c) => c.competencia))].sort();
   const competencia = sp.competencia && competenciasDisponiveis.includes(sp.competencia)
     ? sp.competencia
     : (competenciasDisponiveis.at(-1) ?? null);
 
-  const href = (unidadeVal: string, competenciaVal: string | null) => {
+  const href = (competenciaVal: string | null) => {
     const params = new URLSearchParams();
-    params.set("unidade", unidadeVal);
     if (competenciaVal) params.set("competencia", competenciaVal);
     return `/financeiro/dre/classificacao?${params.toString()}`;
   };
@@ -76,22 +72,18 @@ export default async function ClassificacaoPage({ searchParams }: { searchParams
 
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "0 0 4px" }}>
-          Classificação{competencia ? ` · ${competenciaLabel(competencia)}` : ""}
+          Classificação · {unitName}{competencia ? ` · ${competenciaLabel(competencia)}` : ""}
         </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 16px" }}>
+        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 8px" }}>
           Lançamentos em 9.99 (a classificar) agrupados por fornecedor. Uma decisão classifica todo o
           histórico e o futuro daquele fornecedor — gerarLancamentosTitulos() aplica a regra em toda execução.
         </p>
+        <AvisoUnidadeFallback cookiePresente={cookiePresente} />
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            {UNIDADES.map((u) => (
-              <Link key={u.id} href={href(u.id, competencia)} style={linkStyle(u.id === unitId)}>{u.nome}</Link>
-            ))}
-          </div>
           {competenciasDisponiveis.length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {competenciasDisponiveis.map((c) => (
-                <Link key={c} href={href(unitId, c)} style={linkStyle(c === competencia)}>
+                <Link key={c} href={href(c)} style={linkStyle(c === competencia)}>
                   {competenciaLabel(c)}
                 </Link>
               ))}
@@ -100,7 +92,7 @@ export default async function ClassificacaoPage({ searchParams }: { searchParams
         </div>
       </header>
 
-      {!competencia ? (
+      {!unitId || !competencia ? (
         <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
           border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
           Nenhum snapshot gerado ainda pra essa unidade.
