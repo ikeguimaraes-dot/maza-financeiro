@@ -36,11 +36,11 @@ export function CardsResumo({ resumo, confianca, temContaCadastrada }: Props) {
       <KpiCard
         label="A pagar vencido"
         value={formatBRLCompact(resumo.aPagarVencido)}
-        sub="Não pago, com d_vencimento < hoje"
+        sub="Pagamentos com vencimento em atraso"
         accent={resumo.aPagarVencido > 0 ? "#EF4444" : undefined}
       />
       <KpiCard label="A pagar 7 dias" value={formatBRLCompact(resumo.aPagar7Dias)} sub="Vencimento até 7 dias" />
-      <KpiCard label="A receber 7 dias" value={formatBRLCompact(resumo.aReceber7Dias)} sub="Previsto por prazo de forma" />
+      <KpiCard label="A receber 7 dias" value={formatBRLCompact(resumo.aReceber7Dias)} sub="Recebimentos previstos no período" />
       <KpiCard
         label="Projeção 30 dias"
         value={

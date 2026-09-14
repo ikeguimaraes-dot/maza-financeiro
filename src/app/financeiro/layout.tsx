@@ -5,6 +5,8 @@ import type { Unit } from "@maza/db/types/database";
 import { Sidebar } from "@maza/ui/sidebar";
 import { fetchNavConfig } from "@maza/ui/nav/fetchNavConfig";
 
+import { FinanceiroTopbar } from "@/components/ui/FinanceiroTopbar";
+
 export const dynamic = "force-dynamic";
 
 export default async function FinanceiroLayout({
@@ -19,11 +21,15 @@ export default async function FinanceiroLayout({
 
   return (
     <AuthProvider user={user} units={units} hasRegisteredUnits={hasRegisteredUnits}>
-      <div style={{ display: "flex", height: "100vh" }}>
+      <div className="maza-workspace">
+        <a className="maza-skip-link" href="#conteudo">Pular para o conteúdo</a>
         <Sidebar navGroups={navConfig.groups} shellUrl={navConfig.shellUrl} navOffline={navConfig.offline} />
-        <main className="shell-main maza-page-main" style={{ flex: 1, overflowY: "auto", padding: "32px 28px" }}>
+        <div className="maza-workspace-body">
+          <FinanceiroTopbar groups={navConfig.groups} shellUrl={navConfig.shellUrl} />
+          <main id="conteudo" tabIndex={-1} className="shell-main maza-page-main">
           {children}
         </main>
+        </div>
       </div>
     </AuthProvider>
   );

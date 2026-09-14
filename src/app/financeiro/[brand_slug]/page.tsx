@@ -209,7 +209,7 @@ export default async function FinanceiroBrandPage({
       <section
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
           gap: 16,
           marginBottom: 28,
         }}

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "eslint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:ui": "node --test tests/cockpit-presentation.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

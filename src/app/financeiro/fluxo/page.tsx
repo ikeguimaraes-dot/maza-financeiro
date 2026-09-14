@@ -1,3 +1,4 @@
+import { PageHeading } from "@/components/ui/PageHeading"
 import Link from "next/link"
 
 import { requireUser } from "@maza/auth/server"
@@ -55,7 +56,7 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
     return `/financeiro/fluxo?${params.toString()}`
   }
   const linkStyle = (ativo: boolean): React.CSSProperties => ({
-    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: ativo ? 700 : 500,
+    padding: "10px 16px", borderRadius: 999, fontSize: 12, fontWeight: ativo ? 700 : 500,
     textDecoration: "none", whiteSpace: "nowrap",
     background: ativo ? "var(--brand, #C4622D)" : "var(--surface-2)",
     color: ativo ? "var(--primary-foreground)" : "var(--text-3)",
@@ -64,23 +65,11 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-      <nav style={{ display: "flex", gap: 16, marginBottom: 14, fontSize: 13 }}>
-        <Link href="/financeiro" style={{ color: "var(--text-3)", textDecoration: "none" }}>Financeiro</Link>
-        <span style={{ color: "var(--text-3)" }}>/</span>
-        <span style={{ color: "var(--text)", fontWeight: 600 }}>Fluxo de Caixa</span>
-      </nav>
-
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "0 0 4px" }}>
-          Fluxo de Caixa · {unitName}
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 720, margin: "0 0 8px" }}>
-          Desembolso, não competência — lê vencimento de título, prazo de recebimento por forma de
-          pagamento e extrato bancário (quando importado). Não reaproveita lançamentos do razão.
-        </p>
+      <PageHeading title="Fluxo de caixa" eyebrow={`Financeiro · ${unitName}`} description="Entradas, saídas e saldo projetado. Antecipe os próximos movimentos do seu caixa." />
+      <div style={{ marginBottom: 24 }}>
         <AvisoUnidadeFallback cookiePresente={cookiePresente} />
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <Link href={href(null, periodoDias)} style={linkStyle(contaId === null)}>Todas as contas</Link>
             {contas.map((c) => (
               <Link key={c.id} href={href(c.id, periodoDias)} style={linkStyle(c.id === contaId)}>
@@ -88,18 +77,18 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
               </Link>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {PERIODOS.map((d) => (
               <Link key={d} href={href(contaId, d)} style={linkStyle(d === periodoDias)}>{d} dias</Link>
             ))}
           </div>
         </div>
-      </header>
+      </div>
 
       {!dados || !unitId ? (
         <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
           border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
-          Erro ao carregar fluxo de caixa — sem conexão com o banco.
+          {!unitId ? "Selecione uma unidade no menu para consultar o fluxo de caixa." : "Não foi possível carregar o fluxo de caixa. Tente atualizar a página."}
         </div>
       ) : (
         <>

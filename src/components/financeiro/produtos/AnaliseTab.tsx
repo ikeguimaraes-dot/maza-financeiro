@@ -153,7 +153,7 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
       </div>
 
       {/* ── Painéis: lista + detalhe ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 16, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 16, alignItems: "start" }}>
         {/* Lista lateral (busca + ordenação rápida) */}
         <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
           <div style={{ padding: 12, borderBottom: "1px solid var(--border)", display: "grid", gap: 8 }}>

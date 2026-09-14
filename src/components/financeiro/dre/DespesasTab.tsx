@@ -438,7 +438,7 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
           </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 20, alignItems: "start" }}>
           {/* Table */}
           <div style={{ overflowX: "auto" }}>
             <div style={{ marginBottom: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>

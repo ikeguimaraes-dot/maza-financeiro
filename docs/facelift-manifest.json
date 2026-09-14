@@ -1,0 +1,66 @@
+{
+  "version": "maza-facelift-v1",
+  "date": "2026-09-14",
+  "repositories": {
+    "financeiro": {
+      "directory": "maza-financeiro",
+      "remote": "https://github.com/ikeguimaraes-dot/maza-financeiro.git",
+      "baseHead": "9c7ff80"
+    },
+    "shell": {
+      "directory": "maza",
+      "remote": "https://github.com/ikeguimaraes-dot/maza.git",
+      "baseHead": "eb6e4ac"
+    },
+    "mise": {
+      "directory": "maza-mise-visao-facelift",
+      "remote": "https://github.com/ikeguimaraes-dot/maza-mise-visao.git",
+      "baseHead": "83e674e"
+    }
+  },
+  "excludedDirectories": [
+    "maza-MISE",
+    "maza-mise-visao"
+  ],
+  "sharedAssets": [
+    {
+      "paths": {
+        "financeiro": "src/styles/maza-system.css",
+        "mise": "src/styles/maza-system.css",
+        "shell": "apps/maza/src/styles/maza-system.css"
+      },
+      "sha256": "90eb1b93f697ce4bca122c8079d8128ea670547a56a23c63e31b298cb033fa9c"
+    },
+    {
+      "paths": {
+        "financeiro": "src/components/ui/ThemeProvider.tsx",
+        "mise": "src/components/ui/ThemeProvider.tsx",
+        "shell": "apps/maza/src/components/ui/ThemeProvider.tsx"
+      },
+      "sha256": "7349c36a0b75f10c4e8a406d61be3c2cf7c2515bf1fac5a983cc9bd989f0f480"
+    },
+    {
+      "paths": {
+        "financeiro": "src/components/ui/ThemeToggle.tsx",
+        "mise": "src/components/ui/ThemeToggle.tsx",
+        "shell": "apps/maza/src/components/ui/ThemeToggle.tsx"
+      },
+      "sha256": "bf356ca7cb8cdcec1e17d65f65e2b665583b43819e8aea3da33dbc198a31e348"
+    },
+    {
+      "paths": {
+        "financeiro": "src/components/ui/useMobileNavigation.ts",
+        "mise": "src/components/ui/useMobileNavigation.ts",
+        "shell": "apps/maza/src/components/ui/useMobileNavigation.ts"
+      },
+      "sha256": "9f446f0320f4dcf5bd227f05e401f7d487adf473dc1212a26bae337a69e27396"
+    },
+    {
+      "paths": {
+        "financeiro": "src/components/ui/WorkspaceTopbar.tsx",
+        "mise": "src/components/ui/WorkspaceTopbar.tsx"
+      },
+      "sha256": "66c392b351802be31915634080a31ce0fc0a1036e5c5d10df8ef482804a7edeb"
+    }
+  ]
+}

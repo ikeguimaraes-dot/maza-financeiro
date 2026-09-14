@@ -1,3 +1,4 @@
+import { PageHeading } from "@/components/ui/PageHeading"
 import Link from "next/link"
 import { requireUser } from "@maza/auth/server"
 import { getCurrentUnit } from "@maza/auth/unit"
@@ -351,27 +352,6 @@ export default async function DreGerencialPage({
 
   // ── Empty state for no-table scenario ─────────────────────────────────────
 
-  const TABLE_FOR_TAB: Record<string, string> = {
-    dre:         "dre_mensal",
-    indicadores: "dre_indicadores",
-    receita:     "dre_receita_detalhada",
-    despesas:    "dre_despesa_detalhada",
-    folha:       "dre_folha",
-    gorjeta:     "dre_gorjeta_mensal",
-    historico:   "dre_faturamento_historico",
-    auditoria:   "dre_mensal",
-  }
-  const SQL_FOR_TAB: Record<string, string> = {
-    dre:         "sql/002_dre_mensal.sql",
-    indicadores: "sql/005_dre_indicadores.sql",
-    receita:     "sql/006_dre_receita_detalhada.sql",
-    despesas:    "sql/007_dre_despesa_detalhada.sql",
-    folha:       "sql/008_dre_folha.sql",
-    gorjeta:     "sql/009_dre_gorjeta_mensal.sql",
-    historico:   "sql/010_dre_faturamento_historico.sql",
-    auditoria:   "sql/002_dre_mensal.sql",
-  }
-
   const isEmpty =
     (aba === "dre" && dreRows.length === 0) ||
     (aba === "indicadores" && indicRows.length === 0 && linhasRows.length === 0) ||
@@ -384,49 +364,8 @@ export default async function DreGerencialPage({
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-      {/* Breadcrumb */}
-      <Link
-        href="/financeiro"
-        style={{
-          fontSize: 11,
-          color: "var(--text-3)",
-          textDecoration: "none",
-          fontWeight: 600,
-          letterSpacing: 0.6,
-          textTransform: "uppercase",
-        }}
-      >
-        ← Financeiro
-      </Link>
-
-      {/* Header */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-          gap: 16,
-          margin: "10px 0 20px",
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              fontSize: 26,
-              fontWeight: 700,
-              color: "var(--text)",
-              letterSpacing: -0.5,
-              margin: "0 0 4px",
-            }}
-          >
-            DRE Gerencial
-          </h1>
-          <p style={{ fontSize: 13, color: "var(--text-3)", margin: 0 }}>
-            Orçado vs Realizado · 2026
-          </p>
-        </div>
-
+      <PageHeading title="DRE gerencial" description="Do faturamento ao resultado, entenda o desempenho da sua operação e compare o realizado com o orçamento." />
+      <div style={{ marginBottom: 24 }}>
         {/* Right side: import button + month selector */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <DreImportButton />
@@ -458,42 +397,14 @@ export default async function DreGerencialPage({
           </nav>
         )}
         </div>
-      </header>
+      </div>
 
       {/* Sub-tab navigation */}
-      <DreTabNav aba={aba} />
+      <DreTabNav aba={aba} mes={mes} />
 
       {/* ── EMPTY STATE ─────────────────────────────────────────────────────── */}
       {isEmpty ? (
-        <div
-          style={{
-            padding: "40px 24px",
-            textAlign: "center",
-            background: "var(--surface)",
-            border: "1px dashed var(--border)",
-            borderRadius: 14,
-          }}
-        >
-          <p style={{ fontSize: 14, color: "var(--text-3)", marginBottom: 12 }}>
-            Tabela{" "}
-            <code
-              style={{
-                background: "var(--surface-2)",
-                padding: "2px 6px",
-                borderRadius: 4,
-                fontSize: 12,
-              }}
-            >
-              {TABLE_FOR_TAB[aba]}
-            </code>{" "}
-            não encontrada ou sem dados.
-          </p>
-          <p style={{ fontSize: 12, color: "var(--text-3)" }}>
-            Execute{" "}
-            <strong style={{ color: "var(--text)" }}>{SQL_FOR_TAB[aba]}</strong>{" "}
-            no Supabase Dashboard → SQL Editor.
-          </p>
-        </div>
+        <div className="maza-panel maza-empty"><h2>Um novo olhar para seus resultados.</h2><p>Não há dados disponíveis para esta visão. Confira as importações ou escolha outro período para continuar.</p><DreImportButton /></div>
       ) : (
         <>
           {/* ── TAB: DRE ──────────────────────────────────────────────────── */}

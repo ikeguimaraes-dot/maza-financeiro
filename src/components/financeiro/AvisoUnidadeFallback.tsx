@@ -5,8 +5,8 @@
 export function AvisoUnidadeFallback({ cookiePresente }: { cookiePresente: boolean }) {
   if (cookiePresente) return null
   return (
-    <p style={{ fontSize: 11, color: "#F59E0B", margin: "0 0 10px" }}>
-      Nenhuma unidade selecionada no shell ainda — mostrando a primeira unidade ativa.
+    <p style={{ fontSize: 11, color: "var(--color-warning)", margin: "0 0 10px" }}>
+      Exibindo a primeira unidade disponível. Use o menu para escolher outra unidade.
     </p>
   )
 }

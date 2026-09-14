@@ -163,7 +163,7 @@ export function LancamentoForm({
           borderRadius: 14,
           padding: "20px 22px",
           display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
           gap: 14,
         }}
       >

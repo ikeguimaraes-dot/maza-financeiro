@@ -1,8 +1,9 @@
-import Link from "next/link";
 import { requireUser } from "@maza/auth/server";
 import { getCurrentUnitComOrigem } from "@maza/auth/unit";
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
-import { competenciaLabel, competenciaShift } from "@/lib/financeiro/utils";
+import { competenciaShift } from "@/lib/financeiro/utils";
+import { CockpitHeader } from "@/components/financeiro/cockpit/CockpitHeader";
+import { CockpitEmpty } from "@/components/financeiro/cockpit/CockpitPainel";
 import { CockpitPainel } from "@/components/financeiro/cockpit/CockpitPainel";
 import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallback";
 import type {
@@ -68,26 +69,12 @@ export default async function FinanceiroHubPage({ searchParams }: { searchParams
     : (competenciasDisponiveis.at(-1) ?? null);
 
   return (
-    <div style={{ maxWidth: 1240, margin: "0 auto" }}>
-      <header style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.6, textTransform: "uppercase", color: "var(--text-3)" }}>
-          Cockpit financeiro
-        </div>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "8px 0 4px" }}>
-          Financeiro · {unidadeNome}{competenciaParam ? ` · ${competenciaLabel(competenciaParam)}` : ""}
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 640, margin: "0 0 8px" }}>
-          Lê só do razão (lançamentos → snapshot). Número incompleto aparece como incompleto, nunca como zero.
-        </p>
-        {!consolidado && <AvisoUnidadeFallback cookiePresente={cookiePresente} />}
-        <Seletores consolidado={consolidado} competencia={competenciaParam} competencias={competenciasDisponiveis} />
-      </header>
+    <div style={{ maxWidth: 1440, margin: "0 auto" }}>
+      <CockpitHeader unidade={unidadeNome} competencia={competenciaParam} competencias={competenciasDisponiveis} consolidado={consolidado} />
+      {!consolidado && <AvisoUnidadeFallback cookiePresente={cookiePresente} />}
 
       {!competenciaParam ? (
-        <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
-          border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
-          Nenhum snapshot gerado ainda. Rode gerarRazao() pra alguma unidade/competência primeiro.
-        </div>
+        <CockpitEmpty />
       ) : (
         <PainelData
           db={db}
@@ -144,43 +131,5 @@ async function PainelData({ db, unidadeParam, competenciaParam, unitIdsTodos }: 
       planoContas={planoContas}
       fontes={fontes}
     />
-  );
-}
-
-function Seletores({ consolidado, competencia, competencias }: {
-  consolidado: boolean; competencia: string | null; competencias: string[];
-}) {
-  const linkStyle = (ativo: boolean): React.CSSProperties => ({
-    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: ativo ? 700 : 500,
-    textDecoration: "none", whiteSpace: "nowrap",
-    background: ativo ? "var(--brand, #C4622D)" : "var(--surface-2)",
-    color: ativo ? "var(--primary-foreground)" : "var(--text-3)",
-    border: "1px solid var(--border)",
-  });
-  const href = (consolidadoVal: boolean, competenciaVal: string | null) => {
-    const params = new URLSearchParams();
-    if (consolidadoVal) params.set("consolidado", "1");
-    if (competenciaVal) params.set("competencia", competenciaVal);
-    return `/financeiro?${params.toString()}`;
-  };
-
-  return (
-    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-      {/* Consolidado é um MODO de exibição (soma as duas unidades), não um
-          seletor de unidade — a unidade única vem exclusivamente do cookie
-          do shell. */}
-      <Link href={href(!consolidado, competencia)} style={linkStyle(consolidado)}>
-        {consolidado ? "✓ Consolidado" : "Ver consolidado"}
-      </Link>
-      {competencias.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {competencias.map((c) => (
-            <Link key={c} href={href(consolidado, c)} style={linkStyle(c === competencia)}>
-              {competenciaLabel(c)}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }

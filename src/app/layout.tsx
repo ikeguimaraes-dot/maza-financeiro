@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Instrument_Sans } from "next/font/google";
 import "./globals.css";
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
@@ -31,10 +32,11 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`dark ${fraunces.variable} ${instrumentSans.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={`${fraunces.variable} ${instrumentSans.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground flex flex-col">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

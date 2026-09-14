@@ -412,7 +412,7 @@ export function HistoricoDrawer({ item, historico, loading, onClose, onSeleciona
       }} />
 
       <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: 520,
+        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px, 100vw)",
         zIndex: 999, background: "var(--surface)",
         borderLeft: "1px solid var(--border)",
         display: "flex", flexDirection: "column", overflowY: "auto",

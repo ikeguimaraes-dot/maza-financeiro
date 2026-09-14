@@ -1,5 +1,7 @@
 "use client"
 
+import { useReducedMotion } from "@/components/ui/useReducedMotion"
+
 import {
   ComposedChart,
   Bar,
@@ -25,6 +27,7 @@ function formatDiaCurto(iso: string): string {
 }
 
 export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
+  const reducedMotion = useReducedMotion();
   const data = dias.map((d) => ({
     data: d.data,
     label: formatDiaCurto(d.data),
@@ -40,24 +43,25 @@ export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
-        borderRadius: 12,
+        borderRadius: 20,
         padding: "16px 12px 10px",
         marginBottom: 28,
       }}
     >
+      <div className="maza-panel-heading" style={{ padding: "8px 12px 22px" }}><div><h2>Seu caixa ao longo do tempo</h2><p>Entradas e saídas na escala à esquerda · saldo na escala à direita</p></div></div>
       <ResponsiveContainer width="100%" height={280}>
         <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272A" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fontSize: 9, fill: "#71717A" }}
+            tick={{ fontSize: 10, fill: "var(--text-3)" }}
             axisLine={false}
             tickLine={false}
             interval={Math.max(0, Math.floor(data.length / 12) - 1)}
           />
           <YAxis
             yAxisId="fluxo"
-            tick={{ fontSize: 9, fill: "#71717A" }}
+            tick={{ fontSize: 10, fill: "var(--text-3)" }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v: number) => formatBRL(v).replace("R$", "").trim()}
@@ -65,7 +69,7 @@ export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
           <YAxis
             yAxisId="saldo"
             orientation="right"
-            tick={{ fontSize: 9, fill: "#71717A" }}
+            tick={{ fontSize: 10, fill: "var(--text-3)" }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v: number) => formatBRL(v).replace("R$", "").trim()}
@@ -81,48 +85,51 @@ export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
                 saidaPrevista: "Saída prevista",
                 saldoFinal: "Saldo acumulado",
               }
-              return [formatBRL(Math.abs(n)), nomes[key] ?? key]
+              return [formatBRL(key.startsWith("saida") ? Math.abs(n) : n), nomes[key] ?? key]
             }}
             contentStyle={{
-              background: "#1A1A1E",
-              border: "1px solid #27272A",
+              background: "var(--popover)",
+              border: "1px solid var(--border)",
               borderRadius: 8,
               fontSize: 11,
-              color: "#E5E5E7",
+              color: "var(--text)",
             }}
             cursor={{ fill: "rgba(255,255,255,0.04)" }}
           />
-          <ReferenceLine yAxisId="fluxo" y={0} stroke="#3F3F46" />
+          <ReferenceLine yAxisId="fluxo" y={0} stroke="var(--border-strong)" />
           <ReferenceLine
             yAxisId="fluxo"
             x={formatDiaCurto(hoje)}
-            stroke="#71717A"
+            stroke="var(--text-3)"
             strokeDasharray="4 3"
-            label={{ value: "Hoje", fill: "#71717A", fontSize: 9, position: "top" }}
+            label={{ value: "Hoje", fill: "var(--text-3)", fontSize: 10, position: "top" }}
           />
           {diaCruzaZero && (
             <ReferenceLine
               yAxisId="fluxo"
               x={formatDiaCurto(diaCruzaZero)}
-              stroke="#EF4444"
+              stroke="var(--color-danger)"
               strokeDasharray="4 3"
-              label={{ value: "Falta caixa", fill: "#EF4444", fontSize: 9, position: "top" }}
+              label={{ value: "Falta caixa", fill: "var(--color-danger)", fontSize: 10, position: "top" }}
             />
           )}
-          <Bar yAxisId="fluxo" dataKey="entradaRealizada" stackId="entrada" fill="#22C55E" fillOpacity={0.85} />
-          <Bar yAxisId="fluxo" dataKey="entradaPrevista" stackId="entrada" fill="#22C55E" fillOpacity={0.35} />
-          <Bar yAxisId="fluxo" dataKey="saidaRealizada" stackId="saida" fill="#EF4444" fillOpacity={0.85} />
-          <Bar yAxisId="fluxo" dataKey="saidaPrevista" stackId="saida" fill="#EF4444" fillOpacity={0.35} />
+          <Bar isAnimationActive={!reducedMotion} animationDuration={550} yAxisId="fluxo" dataKey="entradaRealizada" stackId="entrada" fill="var(--chart-2)" fillOpacity={0.85} />
+          <Bar isAnimationActive={!reducedMotion} animationDuration={550} yAxisId="fluxo" dataKey="entradaPrevista" stackId="entrada" fill="var(--chart-2)" fillOpacity={0.35} />
+          <Bar isAnimationActive={!reducedMotion} animationDuration={550} yAxisId="fluxo" dataKey="saidaRealizada" stackId="saida" fill="var(--color-danger)" fillOpacity={0.85} />
+          <Bar isAnimationActive={!reducedMotion} animationDuration={550} yAxisId="fluxo" dataKey="saidaPrevista" stackId="saida" fill="var(--color-danger)" fillOpacity={0.35} />
           <Line
+            isAnimationActive={!reducedMotion}
+            animationDuration={550}
             yAxisId="saldo"
             type="monotone"
             dataKey="saldoFinal"
-            stroke="#D4A574"
-            strokeWidth={1.5}
+            stroke="var(--brand)"
+            strokeWidth={2.5}
             dot={false}
           />
         </ComposedChart>
       </ResponsiveContainer>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 18, padding: "18px 12px 12px", fontSize: 11, color: "var(--text-2)" }}><span>● Entradas</span><span style={{ color: "var(--color-danger)" }}>● Saídas</span><span style={{ color: "var(--brand)" }}>━ Saldo acumulado</span><span>Cor suave: previsão · cor forte: realizado</span></div>
     </div>
   )
 }

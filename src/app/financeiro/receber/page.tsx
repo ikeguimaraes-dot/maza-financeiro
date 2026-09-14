@@ -1,17 +1,10 @@
-import { requireUser } from "@maza/auth/server"
+import Link from "next/link";
+import { Banknote, ArrowUpRight } from "lucide-react";
+import { requireUser } from "@maza/auth/server";
+import { PageHeading } from "@/components/ui/PageHeading";
 
-export const dynamic = "force-dynamic"
-
+export const dynamic = "force-dynamic";
 export default async function Page() {
-  await requireUser()
-  return (
-    <div style={{ padding: 40, textAlign: "center" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, color: "var(--text)" }}>
-        Contas a Receber
-      </h1>
-      <p style={{ fontSize: 14, color: "var(--text-3)", marginTop: 8 }}>
-        Em construção. Próxima entrega no roadmap.
-      </p>
-    </div>
-  )
+  await requireUser();
+  return <div style={{ maxWidth: 1400, margin: "0 auto" }}><PageHeading title="Contas a receber" description="Uma visão dos próximos recebimentos da sua operação." /><section className="maza-panel maza-empty"><Banknote size={32} /><h2>Esta visão está em preparação.</h2><p>Por enquanto, você pode acompanhar os recebimentos previstos e seu impacto no saldo pelo fluxo de caixa.</p><Link href="/financeiro/fluxo" className="maza-button maza-button-primary">Ver fluxo de caixa <ArrowUpRight size={16} /></Link></section></div>;
 }

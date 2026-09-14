@@ -90,7 +90,7 @@ export function CmvCreateForm({ brandId }: Props) {
         borderRadius: 12,
         padding: 16,
         display: "grid",
-        gridTemplateColumns: "2fr 1fr 120px 120px 120px",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
         gap: 8,
         alignItems: "end",
       }}
@@ -168,7 +168,7 @@ function Field({
         display: "flex",
         flexDirection: "column",
         gap: 4,
-        gridColumn: `span ${span}`,
+        gridColumn: span > 1 ? "1 / -1" : undefined,
       }}
     >
       {label && (

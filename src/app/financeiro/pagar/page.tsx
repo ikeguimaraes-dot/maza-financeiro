@@ -1,3 +1,4 @@
+import { PageHeading } from "@/components/ui/PageHeading";
 import Link from "next/link";
 import { requireUser } from "@maza/auth/server";
 import { getCurrentUnitComOrigem } from "@maza/auth/unit";
@@ -44,7 +45,7 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
     return `/financeiro/pagar?${params.toString()}`;
   };
   const linkStyle = (ativo: boolean): React.CSSProperties => ({
-    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: ativo ? 700 : 500,
+    padding: "10px 16px", borderRadius: 999, fontSize: 12, fontWeight: ativo ? 700 : 500,
     textDecoration: "none", whiteSpace: "nowrap",
     background: ativo ? "var(--brand, #C4622D)" : "var(--surface-2)",
     color: ativo ? "var(--primary-foreground)" : "var(--text-3)",
@@ -55,38 +56,8 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-      <Link
-        href="/financeiro"
-        style={{ fontSize: 11, color: "var(--text-3)", textDecoration: "none", fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}
-      >
-        ← Financeiro
-      </Link>
-
-      <header style={{ margin: "10px 0 22px" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
-          <div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5, margin: "0 0 4px" }}>
-              Contas a Pagar · {unitNome}
-            </h1>
-            <p style={{ fontSize: 13, color: "var(--text-3)", margin: 0 }}>
-              {competenciaLabel(comp)} · {origem === "contas_pagar" ? "Contas a Pagar" : "NF_PEDIDOS"}
-            </p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <ImportPagarButton />
-            <Link
-              href="/financeiro/pagar/importar"
-              style={{
-                padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                border: "1px solid var(--border)", background: "var(--surface-2)",
-                color: "var(--text-2)", textDecoration: "none", whiteSpace: "nowrap",
-              }}
-            >
-              Importar NF_PEDIDOS / Contas a Pagar
-            </Link>
-          </div>
-        </div>
-
+      <PageHeading title="Contas a pagar" eyebrow={`Financeiro · ${unitNome}`} description={`${competenciaLabel(comp)} · Organize seus compromissos e acompanhe cada vencimento.`} actions={<div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><ImportPagarButton /><Link href="/financeiro/pagar/importar" className="maza-button">Importar planilha de compras</Link></div>} />
+      <div style={{ marginBottom: 24 }}>
         <AvisoUnidadeFallback cookiePresente={cookiePresente} />
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
@@ -110,12 +81,12 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
               : "planilha de pedidos — não some com Contas a Pagar, é a mesma compra por outro ângulo"}
           </span>
         </div>
-      </header>
+      </div>
 
       {!dados || !unitId ? (
         <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
           border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
-          Erro ao carregar contas a pagar — sem conexão com o banco.
+          {!unitId ? "Selecione uma unidade no menu para consultar os pagamentos." : "Não foi possível carregar os pagamentos. Tente atualizar a página."}
         </div>
       ) : (
         <PagarConteudo dados={dados} competenciaLabel={competenciaLabel(comp)} unitId={unitId} mes={mes} ano={ano} />

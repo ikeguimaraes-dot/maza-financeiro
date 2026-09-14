@@ -464,7 +464,7 @@ export default function ReceitaPage() {
       {showImport && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>Importar relatórios PDF ou Excel</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 16, marginBottom: 16 }}>
             <FileSlot label="Movimento" accept=".pdf" inputRef={movRef}   file={movFile}   onChange={setMovFile} />
             <FileSlot label="Venda"     accept=".pdf" inputRef={vendaRef} file={vendaFile} onChange={setVendaFile} />
             <MultiFileSlot label="Caixa(s)" accept=".pdf" inputRef={caixasRef} files={caixaFiles} onChange={setCaixaFiles} />

@@ -1,5 +1,7 @@
 "use client"
 
+import { useReducedMotion } from "@/components/ui/useReducedMotion"
+
 import {
   BarChart,
   Bar,
@@ -40,24 +42,24 @@ export function DreBarChart({ data }: { data: DreChartPoint[] }) {
         title="CMV % da Receita"
         data={data.map((d) => ({ mes: d.mes, value: d.cmv_re, meta: d.cmv_bd }))}
         avgMeta={avg(data.map((d) => d.cmv_bd))}
-        goodColor="#22C55E"
-        badColor="#EF4444"
+        goodColor="var(--chart-2)"
+        badColor="var(--color-danger)"
         lowerIsBetter
       />
       <MiniChart
         title="Pessoal % da Receita"
         data={data.map((d) => ({ mes: d.mes, value: d.pessoal_re, meta: d.pessoal_bd }))}
         avgMeta={avg(data.map((d) => d.pessoal_bd))}
-        goodColor="#22C55E"
-        badColor="#F59E0B"
+        goodColor="var(--chart-2)"
+        badColor="var(--color-warning)"
         lowerIsBetter
       />
       <MiniChart
         title="EBITDA % da Receita"
         data={data.map((d) => ({ mes: d.mes, value: d.ebitda_re, meta: d.ebitda_bd }))}
         avgMeta={avg(data.map((d) => d.ebitda_bd))}
-        goodColor="#22C55E"
-        badColor="#EF4444"
+        goodColor="var(--chart-2)"
+        badColor="var(--color-danger)"
         lowerIsBetter={false}
       />
     </div>
@@ -81,21 +83,20 @@ function MiniChart({
   badColor: string
   lowerIsBetter: boolean
 }) {
+  const reducedMotion = useReducedMotion();
   return (
     <div
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
-        borderRadius: 12,
+        borderRadius: 20,
         padding: "14px 12px 10px",
       }}
     >
       <p
         style={{
-          fontSize: 10,
-          fontWeight: 700,
-          letterSpacing: 1,
-          textTransform: "uppercase",
+          fontSize: 12,
+          fontWeight: 600,
           color: "var(--text-3)",
           margin: "0 0 12px",
         }}
@@ -110,17 +111,17 @@ function MiniChart({
         >
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="#27272A"
+            stroke="var(--border)"
             vertical={false}
           />
           <XAxis
             dataKey="mes"
-            tick={{ fontSize: 10, fill: "#71717A" }}
+            tick={{ fontSize: 10, fill: "var(--text-3)" }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
-            tick={{ fontSize: 9, fill: "#71717A" }}
+            tick={{ fontSize: 10, fill: "var(--text-3)" }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v: number) => `${v.toFixed(0)}%`}
@@ -134,19 +135,19 @@ function MiniChart({
               ]
             }}
             contentStyle={{
-              background: "#1A1A1E",
-              border: "1px solid #27272A",
+              background: "var(--popover)",
+              border: "1px solid var(--border)",
               borderRadius: 8,
               fontSize: 11,
-              color: "#E5E5E7",
+              color: "var(--text)",
             }}
             cursor={{ fill: "rgba(255,255,255,0.04)" }}
           />
-          <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+          <Bar isAnimationActive={!reducedMotion} animationDuration={550} dataKey="value" radius={[4, 4, 0, 0]}>
             {data.map((entry, idx) => {
               const v = entry.value
               const ref = entry.meta ?? avgMeta
-              if (v === null) return <Cell key={idx} fill="#3F3F46" />
+              if (v === null) return <Cell key={idx} fill="var(--border-strong)" />
               if (ref === null) return <Cell key={idx} fill={goodColor} fillOpacity={0.7} />
               const isGood = lowerIsBetter ? v <= ref : v >= ref
               return (
@@ -161,13 +162,13 @@ function MiniChart({
           {avgMeta !== null && (
             <ReferenceLine
               y={avgMeta}
-              stroke="#D4A574"
+              stroke="var(--brand)"
               strokeDasharray="5 3"
-              strokeWidth={1.5}
+              strokeWidth={2.5}
               label={{
                 value: `Meta ${avgMeta.toFixed(1)}%`,
-                fill: "#D4A574",
-                fontSize: 9,
+                fill: "var(--brand)",
+                fontSize: 10,
                 position: "insideTopRight",
               }}
             />

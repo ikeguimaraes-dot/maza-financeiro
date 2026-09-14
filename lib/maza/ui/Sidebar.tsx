@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Check, LogOut } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, Check, LogOut, X } from "lucide-react";
+import { useMobileNavigation } from "@/components/ui/useMobileNavigation";
+import type { CurrentUser } from "@maza/auth/server";
+import type { Unit } from "@maza/db/types/database";
 import { useAuth, useUnit } from "@maza/auth/context";
 import { convertRemoteGroups, flattenHrefs, type NavGroup, type NavItem, type RemoteNavGroup } from "./nav/types";
 
@@ -11,7 +14,7 @@ function getZone(pathname: string): string {
   if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
     return "inteligencia";
   }
-  const match = pathname.match(/^\/(financeiro|pessoas|operacao|compras|comercial|marca|inteligencia)(?:\/|$)/);
+  const match = pathname.match(/^\/(financeiro|pessoas|operacao|compras|comercial|marca|inteligencia|mise)(?:\/|$)/);
   return match?.[1] ?? "shell";
 }
 
@@ -35,32 +38,18 @@ function NavigationLink({
   style?: CSSProperties;
 }) {
   const destination = getNavigationHref(href, pathname, shellUrl);
-  return <a href={destination} style={style}>{children}</a>;
+  return <a href={destination} aria-current={pathname === href ? "page" : undefined} style={style}>{children}</a>;
 }
 
 const STORAGE_KEY = "maza_sidebar_groups";
 
 // ── Main Sidebar component ──────────────────────────────────────────────────
 
-export function Sidebar(props: {
-  navGroups: RemoteNavGroup[];
-  shellUrl: string;
-  navOffline: boolean;
-}) {
-  const { navGroups: rawNavGroups, shellUrl, navOffline } = props;
-  // Resolução de ícone (string → componente Lucide) tem que acontecer aqui,
-  // no client — o server só pode entregar dado serializável (string), nunca
-  // o componente em si, senão o Next quebra a fronteira Server→Client
-  // Component ("Functions cannot be passed directly to Client Components").
-  const navGroups = useMemo(() => convertRemoteGroups(rawNavGroups), [rawNavGroups]);
-  const pathname = usePathname();
-  const { user } = useAuth();
-  const { hasRegisteredUnits } = useAuth();
-  const { unit, units, setUnit } = useUnit();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const [mobileOpen, setMobileOpen] = useState(false);
+type SidebarProps = { navGroups: RemoteNavGroup[]; shellUrl: string; navOffline: boolean };
 
+export function Sidebar(props: SidebarProps) {
+  const { user, hasRegisteredUnits } = useAuth();
+  const { unit, units, setUnit } = useUnit();
   useEffect(() => {
     const syncSessionCookie = () => {
       const cookies = document.cookie.split(";").map((item) => item.trim());
@@ -81,6 +70,23 @@ export function Sidebar(props: {
     return () => window.clearInterval(timer);
   }, []);
 
+  return <SidebarPresentation {...props} user={user} hasRegisteredUnits={hasRegisteredUnits} unit={unit} units={units} setUnit={setUnit} />;
+}
+
+/** Presentational entry point also used by the isolated visual preview. */
+export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffline, user, hasRegisteredUnits, unit, units, setUnit }: SidebarProps & {
+  user: CurrentUser | null; hasRegisteredUnits: boolean; unit: Unit | null; units: Unit[]; setUnit: (id: string) => void;
+}) {
+  const navGroups = useMemo(() => convertRemoteGroups(rawNavGroups), [rawNavGroups]);
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+  useMobileNavigation(sidebarRef, mobileOpen, closeMobile);
+  useEffect(() => { window.dispatchEvent(new CustomEvent("maza:sidebarState", { detail: mobileOpen })); }, [mobileOpen]);
+
   // ── (a) Unit switcher click-outside handler
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -93,10 +99,13 @@ export function Sidebar(props: {
   useEffect(() => {
     const onToggle = () => setMobileOpen((v) => !v);
     window.addEventListener("kph:toggleSidebar", onToggle);
-    return () => window.removeEventListener("kph:toggleSidebar", onToggle);
+    window.addEventListener("maza:toggleSidebar", onToggle);
+    return () => { window.removeEventListener("kph:toggleSidebar", onToggle); window.removeEventListener("maza:toggleSidebar", onToggle); };
   }, []);
 
   useEffect(() => {
+    // Closing navigation after a route transition synchronizes the mobile overlay.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileOpen(false);
   }, [pathname]);
 
@@ -128,11 +137,6 @@ export function Sidebar(props: {
   const initials = displayName
     ? displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()
     : "?";
-  const emailShort = user?.email
-    ? user.email.length > 22
-      ? user.email.slice(0, 19) + "…"
-      : user.email
-    : "—";
   const role = user?.roles[0]?.role ?? "—";
 
   return (
@@ -142,6 +146,9 @@ export function Sidebar(props: {
         onClick={() => setMobileOpen(false)}
       />
       <aside
+        ref={sidebarRef}
+        id="maza-sidebar"
+        aria-label="Navegação principal"
         className={`shell-sidebar ${mobileOpen ? "open" : ""}`}
         style={{
           width: 240, flexShrink: 0,
@@ -149,14 +156,10 @@ export function Sidebar(props: {
           display: "flex", flexDirection: "column",
         }}
       >
-        {/* Logo */}
-        <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid var(--sidebar-border)" }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: -0.5 }}>
-            Maza
-          </div>
-          <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 2, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: 600 }}>
-            Operations
-          </div>
+        <div className="maza-brand">
+          <span className="maza-brand-symbol" aria-hidden="true">m</span>
+          <div><div className="maza-brand-word">maza.</div><div className="maza-brand-caption">Gestão com propósito</div></div>
+          <button type="button" className="maza-icon-button maza-sidebar-close" aria-label="Fechar menu" onClick={closeMobile}><X size={18} /></button>
         </div>
 
         {navOffline && (
@@ -177,6 +180,8 @@ export function Sidebar(props: {
           <div ref={ref} style={{ position: "relative" }}>
             <button
               onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              aria-label="Selecionar unidade"
               disabled={units.length === 0}
               style={{
                 width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -187,7 +192,7 @@ export function Sidebar(props: {
               }}
             >
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0 }}>
-                <span style={{ fontSize: 9, color: "var(--text-3)", fontWeight: 700, letterSpacing: 0.8 }}>
+                <span style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 700, letterSpacing: 0.8 }}>
                   UNIDADE
                 </span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
@@ -262,7 +267,8 @@ export function Sidebar(props: {
             <div style={{ fontSize: 10, color: "var(--text-3)" }}>{role}</div>
           </div>
           <Link
-            href="/auth/sign-out"
+            href={`${shellUrl}/auth/sign-out`}
+            aria-label="Sair da conta"
             title="Sair"
             style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -330,35 +336,20 @@ function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: 
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Record<string, boolean>;
+        // Hydrate the persisted navigation preference after the server render.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setOpenMap((prev) => ({ ...prev, ...parsed }));
       }
     } catch {}
     setHydrated(true);
   }, []);
 
-  // When remote groups load, add any missing group IDs
-  useEffect(() => {
-    setOpenMap((prev) => {
-      const next = { ...prev };
-      for (const g of groups) {
-        if (next[g.id] === undefined) next[g.id] = g.defaultOpen;
-      }
-      return next;
-    });
-  }, [groups]);
-
   useEffect(() => {
     if (!activeGroupId) return;
+    // Reveal the branch for the current URL after client navigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpenMap((prev) => (prev[activeGroupId] ? prev : { ...prev, [activeGroupId]: true }));
   }, [activeGroupId]);
-
-  function toggleGroup(id: string) {
-    setOpenMap((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }
 
   // Sub-menu open/close (not persisted — driven by defaultOpen + active path)
   const [subOpenMap, setSubOpenMap] = useState<Record<string, boolean>>(() => {
@@ -371,31 +362,13 @@ function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: 
     return m;
   });
 
-  // When remote groups load, seed defaultOpen sub-menus
-  useEffect(() => {
-    setSubOpenMap((prev) => {
-      const next = { ...prev };
-      for (const g of groups) {
-        for (const it of g.items) {
-          if (it.children && it.defaultOpen) {
-            const key = `${g.id}:${it.label}`;
-            if (next[key] === undefined) next[key] = true;
-          }
-        }
-      }
-      return next;
-    });
-  }, [groups]);
-
   // Auto-open the sub-menu that contains the active page
   useEffect(() => {
     if (!activeSubKey) return;
+    // Reveal the active URL branch; defaults remain derived from the nav config.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSubOpenMap((prev) => (prev[activeSubKey] ? prev : { ...prev, [activeSubKey]: true }));
   }, [activeSubKey]);
-
-  function toggleSub(key: string) {
-    setSubOpenMap((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
 
   return (
     <nav className="sidebar-nav-scroll" style={{ flex: 1, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
@@ -423,7 +396,11 @@ function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: 
           <details key={g.id} className="sidebar-disclosure" open={isOpen}
             onToggle={(event) => {
               const nextOpen = event.currentTarget.open;
-              setOpenMap((prev) => prev[g.id] === nextOpen ? prev : { ...prev, [g.id]: nextOpen });
+              setOpenMap((prev) => {
+                const next = prev[g.id] === nextOpen ? prev : { ...prev, [g.id]: nextOpen };
+                try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+                return next;
+              });
             }}
             style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {g.title ? (
@@ -457,7 +434,7 @@ function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: 
               // Item with children = collapsible sub-menu
               if (it.children?.length) {
                 const subKey = `${g.id}:${it.label}`;
-                const subOpen = subOpenMap[subKey] ?? false;
+                const subOpen = subOpenMap[subKey] ?? it.defaultOpen ?? false;
                 const anyChildActive = it.children.some(
                   (c) => c.href === activeHref || (c.href && pathname.startsWith(c.href + "/")),
                 );

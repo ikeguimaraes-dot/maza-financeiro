@@ -1,109 +1,39 @@
 import Link from "next/link";
+import { ArrowUpRight, ShieldCheck, ListChecks } from "lucide-react";
 import { formatBRL, formatPct } from "@/lib/financeiro/utils";
 import type { KpiSnapshotRow, FonteSaudeRow } from "./types";
+import styles from "./cockpit.module.css";
 
-type Props = {
-  unidade: string;
-  atual: KpiSnapshotRow;
-  fontes: FonteSaudeRow[];
-  competencia: string;
-  // Total real da conta 9.99 na competência, vindo direto de dre_snapshot —
-  // não uma estimativa derivada de despesas_operacionais.
-  valorNaoClassificado: number;
-};
-
-const STATUS_COR: Record<string, string> = {
-  viva: "#22C55E",
-  atrasada: "#F59E0B",
-  morta: "#EF4444",
+type Props = { unidade: string; atual: KpiSnapshotRow; fontes: FonteSaudeRow[]; competencia: string; valorNaoClassificado: number };
+const SOURCE_STATUS: Record<string, { label: string; color: string }> = {
+  viva: { label: "Atualizada", color: "var(--color-success)" },
+  atrasada: { label: "Atrasada", color: "var(--color-warning)" },
+  morta: { label: "Sem atualização", color: "var(--color-danger)" },
 };
 
 export function ConfiancaEClassificar({ atual, fontes, valorNaoClassificado }: Props) {
-  const confianca = atual.confianca_pct;
-  const classificado = atual.pct_classificado;
-  const abaixoDoLimite = confianca != null && confianca < 0.7;
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 12 }}>
-      {/* ── Linha 2: índice de confiança ── */}
-      <div style={{
-        background: abaixoDoLimite ? "rgba(245,158,11,0.08)" : "var(--surface)",
-        border: `1px solid ${abaixoDoLimite ? "#F59E0B" : "var(--border)"}`,
-        borderRadius: 12, padding: "14px 16px", display: "grid", gap: 10,
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-3)" }}>
-            Índice de confiança
-          </span>
-          <span style={{ fontSize: 20, fontWeight: 800, color: abaixoDoLimite ? "#F59E0B" : "var(--text)" }}>
-            {confianca != null ? formatPct(confianca * 100, 0) : "—"}
-          </span>
+  const confidence = atual.confianca_pct;
+  const classified = atual.pct_classificado;
+  const low = confidence != null && confidence < .7;
+  const percentage = Math.max(0, Math.min(100, (confidence ?? 0) * 100));
+  const color = low ? "var(--color-warning)" : "var(--chart-2)";
+  return <div className={styles.healthStack}>
+    <section className="maza-panel">
+      <div className="maza-panel-heading"><div><h2>Confiança nos números</h2><p>Qualidade e atualização dos dados</p></div><ShieldCheck size={19} className={styles.subtleIcon} /></div>
+      <div className={styles.healthBody}>
+        <div className={styles.healthOverview}>
+          <div className={styles.healthRing} style={{ background: `conic-gradient(${color} ${percentage}%, var(--surface-2) 0)` }}><strong>{confidence == null ? "—" : formatPct(confidence * 100, 0)}</strong></div>
+          <div><span className="maza-badge" data-tone={confidence == null ? undefined : low ? "warning" : "success"}>{confidence == null ? "Em apuração" : low ? "Requer atenção" : "Boa cobertura"}</span><p>{classified == null ? "Classificação em apuração" : `${formatPct(classified * 100, 0)} dos lançamentos classificados`}<br />{atual.fontes_ok ?? "—"} de {atual.fontes_total ?? "—"} fontes atualizadas</p></div>
         </div>
-
-        <div style={{ height: 6, borderRadius: 99, background: "var(--surface-2)", overflow: "hidden" }}>
-          <div style={{
-            width: `${Math.max(0, Math.min(100, (confianca ?? 0) * 100))}%`, height: "100%",
-            background: abaixoDoLimite ? "#F59E0B" : "#22C55E",
-          }} />
-        </div>
-
-        {abaixoDoLimite && (
-          <p style={{ fontSize: 12, color: "#F59E0B", margin: 0, fontWeight: 600 }}>
-            Números parciais — {formatPct((1 - (classificado ?? 0)) * 100, 0)} dos lançamentos sem classificação.
-          </p>
-        )}
-
-        <p style={{ fontSize: 11, color: "var(--text-3)", margin: 0 }}>
-          {formatPct((classificado ?? 0) * 100, 0)} classificado · {atual.fontes_ok ?? "—"}/{atual.fontes_total ?? "—"} fontes vivas
-        </p>
-
-        <div style={{ display: "grid", gap: 4, maxHeight: 140, overflowY: "auto" }}>
-          {fontes.map((f) => (
-            <div key={f.fonte} style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-              <span style={{ color: "var(--text-2)" }}>{f.fonte}</span>
-              <span style={{ color: STATUS_COR[f.status_fonte] ?? "var(--text-3)", fontWeight: 600 }}>
-                {f.status_fonte}{f.dias_sem_atualizacao != null ? ` · ${f.dias_sem_atualizacao}d` : ""}
-              </span>
-            </div>
-          ))}
-        </div>
+        <details className={styles.sources}><summary>Consultar fontes de dados ({fontes.length})</summary>{fontes.map((source) => <div key={source.fonte}><span>{source.fonte.replace(/_/g, " ")}</span><span style={{ color: SOURCE_STATUS[source.status_fonte]?.color ?? "var(--text-3)" }}>{SOURCE_STATUS[source.status_fonte]?.label ?? source.status_fonte}{source.dias_sem_atualizacao != null ? ` · ${source.dias_sem_atualizacao}d` : ""}</span></div>)}</details>
       </div>
-
-      {/* ── Linha 3: a classificar + possível dupla contagem ── */}
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12,
-        padding: "14px 16px", display: "grid", gap: 10 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-3)" }}>
-          Pendências do razão
-        </span>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 2px" }}>A classificar (conta 9.99)</p>
-            <p style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", margin: 0 }}>
-              {valorNaoClassificado != null ? formatBRL(valorNaoClassificado) : "—"}
-            </p>
-          </div>
-          <Link href="/financeiro/dre/classificacao" style={{
-            fontSize: 11, fontWeight: 700, color: "var(--brand, #C4622D)", textDecoration: "none",
-            whiteSpace: "nowrap",
-          }}>
-            Classificar →
-          </Link>
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-          <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 2px" }}>Possível dupla contagem</p>
-          <p style={{ fontSize: 18, fontWeight: 700,
-            color: (atual.possivel_dupla_contagem ?? 0) > 0 ? "#F59E0B" : "var(--text)", margin: 0 }}>
-            {formatBRL(atual.possivel_dupla_contagem ?? 0)}
-          </p>
-          {(atual.possivel_dupla_contagem ?? 0) > 0 && (
-            <p style={{ fontSize: 11, color: "var(--text-3)", margin: "2px 0 0" }}>
-              Título com NF-e candidata ainda não confirmada — EBITDA pode estar subestimado nesse valor.
-            </p>
-          )}
-        </div>
+    </section>
+    <section className="maza-panel">
+      <div className="maza-panel-heading"><div><h2>Próximos passos</h2><p>O que merece sua atenção</p></div><ListChecks size={19} className={styles.subtleIcon} /></div>
+      <div className={styles.healthBody}>
+        <div className={styles.pending}><div><p>Aguardando classificação</p><strong>{formatBRL(valorNaoClassificado)}</strong></div><Link href="/financeiro/dre/classificacao" className="maza-icon-button" aria-label="Classificar lançamentos"><ArrowUpRight size={17} /></Link></div>
+        <div className={styles.pending}><div><p>Possível dupla contagem</p><strong style={{ color: (atual.possivel_dupla_contagem ?? 0) > 0 ? "var(--color-warning)" : undefined }}>{atual.possivel_dupla_contagem == null ? "—" : formatBRL(atual.possivel_dupla_contagem)}</strong>{(atual.possivel_dupla_contagem ?? 0) > 0 && <small>Há títulos com notas fiscais a confirmar. O resultado pode mudar após a conferência.</small>}</div></div>
       </div>
-    </div>
-  );
+    </section>
+  </div>;
 }

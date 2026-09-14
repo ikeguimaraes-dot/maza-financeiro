@@ -423,13 +423,13 @@ export default function AnaliseVendasPage() {
           </div>
 
           {/* Curva ABC + Participação por grupo */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 16, marginBottom: 28 }}>
             <CurvaABCCard resumo={resumoABC} total={totalLiquido} />
             <GrupoPieCard rows={porGrupo} total={totalLiquido} />
           </div>
 
           {/* Top produtos */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 16, marginBottom: 28 }}>
             <TopBarCard title="Top 10 por Valor" rows={topPorValor.map((p) => ({ nome: p.produto, valor: p.valor_liquido ?? 0 }))} fmtVal={fmt} color={C.receita} />
             <TopBarCard title="Top 10 por Quantidade" rows={topPorQtd.map((p) => ({ nome: p.produto, valor: p.quantidade ?? 0 }))} fmtVal={fmtInt} color="#818cf8" />
           </div>
