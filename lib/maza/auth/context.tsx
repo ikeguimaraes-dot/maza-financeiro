@@ -18,13 +18,19 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORED_UNIT_KEY = "kph_unit_id";
+// Rename kph_unit_id → maza_unit_id em andamento (ver lib/maza/auth/unit.ts)
+// — grava os dois cookies com o mesmo valor: mantém qualquer leitor do
+// nome antigo funcionando enquanto adianta a migração pro nome novo.
+const COOKIE_KEY_NOVO = "maza_unit_id";
 // Cookie espelha o localStorage pra Server Components conseguirem ler.
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 ano
 
 function persistUnit(id: string) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORED_UNIT_KEY, id);
-  document.cookie = `${STORED_UNIT_KEY}=${encodeURIComponent(id)}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+  const encoded = encodeURIComponent(id);
+  document.cookie = `${STORED_UNIT_KEY}=${encoded}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+  document.cookie = `${COOKIE_KEY_NOVO}=${encoded}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
 /**
