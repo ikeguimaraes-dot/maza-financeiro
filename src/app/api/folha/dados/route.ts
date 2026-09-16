@@ -12,6 +12,38 @@ export async function OPTIONS() {
   return new Response(null, { headers: CORS })
 }
 
+// Custo total da competência = Total Geral Proventos + FGTS do mês + FGTS
+// rescisório + INSS Empregador (rubrica "INSS EMPREGADOR", natureza DESCONTO
+// no resumo por rubrica). Fórmula validada ao centavo contra os extratos reais
+// (Yoshimori e IKY, jun-ago/2026). Não é apenas a soma dos proventos dos
+// colaboradores: inclui encargos patronais que não são atribuídos a nenhum
+// colaborador individual.
+async function custoTotalCompetencia(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  unitId: string,
+  competencia: string,
+  totalGeralProventos: number | null,
+  valorFgts: number | null,
+  valorFgtsRescisorio: number | null
+): Promise<number> {
+  const { data: inss } = await supabase
+    .from("payroll_extrato_dominio_rubrica")
+    .select("valor")
+    .eq("unit_id", unitId)
+    .eq("competencia", competencia)
+    .eq("rubrica_descricao", "INSS EMPREGADOR")
+    .eq("natureza", "DESCONTO")
+    .maybeSingle()
+
+  return (
+    (totalGeralProventos ?? 0) +
+    (valorFgts ?? 0) +
+    (valorFgtsRescisorio ?? 0) +
+    (inss?.valor ?? 0)
+  )
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const unit_id = searchParams.get("unit_id")
@@ -33,10 +65,9 @@ export async function GET(req: Request) {
     competencia = `${ano}-${String(mes).padStart(2, "0")}`
   } else {
     const { data: ultima } = await supabase
-      .from("dre_folha")
+      .from("payroll_extrato_dominio_competencia")
       .select("competencia")
       .eq("unit_id", unit_id)
-      .not("competencia", "is", null)
       .order("competencia", { ascending: false })
       .limit(1)
       .single()
@@ -44,35 +75,106 @@ export async function GET(req: Request) {
     competencia = ultima?.competencia ?? `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`
   }
 
-  const { data: folha, error: errFolha } = await supabase
-    .from("dre_folha")
-    .select("id, nome, funcao, divisao, tipo, admissao, salario, custo_total, total_proventos, total_descontos, valor_liquido, base_inss, base_fgts, fgts_mes, base_irrf, gorjeta, verbas, documento_nome, documento_pagina, documento_path, is_vaga, competencia")
+  const { data: compRow, error: errComp } = await supabase
+    .from("payroll_extrato_dominio_competencia")
+    .select("total_geral_proventos, total_geral_descontos, liquido_geral, valor_fgts, valor_fgts_rescisorio")
     .eq("unit_id", unit_id)
     .eq("competencia", competencia)
-    .eq("is_vaga", false)
-    .order("divisao", { ascending: true })
-    .order("nome", { ascending: true })
+    .maybeSingle()
 
-  if (errFolha) {
-    return Response.json({ error: errFolha.message }, { status: 500, headers: CORS })
+  if (errComp) {
+    return Response.json({ error: errComp.message }, { status: 500, headers: CORS })
   }
 
-  const { data: vagas } = await supabase
-    .from("dre_folha")
-    .select("id, funcao, divisao, salario, custo_total")
+  const { data: colaboradoresRaw, error: errColab } = await supabase
+    .from("payroll_extrato_dominio_colaborador")
+    .select("id, nome, cargo_nome, vinculo, centro_custo, departamento, data_admissao, salario, proventos, descontos, liquido, base_inss, base_fgts, valor_fgts, base_irrf, cod_colaborador")
     .eq("unit_id", unit_id)
     .eq("competencia", competencia)
-    .eq("is_vaga", true)
+    .order("cargo_nome", { ascending: true })
+    .order("nome", { ascending: true })
+
+  if (errColab) {
+    return Response.json({ error: errColab.message }, { status: 500, headers: CORS })
+  }
+
+  const { data: linhas } = await supabase
+    .from("payroll_extrato_dominio_linha")
+    .select("cod_colaborador, rubrica_codigo, natureza, valor")
+    .eq("unit_id", unit_id)
+    .eq("competencia", competencia)
+
+  const { data: rubricas } = await supabase
+    .from("payroll_extrato_dominio_rubrica")
+    .select("rubrica_codigo, rubrica_descricao, natureza")
+    .eq("unit_id", unit_id)
+    .eq("competencia", competencia)
+
+  const descricaoRubrica = new Map<string, string>(
+    (rubricas ?? []).map((r: { rubrica_codigo: number; rubrica_descricao: string; natureza: string }) => [
+      `${r.rubrica_codigo}|${r.natureza}`,
+      r.rubrica_descricao,
+    ])
+  )
+
+  const verbasPorColaborador = new Map<number, Array<{ codigo: string; descricao: string; provento?: number; desconto?: number }>>()
+  for (const l of linhas ?? []) {
+    const lista = verbasPorColaborador.get(l.cod_colaborador) ?? []
+    const descricao = descricaoRubrica.get(`${l.rubrica_codigo}|${l.natureza}`) ?? `Rubrica ${l.rubrica_codigo}`
+    lista.push({
+      codigo: String(l.rubrica_codigo),
+      descricao,
+      provento: l.natureza === "PROVENTO" ? l.valor : undefined,
+      desconto: l.natureza === "DESCONTO" ? l.valor : undefined,
+    })
+    verbasPorColaborador.set(l.cod_colaborador, lista)
+  }
+
+  // TEMPORÁRIO (Passo 2 pendente): Domínio só tem centro_custo/departamento
+  // como código numérico, sem nome legível de divisão. Usa o código como
+  // rótulo provisório — vira o de-para de código→divisão quando o Passo 2
+  // for resolvido.
+  const rotuloDivisaoProvisorio = (centroCusto: number | null, departamento: number | null) =>
+    `CC ${centroCusto ?? "?"} / Depto ${departamento ?? "?"}`
+
+  const colaboradores = (colaboradoresRaw ?? []).map((c: {
+    id: string; nome: string; cargo_nome: string | null; vinculo: string | null
+    centro_custo: number | null; departamento: number | null; data_admissao: string | null
+    salario: number | null; proventos: number; descontos: number; liquido: number
+    base_inss: number | null; base_fgts: number | null; valor_fgts: number | null; base_irrf: number | null
+    cod_colaborador: number
+  }) => ({
+    id: c.id,
+    nome: c.nome,
+    funcao: c.cargo_nome ?? "NAO INFORMADO",
+    divisao: rotuloDivisaoProvisorio(c.centro_custo, c.departamento),
+    tipo: c.vinculo ?? "—",
+    admissao: c.data_admissao,
+    salario: c.salario ?? 0,
+    custo_total: c.proventos ?? 0,
+    is_vaga: false,
+    total_proventos: c.proventos ?? 0,
+    total_descontos: c.descontos ?? 0,
+    valor_liquido: c.liquido ?? 0,
+    base_inss: c.base_inss ?? 0,
+    base_fgts: c.base_fgts ?? 0,
+    fgts_mes: c.valor_fgts ?? 0,
+    base_irrf: c.base_irrf ?? 0,
+    gorjeta: 0,
+    verbas: verbasPorColaborador.get(c.cod_colaborador) ?? [],
+    documento_nome: null,
+    documento_pagina: null,
+    documento_path: null,
+  }))
 
   const { data: competenciasRaw } = await supabase
-    .from("dre_folha")
+    .from("payroll_extrato_dominio_competencia")
     .select("competencia")
     .eq("unit_id", unit_id)
-    .not("competencia", "is", null)
     .order("competencia", { ascending: false })
 
   const competenciasDisponiveis = [
-    ...new Set((competenciasRaw ?? []).map((r) => r.competencia)),
+    ...new Set((competenciasRaw ?? []).map((r: { competencia: string }) => r.competencia)),
   ]
 
   const [anoNum, mesNum] = competencia.split("-").map(Number)
@@ -138,32 +240,38 @@ export async function GET(req: Request) {
     .slice(-12)
     .map(([periodo, total]) => ({ periodo, total }))
 
-  const { data: folhaHistoricoRaw } = await supabase
-    .from("dre_folha")
-    .select("competencia, custo_total")
+  const { data: historicoCompRaw } = await supabase
+    .from("payroll_extrato_dominio_competencia")
+    .select("competencia, total_geral_proventos, valor_fgts, valor_fgts_rescisorio")
     .eq("unit_id", unit_id)
-    .eq("is_vaga", false)
-    .not("competencia", "is", null)
+    .order("competencia", { ascending: false })
+    .limit(12)
 
-  const folhaPorCompetencia: Record<string, number> = {}
-  for (const row of folhaHistoricoRaw ?? []) {
-    const c = row.competencia as string
-    folhaPorCompetencia[c] = (folhaPorCompetencia[c] ?? 0) + (row.custo_total ?? 0)
-  }
-  const folhaHistorico = Object.entries(folhaPorCompetencia)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-12)
-    .map(([periodo, total]) => ({ periodo, total }))
+  const folhaHistorico = await Promise.all(
+    (historicoCompRaw ?? [])
+      .slice()
+      .reverse()
+      .map(async (row: { competencia: string; total_geral_proventos: number | null; valor_fgts: number | null; valor_fgts_rescisorio: number | null }) => ({
+        periodo: row.competencia,
+        total: await custoTotalCompetencia(supabase, unit_id, row.competencia, row.total_geral_proventos, row.valor_fgts, row.valor_fgts_rescisorio),
+      }))
+  )
 
-  const colaboradores = folha ?? []
-  const totalFolha = colaboradores.reduce((s, c) => s + (c.custo_total ?? 0), 0)
-  const totalSalario = colaboradores.reduce((s, c) => s + (c.salario ?? 0), 0)
+  const totalFolha = await custoTotalCompetencia(
+    supabase,
+    unit_id,
+    competencia,
+    compRow?.total_geral_proventos ?? null,
+    compRow?.valor_fgts ?? null,
+    compRow?.valor_fgts_rescisorio ?? null
+  )
+  const totalSalario = colaboradores.reduce((s: number, c: { salario: number }) => s + (c.salario ?? 0), 0)
   const headcount = colaboradores.length
   const custoPorPessoa = headcount > 0 ? totalFolha / headcount : 0
 
   const porDivisao: Record<string, { custo: number; headcount: number }> = {}
   for (const c of colaboradores) {
-    const div = c.divisao ?? "SEM DIVISÃO"
+    const div = c.divisao
     if (!porDivisao[div]) porDivisao[div] = { custo: 0, headcount: 0 }
     porDivisao[div].custo += c.custo_total ?? 0
     porDivisao[div].headcount += 1
@@ -181,8 +289,8 @@ export async function GET(req: Request) {
     .slice(0, 10)
     .map(([funcao, dados]) => ({ funcao, ...dados }))
 
-  const gorjetaTotalBruto = gorjetaFinal.reduce((s, g) => s + (g.valor_bruto ?? 0), 0)
-  const gorjetaTotalLiquido = gorjetaFinal.reduce((s, g) => s + (g.valor_liquido ?? 0), 0)
+  const gorjetaTotalBruto = gorjetaFinal.reduce((s: number, g: { valor_bruto: number | null }) => s + (g.valor_bruto ?? 0), 0)
+  const gorjetaTotalLiquido = gorjetaFinal.reduce((s: number, g: { valor_liquido: number | null }) => s + (g.valor_liquido ?? 0), 0)
 
   const pontosMap: Record<string, number> = {}
   for (const cp of cargoPontos ?? []) pontosMap[cp.cargo] = cp.pontos
@@ -213,7 +321,7 @@ export async function GET(req: Request) {
         totalSalario,
         headcount,
         custoPorPessoa,
-        vagasAbertas: vagas?.length ?? 0,
+        vagasAbertas: 0,
       },
       colaboradores,
       porDivisao: Object.entries(porDivisao)
