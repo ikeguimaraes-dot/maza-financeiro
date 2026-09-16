@@ -5,6 +5,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react"
 import { useUnit } from "@maza/auth/context"
+import { DominioImportModal } from "@/components/financeiro/folha/DominioImportModal"
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -163,6 +164,8 @@ export default function FolhaPage() {
   const [buscaColab, setBuscaColab] = useState("")
   const [sortColab, setSortColab] = useState<"nome" | "custo">("custo")
   const [uploading, setUploading] = useState(false)
+  const [dominioModalAberto, setDominioModalAberto] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const monthsRequestRef = useRef(0)
   const dataRequestRef = useRef(0)
 
@@ -182,7 +185,7 @@ export default function FolhaPage() {
         }
       })
       .catch(() => {})
-  }, [unitId])
+  }, [unitId, reloadKey])
 
   useEffect(() => {
     if (!unitId) {
@@ -209,7 +212,7 @@ export default function FolhaPage() {
       .finally(() => {
         if (requestId === dataRequestRef.current) setLoading(false)
       })
-  }, [unitId, mes, ano])
+  }, [unitId, mes, ano, reloadKey])
 
   // Colaboradores filtrados + ordenados
   const colabFiltrados = useMemo(() => {
@@ -327,6 +330,15 @@ export default function FolhaPage() {
               <option key={a} value={a}>{a}</option>
             ))}
           </select>
+
+          {/* Importar extrato Domínio — fonte oficial da folha */}
+          <button
+            type="button"
+            onClick={() => setDominioModalAberto(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-purple-600 bg-purple-700/30 text-purple-200 hover:bg-purple-700/50 transition-colors"
+          >
+            Importar extrato Domínio
+          </button>
 
           {/* Importar planilha */}
           <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border cursor-pointer transition-colors ${
@@ -731,6 +743,12 @@ export default function FolhaPage() {
             </div>
           </div>
         </div>
+      )}
+      {dominioModalAberto && (
+        <DominioImportModal
+          onClose={() => setDominioModalAberto(false)}
+          onSuccess={() => setReloadKey((k) => k + 1)}
+        />
       )}
     </div>
   )

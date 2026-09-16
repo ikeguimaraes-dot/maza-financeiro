@@ -104,7 +104,7 @@ export async function calcularAlertaReceitaSemFolha(db: Db, unitId: string, comp
     titulo: "Competência com lançamento mas sem folha",
     motivo: "Há lançamento nesta competência, mas nenhum extrato de folha (Domínio) foi importado.",
     severidade: "critico",
-    link: "/financeiro/dre/folha",
+    link: "/financeiro/folha/dominio",
     ocorrencias,
   })
 }
