@@ -88,7 +88,7 @@ export async function GET(req: Request) {
 
   const { data: colaboradoresRaw, error: errColab } = await supabase
     .from("payroll_extrato_dominio_colaborador")
-    .select("id, nome, cargo_nome, vinculo, centro_custo, departamento, data_admissao, salario, proventos, descontos, liquido, base_inss, base_fgts, valor_fgts, base_irrf, cod_colaborador")
+    .select("id, nome, cargo_nome, vinculo, data_admissao, salario, proventos, descontos, liquido, base_inss, base_fgts, valor_fgts, base_irrf, cod_colaborador")
     .eq("unit_id", unit_id)
     .eq("competencia", competencia)
     .order("cargo_nome", { ascending: true })
@@ -130,16 +130,9 @@ export async function GET(req: Request) {
     verbasPorColaborador.set(l.cod_colaborador, lista)
   }
 
-  // TEMPORÁRIO (Passo 2 pendente): Domínio só tem centro_custo/departamento
-  // como código numérico, sem nome legível de divisão. Usa o código como
-  // rótulo provisório — vira o de-para de código→divisão quando o Passo 2
-  // for resolvido.
-  const rotuloDivisaoProvisorio = (centroCusto: number | null, departamento: number | null) =>
-    `CC ${centroCusto ?? "?"} / Depto ${departamento ?? "?"}`
-
   const colaboradores = (colaboradoresRaw ?? []).map((c: {
     id: string; nome: string; cargo_nome: string | null; vinculo: string | null
-    centro_custo: number | null; departamento: number | null; data_admissao: string | null
+    data_admissao: string | null
     salario: number | null; proventos: number; descontos: number; liquido: number
     base_inss: number | null; base_fgts: number | null; valor_fgts: number | null; base_irrf: number | null
     cod_colaborador: number
@@ -147,7 +140,6 @@ export async function GET(req: Request) {
     id: c.id,
     nome: c.nome,
     funcao: c.cargo_nome ?? "NAO INFORMADO",
-    divisao: rotuloDivisaoProvisorio(c.centro_custo, c.departamento),
     tipo: c.vinculo ?? "—",
     admissao: c.data_admissao,
     salario: c.salario ?? 0,
@@ -269,13 +261,13 @@ export async function GET(req: Request) {
   const headcount = colaboradores.length
   const custoPorPessoa = headcount > 0 ? totalFolha / headcount : 0
 
-  const porDivisao: Record<string, { custo: number; headcount: number }> = {}
-  for (const c of colaboradores) {
-    const div = c.divisao
-    if (!porDivisao[div]) porDivisao[div] = { custo: 0, headcount: 0 }
-    porDivisao[div].custo += c.custo_total ?? 0
-    porDivisao[div].headcount += 1
-  }
+  // Cadastro de colaboradores (public.employees) — usado só pra avisar na
+  // tela quando está incompleto; não decide nada aqui. Ver alerta 2.12.
+  const { count: cadastroCount } = await supabase
+    .from("employees")
+    .select("id", { count: "exact", head: true })
+    .eq("unit_id", unit_id)
+    .eq("ativo", true)
 
   const porFuncao: Record<string, { custo: number; headcount: number }> = {}
   for (const c of colaboradores) {
@@ -324,9 +316,10 @@ export async function GET(req: Request) {
         vagasAbertas: 0,
       },
       colaboradores,
-      porDivisao: Object.entries(porDivisao)
-        .sort(([, a], [, b]) => b.custo - a.custo)
-        .map(([divisao, dados]) => ({ divisao, ...dados })),
+      cadastroColaboradores: {
+        noExtrato: headcount,
+        noCadastro: cadastroCount ?? 0,
+      },
       topFuncoes,
       folhaHistorico,
       gorjeta: {

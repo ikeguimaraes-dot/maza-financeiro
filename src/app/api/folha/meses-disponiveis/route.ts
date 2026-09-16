@@ -29,14 +29,10 @@ export async function GET(req: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // is_vaga=false: só meses com colaboradores reais contam como "com dados"
-  // (um mês só com vagas abertas renderiza vazio na página).
   const { data, error } = await supabase
-    .from("dre_folha")
+    .from("payroll_extrato_dominio_competencia")
     .select("competencia")
     .eq("unit_id", unit_id)
-    .eq("is_vaga", false)
-    .not("competencia", "is", null)
     .order("competencia", { ascending: false })
 
   if (error) {

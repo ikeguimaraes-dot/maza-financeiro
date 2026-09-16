@@ -397,6 +397,43 @@ export async function calcularAlertaNotaSemXmlCmv(db: Db, unitId: string, compet
   })
 }
 
+// ── 2.12 · Cadastro de colaboradores vazio ──────────────────────────────────
+// O extrato Domínio (payroll_extrato_dominio_colaborador) lista quem foi
+// pago no mês, mas não distingue área/divisão. Isso só vem do cadastro de
+// colaboradores (public.employees) — sem ele preenchido, não há custo por
+// área nem vínculo com o módulo de pessoas.
+export async function calcularAlertaCadastroColaboradoresVazio(
+  db: Db, unitId: string, unitNome: string, competencia: string
+): Promise<Alerta | null> {
+  const [extrato, cadastro] = await Promise.all([
+    fetchAllPaginado((from, to) =>
+      db.from("payroll_extrato_dominio_colaborador").select("id")
+        .eq("unit_id", unitId).eq("competencia", competencia).range(from, to)
+    ) as Promise<Array<{ id: string }>>,
+    fetchAllPaginado((from, to) =>
+      db.from("employees").select("id").eq("unit_id", unitId).eq("ativo", true).range(from, to)
+    ) as Promise<Array<{ id: string }>>,
+  ])
+
+  const ocorrencias: AlertaOcorrencia[] = cadastro.length < extrato.length
+    ? [{
+        chave: `${unitId}|${competencia}`,
+        descricao: `${extrato.length} colaboradores no extrato de folha, ${cadastro.length} no cadastro (${unitNome}). Sem o cadastro não há custo por área nem vínculo com o módulo de pessoas.`,
+        valor: 0,
+      }]
+    : []
+
+  return montarAlerta({
+    alertaChave: "2.12_cadastro_colaboradores_vazio",
+    grupo: 2,
+    titulo: "Cadastro de colaboradores vazio",
+    motivo: "O cadastro de colaboradores (public.employees) tem menos linhas que o extrato de folha da competência.",
+    severidade: "atencao",
+    link: "/pessoas/colaboradores",
+    ocorrencias,
+  })
+}
+
 export async function calcularAlertasGrupo2(
   db: Db,
   unitId: string,
@@ -415,6 +452,7 @@ export async function calcularAlertasGrupo2(
     calcularAlertaCustoSemReceita(db, unitId, unitNome, competencia),
     calcularAlertaDeducaoSemReceita(db, unitId, unitNome, competencia),
     calcularAlertaNotaSemXmlCmv(db, unitId, competencia),
+    calcularAlertaCadastroColaboradoresVazio(db, unitId, unitNome, competencia),
   ])
   return alertas.filter((a): a is Alerta => a !== null)
 }

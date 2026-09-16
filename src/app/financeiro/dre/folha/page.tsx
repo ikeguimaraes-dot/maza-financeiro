@@ -6,7 +6,7 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import { useUnit } from "@maza/auth/context"
 import {
-  AreaChart, Area, BarChart, Bar,
+  AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from "recharts"
@@ -16,7 +16,6 @@ interface Colaborador {
   id: number
   nome: string
   funcao: string
-  divisao: string
   tipo: string
   admissao: string
   salario: number
@@ -34,12 +33,6 @@ interface Colaborador {
   documento_nome: string | null
   documento_pagina: number | null
   documento_path: string | null
-}
-
-interface DivisaoItem {
-  divisao: string
-  custo: number
-  headcount: number
 }
 
 interface FuncaoItem {
@@ -82,7 +75,7 @@ interface FolhaData {
     vagasAbertas: number
   }
   colaboradores: Colaborador[]
-  porDivisao: DivisaoItem[]
+  cadastroColaboradores: { noExtrato: number; noCadastro: number }
   topFuncoes: FuncaoItem[]
   gorjeta: {
     periodo: string | null
@@ -139,15 +132,6 @@ const labelMes = (periodo: string) => {
   return `${MESES[parseInt(mes) - 1] ?? ""}/${ano.slice(2)}`
 }
 
-const divisaoBadgeClass = (div: string) => {
-  const d = div?.toUpperCase()
-  if (d?.includes("COZINHA")) return "bg-amber-900/40 text-amber-400 border border-amber-800/50"
-  if (d?.includes("SAL")) return "bg-green-900/40 text-green-400 border border-green-800/50"
-  if (d?.includes("ADMIN")) return "bg-orange-900/40 text-orange-400 border border-orange-800/50"
-  if (d?.includes("ROOF") || d?.includes("BAR")) return "bg-purple-900/40 text-purple-400 border border-purple-800/50"
-  return "bg-gray-800 text-gray-400 border border-gray-700"
-}
-
 // ── Tooltip customizado ───────────────────────────────────────────────────
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { color: string; name: string; value: number }[]; label?: string }) => {
   if (!active || !payload?.length) return null
@@ -177,7 +161,7 @@ export default function FolhaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [buscaColab, setBuscaColab] = useState("")
-  const [sortColab, setSortColab] = useState<"nome" | "custo" | "divisao">("divisao")
+  const [sortColab, setSortColab] = useState<"nome" | "custo">("custo")
   const [uploading, setUploading] = useState(false)
   const monthsRequestRef = useRef(0)
   const dataRequestRef = useRef(0)
@@ -236,13 +220,11 @@ export default function FolhaPage() {
       list = list.filter(
         (c) =>
           c.nome.toLowerCase().includes(q) ||
-          c.funcao.toLowerCase().includes(q) ||
-          c.divisao?.toLowerCase().includes(q)
+          c.funcao.toLowerCase().includes(q)
       )
     }
     list.sort((a, b) => {
       if (sortColab === "custo") return b.custo_total - a.custo_total
-      if (sortColab === "divisao") return (a.divisao ?? "").localeCompare(b.divisao ?? "")
       return a.nome.localeCompare(b.nome)
     })
     return list
@@ -456,7 +438,7 @@ export default function FolhaPage() {
           </div>
 
           {/* ── Gráficos ──────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 gap-4 mb-6">
             {/* Evolução gorjeta */}
             <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-4">
               <p className="text-xs font-medium text-gray-300 mb-4">Evolução da gorjeta — últimos 12 meses</p>
@@ -485,67 +467,24 @@ export default function FolhaPage() {
                 </div>
               )}
             </div>
-
-            {/* Custo por divisão */}
-            <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-4">
-              <p className="text-xs font-medium text-gray-300 mb-4">Custo por divisão</p>
-              {data.porDivisao.length > 0 ? (
-                <ResponsiveContainer width="100%" height={160}>
-                  <BarChart
-                    data={data.porDivisao.map(d => ({
-                      divisao: d.divisao?.split(" ")[0] ?? "—",
-                      custo: Math.round(d.custo),
-                      headcount: d.headcount,
-                    }))}
-                    layout="vertical"
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a28" horizontal={false} />
-                    <XAxis type="number" tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} />
-                    <YAxis type="category" dataKey="divisao" tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} width={70} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="custo" fill="#534ab7" radius={[0, 3, 3, 0]} name="Custo" />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-40 text-gray-600 text-xs">
-                  Sem dados
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* ── Breakdown: Divisão + Top Funções ───────────────────────────── */}
+          {/* ── Breakdown: aviso de cadastro + Top Funções ─────────────────── */}
           <div className="grid grid-cols-2 gap-4 mb-6">
-            {/* Por divisão */}
-            <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-4">
-              <p className="text-xs font-medium text-gray-300 mb-4">Headcount & custo por divisão</p>
-              <div className="space-y-3">
-                {data.porDivisao.map((d) => {
-                  const pct = data.resumo.totalFolha > 0
-                    ? (d.custo / data.resumo.totalFolha) * 100
-                    : 0
-                  return (
-                    <div key={d.divisao}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${divisaoBadgeClass(d.divisao)}`}>
-                          {d.divisao}
-                        </span>
-                        <div className="flex items-center gap-3">
-                          <span className="text-[10px] text-gray-500">{d.headcount} pess.</span>
-                          <span className="text-xs font-medium text-gray-300">{fmtK(d.custo)}</span>
-                          <span className="text-[10px] text-gray-500 w-8 text-right">{pct.toFixed(0)}%</span>
-                        </div>
-                      </div>
-                      <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-purple-500/70"
-                          style={{ width: `${Math.min(pct, 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+            {/* Divisão por área não disponível */}
+            <div className="bg-amber-900/10 border border-amber-800/30 rounded-xl p-4 flex flex-col justify-center">
+              <p className="text-xs font-medium text-amber-400 mb-2">Divisão por área não disponível</p>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                O extrato Domínio traz todos os colaboradores no mesmo centro de custo. Para ver
+                custo por cozinha, salão e administrativo, é preciso cadastrar a área de cada
+                colaborador.
+              </p>
+              {data.cadastroColaboradores.noCadastro < data.cadastroColaboradores.noExtrato && (
+                <p className="text-[10px] text-gray-500 mt-3">
+                  {data.cadastroColaboradores.noExtrato} colaboradores no extrato de folha,{" "}
+                  {data.cadastroColaboradores.noCadastro} no cadastro.
+                </p>
+              )}
             </div>
 
             {/* Top funções */}
@@ -664,10 +603,9 @@ export default function FolhaPage() {
                 {/* Ordenação */}
                 <select
                   value={sortColab}
-                  onChange={(e) => setSortColab(e.target.value as "nome" | "custo" | "divisao")}
+                  onChange={(e) => setSortColab(e.target.value as "nome" | "custo")}
                   className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none"
                 >
-                  <option value="divisao">Ordenar: Divisão</option>
                   <option value="custo">Ordenar: Custo ↓</option>
                   <option value="nome">Ordenar: Nome</option>
                 </select>
@@ -678,7 +616,7 @@ export default function FolhaPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-gray-800/60 border-b border-gray-700/40">
-                    {["Nome", "Função", "Divisão", "Tipo", "Admissão", "Salário", "Custo total", "% folha"].map((h) => (
+                    {["Nome", "Função", "Tipo", "Admissão", "Salário", "Custo total", "% folha"].map((h) => (
                       <th key={h} className="text-left px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider font-medium last:text-right">
                         {h}
                       </th>
@@ -706,11 +644,6 @@ export default function FolhaPage() {
                         <td className="px-4 py-2.5 text-gray-400 max-w-[160px] truncate">
                           {c.funcao}
                         </td>
-                        <td className="px-4 py-2.5">
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${divisaoBadgeClass(c.divisao)}`}>
-                            {c.divisao ?? "—"}
-                          </span>
-                        </td>
                         <td className="px-4 py-2.5 text-gray-500">{c.tipo}</td>
                         <td className="px-4 py-2.5 text-gray-500">{admissao}</td>
                         <td className="px-4 py-2.5 text-gray-300">{fmt(c.salario)}</td>
@@ -721,7 +654,7 @@ export default function FolhaPage() {
                   })}
                   {colabFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-gray-600">
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-600">
                         Nenhum colaborador encontrado
                       </td>
                     </tr>
@@ -731,7 +664,7 @@ export default function FolhaPage() {
                 {colabFiltrados.length > 0 && (
                   <tfoot>
                     <tr className="bg-gray-800/60 border-t border-gray-700/40">
-                      <td colSpan={5} className="px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider">
+                      <td colSpan={4} className="px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider">
                         Total ({colabFiltrados.length} colaboradores)
                       </td>
                       <td className="px-4 py-2.5 text-gray-300 font-medium text-xs">
