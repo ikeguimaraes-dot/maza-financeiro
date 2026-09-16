@@ -31,9 +31,6 @@ interface Colaborador {
   base_irrf: number
   gorjeta: number
   verbas: Array<{ codigo?: string; descricao: string; referencia?: string; provento?: number; desconto?: number }>
-  documento_nome: string | null
-  documento_pagina: number | null
-  documento_path: string | null
 }
 
 interface FuncaoItem {
@@ -157,13 +154,10 @@ export default function FolhaPage() {
   const [ano, setAno] = useState(now.getFullYear())
   const [data, setData] = useState<FolhaData | null>(null)
   const [colaboradorAberto, setColaboradorAberto] = useState<Colaborador | null>(null)
-  const [documentoUrl, setDocumentoUrl] = useState<string | null>(null)
-  const [documentoErro, setDocumentoErro] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [buscaColab, setBuscaColab] = useState("")
   const [sortColab, setSortColab] = useState<"nome" | "custo">("custo")
-  const [uploading, setUploading] = useState(false)
   const [dominioModalAberto, setDominioModalAberto] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const monthsRequestRef = useRef(0)
@@ -235,65 +229,6 @@ export default function FolhaPage() {
 
   const unitLabel = unit?.name ?? "unidade atual"
 
-  useEffect(() => {
-    setDocumentoUrl(null)
-    setDocumentoErro(null)
-    if (!colaboradorAberto?.documento_path) return
-    fetchJsonWithSessionRetry(`${API_BASE}/api/folha/documento/${colaboradorAberto.id}`)
-      .then((result: { url?: string; pagina?: number; error?: string }) => {
-        if (!result.url) throw new Error(result.error ?? "PDF não encontrado")
-        setDocumentoUrl(`${result.url}#page=${result.pagina ?? 1}`)
-      })
-      .catch((error: Error) => setDocumentoErro(error.message))
-  }, [colaboradorAberto])
-
-  // ── Upload de recibos em PDF ────────────────────────────────────────────
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    if (files.length === 0) return
-    if (!unitId) {
-      alert("Selecione uma unidade antes de importar.")
-      e.target.value = ""
-      return
-    }
-    setUploading(true)
-    const formData = new FormData()
-    files.forEach((file) => formData.append("files", file))
-    formData.append("unit_id", unitId)
-    formData.append("mes", String(mes))
-    formData.append("ano", String(ano))
-    try {
-      const res = await fetch(`${API_BASE}/api/folha/import`, {
-        method: "POST",
-        body: formData,
-      })
-      const result = await res.json()
-      if (!res.ok) throw new Error(result.error ?? "Erro no upload")
-      // Recarrega dados após import
-      const [resultYear, resultMonth] = String(result.competencia ?? `${ano}-${mes}`).split("-").map(Number)
-      const reloadYear = resultYear || ano
-      const reloadMonth = resultMonth || mes
-      const reloadResponse = await fetch(
-        `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${reloadMonth}&ano=${reloadYear}`
-      )
-      const novo = await reloadResponse.json()
-      if (!reloadResponse.ok || novo.error) throw new Error(novo.error ?? "Erro ao recarregar a folha")
-      if (!Array.isArray(novo.colaboradores) || novo.colaboradores.length !== result.colaboradores) {
-        throw new Error(`Foram gravados ${result.colaboradores} colaboradores, mas a página recebeu ${novo.colaboradores?.length ?? 0}.`)
-      }
-      setMes(reloadMonth)
-      setAno(reloadYear)
-      setData(novo)
-      alert(`${result.importados} funcionário${result.importados === 1 ? "" : "s"} importado${result.importados === 1 ? "" : "s"} com sucesso.`)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro desconhecido"
-      alert(`Erro ao importar: ${msg}`)
-    } finally {
-      setUploading(false)
-      e.target.value = ""
-    }
-  }
-
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0d0d0c] text-gray-200 p-6">
@@ -339,42 +274,6 @@ export default function FolhaPage() {
           >
             Importar extrato Domínio
           </button>
-
-          {/* Importar planilha */}
-          <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border cursor-pointer transition-colors ${
-            uploading
-              ? "border-gray-700 text-gray-500 cursor-not-allowed"
-              : "border-gray-600 text-gray-300 bg-gray-800/40 hover:bg-gray-800"
-          }`}>
-            Importar planilha
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              disabled={uploading}
-              onChange={handleUpload}
-            />
-          </label>
-
-          {/* Importar PDFs */}
-          <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border cursor-pointer transition-colors ${
-            uploading
-              ? "border-gray-700 text-gray-500 cursor-not-allowed"
-              : "border-purple-700/60 text-purple-400 bg-purple-900/20 hover:bg-purple-900/40"
-          }`}>
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            {uploading ? "Importando…" : "Importar PDFs"}
-            <input
-              type="file"
-              accept=".pdf,application/pdf"
-              multiple
-              className="hidden"
-              disabled={uploading}
-              onChange={handleUpload}
-            />
-          </label>
         </div>
       </div>
 
@@ -735,10 +634,9 @@ export default function FolhaPage() {
                 </div>
               </aside>
               <section className="min-w-0 bg-[#0d0d0c] flex items-center justify-center">
-                {documentoUrl ? <iframe title={`Folha de ${colaboradorAberto.nome}`} src={documentoUrl} className="w-full h-full border-0" />
-                  : documentoErro ? <p className="text-sm text-amber-400 px-6 text-center">{documentoErro}. Reimporte o PDF desta competência para vinculá-lo.</p>
-                  : colaboradorAberto.documento_path ? <p className="text-sm text-gray-500">Carregando PDF…</p>
-                  : <p className="text-sm text-gray-500 px-6 text-center">Este registro veio de planilha ou de uma importação antiga. Reimporte os PDFs para anexar o documento.</p>}
+                <p className="text-sm text-gray-500 px-6 text-center">
+                  O extrato Domínio é um relatório consolidado — não há PDF individual por colaborador.
+                </p>
               </section>
             </div>
           </div>

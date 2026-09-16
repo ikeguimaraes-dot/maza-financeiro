@@ -154,9 +154,6 @@ export async function GET(req: Request) {
     base_irrf: c.base_irrf ?? 0,
     gorjeta: 0,
     verbas: verbasPorColaborador.get(c.cod_colaborador) ?? [],
-    documento_nome: null,
-    documento_pagina: null,
-    documento_path: null,
   }))
 
   const { data: competenciasRaw } = await supabase
