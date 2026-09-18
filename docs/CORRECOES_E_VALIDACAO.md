@@ -57,3 +57,9 @@ Módulos identificados como “em construção” continuam assim; esta etapa n�
 - Existe competência de maio/2022 nas fontes de Yoshimori. A data foi preservada; sua confirmação depende dos documentos de origem.
 - Build da Vercel concluído. API publicada sem autenticação retorna 401; página financeira redireciona ao login correto em `maza-maza.vercel.app`. A navegação pelo shell também chegou ao login. A sessão disponível não permitiu concluir a aceitação das telas autenticadas; nenhum import real foi usado como teste de produção.
 - Testes de interface (24), lint e verificação de tipos executados novamente antes da publicação.
+
+## Correção da configuração de autenticação após publicação
+
+O erro HTTP 401 na folha revelou que as três variáveis Supabase de produção estavam cadastradas na Vercel com valores vazios. A verificação anterior de redirecionamento ao login não comprovava uma sessão funcional. Os valores foram restaurados a partir da configuração local do mesmo projeto, sem registrar credenciais no Git.
+
+O build agora rejeita configuração Supabase ausente ou vazia em produção na Vercel. Um teste de regressão confirma a rejeição e a aceitação de configuração preenchida. Nenhuma proteção de autenticação ou RLS foi removida.

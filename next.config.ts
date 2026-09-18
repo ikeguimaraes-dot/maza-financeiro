@@ -1,5 +1,13 @@
 import type { NextConfig } from "next";
 
+// A deployment with empty Auth settings builds successfully but rejects every
+// session. Fail before publishing instead of turning a configuration error into 401s.
+if (process.env.VERCEL_ENV === "production") {
+  const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+  const missing = required.filter((name) => !process.env[name]?.trim());
+  if (missing.length) throw new Error(`Configuração de produção ausente: ${missing.join(", ")}`);
+}
+
 const nextConfig: NextConfig = {
   // assetPrefix makes the browser fetch _next/static chunks via the shell's
   // /financeiro/_next/* rewrite instead of hitting the shell's own /_next/*.
