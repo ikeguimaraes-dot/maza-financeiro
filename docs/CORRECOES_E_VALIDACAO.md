@@ -41,14 +41,19 @@ O build ainda pode emitir avisos do runtime Node e da externalização do worker
 
 Prazos estimados de recebimento, data estimada de pagamento da folha, critérios de classificação, percentuais de confiança e cálculo de CMV por compras continuam seguindo as regras existentes. A saúde das fontes ainda é agregada entre as unidades às quais o usuário tem acesso. Definir consumo de estoque, taxas/antecipações e fechamento oficial exige as informações que ainda serão recebidas.
 
-Módulos identificados como “em construção” continuam assim; esta etapa não implementa novas funcionalidades nem transforma os fluxos legados por marca no cockpit atual. White-label, novas regras e publicação são etapas separadas.
+Módulos identificados como “em construção” continuam assim; esta etapa não implementa novas funcionalidades nem transforma os fluxos legados por marca no cockpit atual. White-label e novas regras são etapas separadas.
 
 ## Validação após aplicação em produção
 
 - Migration registrada no histórico remoto. O arquivo local foi alinhado à versão atribuída pelo Supabase.
-- Contagens preservadas: 2.874 títulos, 18.112 itens de produtos, 288 dias de receita, 6.119 lançamentos e 8 snapshots.
+- Na aplicação da migration, contagens preservadas: 2.874 títulos, 18.112 itens de produtos, 288 dias de receita, 6.119 lançamentos e 8 snapshots.
 - Nenhum título das origens canônicas ficou sem unidade de importação; nenhum item XML ficou sem posição.
 - RPC executa como invoker e não permite execução anônima.
 - Verificação transacional com perfil founder leu as fontes e executou lote vazio. Identidade sem vínculo não leu receitas nem conseguiu substituir dados de outra unidade. As verificações terminaram em rollback.
 - Há divergências históricas entre migrations locais e remotas, anteriores a esta revisão; por isso não foi utilizado um push geral ou reparo destrutivo do histórico.
-- Publicação do código do aplicativo não foi executada nesta aplicação da migration. O recálculo dos indicadores ocorre pelo código corrigido.
+- Aplicativo publicado e promovido na Vercel em 17/09/2026 (horário de Brasília), deployment `dpl_6QFjKR3cQXbWuwwe6FSVbAaZN9Pp`, código `9fd24b1`.
+- Histórico recalculado com o código corrigido: 12 períodos/unidades, 6.420 lançamentos e 12 snapshots. Nenhum snapshot ficou com revisão divergente da fonte. Títulos, produtos e dias de receita mantiveram as contagens anteriores.
+- Backup dos dados derivados anterior ao recálculo salvo localmente em `/private/tmp/maza-derived-before-release.json`, com acesso restrito; não integra o repositório.
+- Existe competência de maio/2022 nas fontes de Yoshimori. A data foi preservada; sua confirmação depende dos documentos de origem.
+- Build da Vercel concluído. API publicada sem autenticação retorna 401; página financeira redireciona ao login correto em `maza-maza.vercel.app`. A navegação pelo shell também chegou ao login. A sessão disponível não permitiu concluir a aceitação das telas autenticadas; nenhum import real foi usado como teste de produção.
+- Testes de interface (24), lint e verificação de tipos executados novamente antes da publicação.
