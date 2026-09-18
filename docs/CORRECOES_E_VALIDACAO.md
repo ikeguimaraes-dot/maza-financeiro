@@ -60,6 +60,8 @@ Módulos identificados como “em construção” continuam assim; esta etapa n�
 
 ## Correção da configuração de autenticação após publicação
 
-O erro HTTP 401 na folha revelou que as três variáveis Supabase de produção estavam cadastradas na Vercel com valores vazios. A verificação anterior de redirecionamento ao login não comprovava uma sessão funcional. Os valores foram restaurados a partir da configuração local do mesmo projeto, sem registrar credenciais no Git.
+A investigação do HTTP 401 na folha inicialmente interpretou valores ocultos pela Vercel como variáveis vazias. Essa hipótese foi descartada: variáveis sensíveis são omitidas nas consultas. Os valores foram sincronizados com a configuração local do mesmo projeto, sem registrar credenciais no Git. A verificação anterior de redirecionamento ao login não comprovava uma sessão funcional.
 
 O build agora rejeita configuração Supabase ausente ou vazia em produção na Vercel. Um teste de regressão confirma a rejeição e a aceitação de configuração preenchida. Nenhuma proteção de autenticação ou RLS foi removida.
+
+Causa confirmada do 401: o menu financeiro usava `next/link` para `/auth/sign-out`, uma rota GET com efeito de logout. Os logs do shell registraram essa chamada automática imediatamente antes das falhas nas APIs, e a sessão foi revogada no Auth. O link foi substituído por uma âncora HTML, sem prefetch. Diagnósticos temporários de cookies foram removidos.

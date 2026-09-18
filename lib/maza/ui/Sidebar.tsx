@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Check, LogOut, X } from "lucide-react";
@@ -267,7 +266,8 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
             </div>
             <div style={{ fontSize: 10, color: "var(--text-3)" }}>{role}</div>
           </div>
-          <Link
+          {/* Logout mutates the session: never let Next prefetch this route. */}
+          <a
             href={`${shellUrl}/auth/sign-out`}
             aria-label="Sair da conta"
             title="Sair"
@@ -279,7 +279,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
             }}
           >
             <LogOut size={14} />
-          </Link>
+          </a>
         </div>
       </aside>
     </>
