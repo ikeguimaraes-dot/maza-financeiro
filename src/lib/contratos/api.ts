@@ -1,7 +1,8 @@
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 // Helpers compartilhados pelas rotas /api/contratos/* — segue o padrão das rotas
 // lorean/vendas: service role do Supabase (projeto iqgrvptrtphvbmvrqntm), CORS
 // para o shell maza e handler OPTIONS.
-import { createClient } from "@supabase/supabase-js";
+
 
 export const BUCKET = "contratos";
 
@@ -23,12 +24,7 @@ export function jsonError(message: string, status = 500) {
   return Response.json({ error: message }, { status, headers: CORS });
 }
 
-export function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
+export const getServiceClient = createFinanceiroClient;
 
 // Pasta no Storage: {unit_id ou 'kph'}/{contrato_id}/{arquivo}
 export function unitFolder(unitId: string | null | undefined) {

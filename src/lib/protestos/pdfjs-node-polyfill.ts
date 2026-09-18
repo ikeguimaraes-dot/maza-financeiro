@@ -34,7 +34,7 @@ if (!globalThis.Path2D) {
 // worker aqui (rastreável) + registrar em globalThis.pdfjsWorker faz a
 // pdfjs pular esse import dinâmico inteiramente e usar o handler já
 // carregado — é o mecanismo oficial da própria lib pra uso em Node.
-if (!(globalThis as any).pdfjsWorker) {
+if (!(globalThis as typeof globalThis & { pdfjsWorker?: unknown }).pdfjsWorker) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(globalThis as any).pdfjsWorker = pdfjsWorker
 }

@@ -1,4 +1,5 @@
-import { createSupabaseServerClient } from "@maza/db/supabase/server";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,9 +41,9 @@ export async function GET(request: Request) {
   }
 
   // As tabelas Lorean ainda não constam no tipo Database compartilhado.
-  let db: any;
+  let db: SupabaseClient;
   try {
-    db = await createSupabaseServerClient();
+    db = await createFinanceiroClient();
     if (!db) throw new Error("Supabase env vars not set");
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500, headers: CORS });
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
 
   if (wErr) return Response.json({ error: wErr.message }, { status: 500, headers: CORS });
 
-  const ids: string[] = (workdays ?? []).map((w: any) => w.id);
+  const ids: string[] = (workdays ?? []).map((w) => w.id);
 
   if (ids.length === 0) {
     const { data: latestWorkday } = await db
@@ -99,11 +100,11 @@ export async function GET(request: Request) {
   // contabiliza pendência antiga que uma soma de pagamentos do dia nunca capturaria.
   const recebidoByWorkday = new Map<string, number>();
   for (const p of (pagRes.data ?? [])) {
-    const wdId = (p as any).workday_id_fk as string;
-    recebidoByWorkday.set(wdId, (recebidoByWorkday.get(wdId) ?? 0) + ((p as any).valor_recebido ?? 0));
+    const wdId = p.workday_id_fk as string;
+    recebidoByWorkday.set(wdId, (recebidoByWorkday.get(wdId) ?? 0) + (p.valor_recebido ?? 0));
   }
 
-  const workdaysEnriched = (workdays ?? []).map((w: any) => {
+  const workdaysEnriched = (workdays ?? []).map((w) => {
     const receitaBruta = w.receita_bruta ?? 0;
     const recebido = recebidoByWorkday.get(w.id) ?? 0;
     return {
@@ -115,25 +116,25 @@ export async function GET(request: Request) {
   });
 
   // Agrupa receita_turnos por workday
-  const turnosByWorkday = new Map<string, any[]>();
+  const turnosByWorkday = new Map<string, Array<{ workday_id_fk: string; turno: string; consumo: number; gorjeta: number; clientes: number }>>();
   for (const t of (turRes.data ?? [])) {
-    const fk = (t as any).workday_id_fk as string;
+    const fk = t.workday_id_fk as string;
     if (!turnosByWorkday.has(fk)) turnosByWorkday.set(fk, []);
     turnosByWorkday.get(fk)!.push(t);
   }
 
   // Quebra workdays dia_inteiro em linhas por turno
-  const workdaysFinal: any[] = [];
+  const workdaysFinal: Record<string, unknown>[] = [];
   for (const w of workdaysEnriched) {
     if (w.turno !== "dia_inteiro") {
       workdaysFinal.push(w);
       continue;
     }
     const turnosDoDia = (turnosByWorkday.get(w.id) ?? [])
-      .filter((t: any) => (t.consumo ?? 0) > 0);
+      .filter((t) => (t.consumo ?? 0) > 0);
 
-    const temTarde = turnosDoDia.some((t: any) => (t.turno ?? "").toLowerCase().includes("tarde"));
-    const temNoite = turnosDoDia.some((t: any) => (t.turno ?? "").toLowerCase().includes("noite"));
+    const temTarde = turnosDoDia.some((t) => (t.turno ?? "").toLowerCase().includes("tarde"));
+    const temNoite = turnosDoDia.some((t) => (t.turno ?? "").toLowerCase().includes("noite"));
 
     if (!temTarde && !temNoite) {
       workdaysFinal.push(w);
@@ -175,7 +176,7 @@ export async function GET(request: Request) {
     descontosDetalhe:     descDetRes.data   ?? [],
     cancelamentos:        cancelRes.data    ?? [],
     cancelamentosDetalhe: cancelDetRes.data ?? [],
-    meta:           (metaRes as any).data?.meta_faturamento ?? null,
+    meta:           metaRes.data?.meta_faturamento ?? null,
     metasDiaSemana: metasDsRes.data  ?? [],
     metasOverride:  overrideRes.data ?? [],
   }, { headers: CORS });

@@ -1,6 +1,8 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { useResource } from "@/lib/hooks/use-resource"
+
+import { Fragment, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { getBrowserClient } from "@maza/db/supabase/client"
 import {
@@ -8,7 +10,6 @@ import {
   getProtestoUploadUrl,
   processarCertidaoProtesto,
 } from "@/app/financeiro/pagar/protestos-actions"
-import type { CertidaoProtesto } from "@/app/financeiro/pagar/protestos-actions"
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -63,8 +64,6 @@ function SituacaoBadge({ situacao }: { situacao: "em_aberto" | "cancelado" }) {
 type Props = { unitId: string | null }
 
 export function ProtestosTab({ unitId }: Props) {
-  const [certidoes, setCertidoes] = useState<CertidaoProtesto[] | null>(null)
-  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadMsg, setUploadMsg] = useState<string | null>(null)
   const [uploadErro, setUploadErro] = useState<string | null>(null)
@@ -72,18 +71,7 @@ export function ProtestosTab({ unitId }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const carregar = () => {
-    setLoading(true)
-    getProtestos(unitId).then((rows) => {
-      setCertidoes(rows)
-      setLoading(false)
-    })
-  }
-
-  useEffect(() => {
-    carregar()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unitId])
+  const { data: certidoes, loading, reload: carregar } = useResource(String(unitId), () => getProtestos(unitId), null)
 
   const toggleProtesto = (id: string) => {
     setExpandedProtestos((prev) => {

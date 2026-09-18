@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
-import { createSupabaseServerClient } from "@maza/db/supabase/server";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+import { applyBatch, replacement, type Mutation } from "@/lib/financeiro/db/atomic";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,21 +73,14 @@ export async function POST(request: Request) {
       previsto: Number(day.gross.toFixed(2)), devedor: 0, clientes: day.orders,
     }));
 
-    const db: any = await createSupabaseServerClient();
-    if (!db) throw new Error("Supabase não configurado");
-    const { data: workdays, error } = await db.from("receita_dias").upsert(rows, { onConflict: "unit_id,workday_id" }).select("id,data,receita_liquida");
-    if (error) throw new Error(`receita_dias: ${error.message}`);
-    const ids = (workdays ?? []).map((row: any) => row.id);
-    if (ids.length) {
-      const { error: deleteError } = await db.from("receita_pagamentos").delete().in("workday_id_fk", ids);
-      if (deleteError) throw new Error(`receita_pagamentos: ${deleteError.message}`);
-      const payments = workdays.map((row: any) => ({
-        workday_id_fk: row.id, forma: "Relatório Geral de Vendas",
-        valor_fechado: row.receita_liquida, valor_recebido: row.receita_liquida,
-      }));
-      const { error: paymentError } = await db.from("receita_pagamentos").insert(payments);
-      if (paymentError) throw new Error(`receita_pagamentos: ${paymentError.message}`);
+    const db = await createFinanceiroClient();
+    const operations: Mutation[] = [];
+    for (const row of rows) {
+      const id = crypto.randomUUID();
+      operations.push(...replacement("receita_dias", { unit_id: unitId, data: row.data }, [{ ...row, id }]));
+      operations.push({ table: "receita_pagamentos", operation: "insert", rows: [{ workday_id_fk: id, forma: "Relatório Geral de Vendas", valor_fechado: row.receita_liquida, valor_recebido: row.receita_liquida }] });
     }
+    await applyBatch(db, operations);
     const dates = [...days.keys()].sort();
     return Response.json({
       success: true,

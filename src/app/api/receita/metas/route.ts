@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,12 +14,7 @@ export function OPTIONS() {
   return new Response(null, { headers: CORS });
 }
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  if (!url || !key) throw new Error("Supabase env vars not set");
-  return createClient(url, key);
-}
+const getServiceClient = createFinanceiroClient;
 
 type Override = { data: string; meta: number | null };
 
@@ -35,9 +31,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "unit_id e overrides são obrigatórios" }, { status: 400, headers: CORS });
   }
 
-  let db: ReturnType<typeof getServiceClient>;
+  let db: Awaited<ReturnType<typeof getServiceClient>>;
   try {
-    db = getServiceClient();
+    db = await getServiceClient();
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500, headers: CORS });
   }

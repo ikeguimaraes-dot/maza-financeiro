@@ -1,4 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
+import { persistMovimento, turnoDoMovimento } from "@/lib/receita/persist";
+import { applyBatch, replacement } from "@/lib/financeiro/db/atomic";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -554,15 +557,10 @@ function parseVenda(buffer: Buffer, filename: string): ParsedVenda {
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
+const getServiceClient = createFinanceiroClient;
 
 async function insertMovimento(
-  supabase: ReturnType<typeof getServiceClient>, parsed: ParsedMovimento, unitId: string,
+  supabase: Awaited<ReturnType<typeof getServiceClient>>, parsed: ParsedMovimento, unitId: string,
 ): Promise<string> {
   if (parsed.workday_id == null) throw new Error("workday_id não encontrado no arquivo (esperado 'Workday: <n>')");
   if (!parsed.data) throw new Error("data não encontrada no nome do arquivo (esperado [DD.MM.YY])");
@@ -570,14 +568,11 @@ async function insertMovimento(
   const receitaLiquida =
     parsed.receita_bruta != null && parsed.desconto != null ? parsed.receita_bruta - parsed.desconto : null;
 
-  const { data: wd, error } = await supabase
-    .from("receita_dias")
-    .upsert(
-      {
+  return persistMovimento(supabase, {
         unit_id: unitId,
         data: parsed.data,
         workday_id: parsed.workday_id,
-        turno: "dia_inteiro", // placeholder — reclassificado abaixo
+        turno: turnoDoMovimento(parsed.turnos.map(t => t.nome)), // placeholder — reclassificado abaixo
         receita_bruta: parsed.receita_bruta,
         desconto: parsed.desconto,
         gorjeta: parsed.gorjeta,
@@ -596,106 +591,18 @@ async function insertMovimento(
         // parecer que veio deste import.
         abertura_at: null,
         fechamento_at: null,
-      },
-      { onConflict: "unit_id,workday_id" },
-    )
-    .select()
-    .single();
-
-  if (error) throw new Error(`receita_dias: ${error.message}`);
-
-  // Classificação de turno — mesma lógica de /api/receita/import (PDF).
-  const turnosNomes = parsed.turnos.map((t) => t.nome.toLowerCase());
-  const temTarde = turnosNomes.some((t) => t.includes("tarde"));
-  const temNoite = turnosNomes.some((t) => t.includes("noite"));
-
-  let turnoClassificado: "almoco" | "jantar" | "dia_inteiro";
-  if (temTarde && temNoite) {
-    turnoClassificado = "dia_inteiro";
-  } else if (temTarde) {
-    turnoClassificado = "almoco";
-  } else if (temNoite) {
-    turnoClassificado = "jantar";
-  } else {
-    const { data: siblings } = await supabase
-      .from("receita_dias")
-      .select("id, workday_id")
-      .eq("unit_id", unitId)
-      .eq("data", parsed.data)
-      .order("workday_id", { ascending: true });
-    if (siblings?.length === 1) {
-      turnoClassificado = "dia_inteiro";
-    } else if (siblings && siblings.length >= 2) {
-      await supabase.from("receita_dias").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
-      await supabase.from("receita_dias").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
-      turnoClassificado = wd.workday_id === siblings[0]!.workday_id ? "almoco" : "jantar";
-    } else {
-      turnoClassificado = "dia_inteiro";
-    }
-  }
-  await supabase.from("receita_dias").update({ turno: turnoClassificado }).eq("id", wd.id);
-
-  // Reimport idempotente: apaga filhos antes de reinserir.
-  await Promise.all([
-    supabase.from("receita_pagamentos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_ambientes").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_turnos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_horarios").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_descontos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_usuarios").delete().eq("workday_id_fk", wd.id),
-  ]);
-
-  const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
-  if (parsed.pagamentos.length) {
-    inserts.push(supabase.from("receita_pagamentos").insert(
-      parsed.pagamentos.map((p) => ({ forma: p.forma, valor_fechado: p.valor_fechado, valor_recebido: p.valor_recebido, diferenca: p.diferenca, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.ambientes.length) {
-    inserts.push(supabase.from("receita_ambientes").insert(
-      parsed.ambientes.map((a) => ({ ambiente: a.nome, clientes: a.clientes, gorjeta: a.gorjeta, produto: a.produto, consumo: a.consumo, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.turnos.length) {
-    inserts.push(supabase.from("receita_turnos").insert(
-      parsed.turnos.map((t) => ({ turno: t.nome, clientes: t.clientes, gorjeta: t.gorjeta, produto: t.produto, consumo: t.consumo, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.horarios.length) {
-    inserts.push(supabase.from("receita_horarios").insert(
-      parsed.horarios.map((h) => ({ hora: h.hora, clientes: h.clientes, gorjeta: h.gorjeta, produto: h.produto, consumo: h.consumo, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.descontos.length) {
-    inserts.push(supabase.from("receita_descontos").insert(
-      parsed.descontos.map((d) => ({ motivo: d.motivo, qtd: d.qtd, consumo: d.consumo, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.descontos_detalhe.length) {
-    inserts.push(supabase.from("receita_descontos_detalhe").insert(
-      parsed.descontos_detalhe.map((d) => ({ item: d.item, usuario: d.usuario, motivo: d.motivo, qtd: d.qtd, valor: d.valor, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.cancelamentos_detalhe.length) {
-    inserts.push(supabase.from("receita_cancelamentos_detalhe").insert(
-      parsed.cancelamentos_detalhe.map((c) => ({ item: c.item, usuario: c.usuario, motivo: c.motivo, qtd: c.qtd, valor: c.valor, workday_id_fk: wd.id })),
-    ).then());
-  }
-  if (parsed.usuarios.length) {
-    inserts.push(supabase.from("receita_usuarios").insert(
-      parsed.usuarios.map((u) => ({ usuario: u.usuario, qtd: u.qtd, gorjeta: u.gorjeta, produto: u.produto, consumo: u.consumo, workday_id_fk: wd.id })),
-    ).then());
-  }
-  const results = await Promise.all(inserts);
-  for (const r of results) if (r.error) throw new Error(r.error.message);
-
-  return wd.id;
+      }, {
+    receita_pagamentos: parsed.pagamentos.map(p => ({ ...p })),
+    receita_ambientes: parsed.ambientes.map(a => ({ ambiente: a.nome, clientes: a.clientes, gorjeta: a.gorjeta, produto: a.produto, consumo: a.consumo })),
+    receita_turnos: parsed.turnos.map(t => ({ turno: t.nome, clientes: t.clientes, gorjeta: t.gorjeta, produto: t.produto, consumo: t.consumo })),
+    receita_horarios: parsed.horarios.map(h => ({ ...h })), receita_descontos: parsed.descontos.map(d => ({ ...d })),
+    receita_descontos_detalhe: parsed.descontos_detalhe.map(d => ({ ...d })), receita_cancelamentos: [],
+    receita_cancelamentos_detalhe: parsed.cancelamentos_detalhe.map(c => ({ ...c })), receita_usuarios: parsed.usuarios.map(u => ({ ...u }))
+  });
 }
 
 async function insertVenda(
-  supabase: ReturnType<typeof getServiceClient>, parsed: ParsedVenda, unitId: string,
+  supabase: Awaited<ReturnType<typeof getServiceClient>>, parsed: ParsedVenda, unitId: string,
 ): Promise<void> {
   if (parsed.workday_id == null) throw new Error("workday_id não encontrado no arquivo (esperado 'Workday: <n>')");
 
@@ -707,25 +614,10 @@ async function insertVenda(
     .maybeSingle();
   if (!wd) throw new Error(`Workday não encontrado para workday_id=${parsed.workday_id} — importe o Movimento primeiro`);
 
-  await supabase.from("receita_grupos").delete().eq("workday_id_fk", wd.id);
-  if (parsed.grupos.length) {
-    const { error } = await supabase.from("receita_grupos").insert(
-      parsed.grupos.map((g) => ({ grupo: g.grupo, bruto: g.bruto, desconto: g.desconto, gorjeta: g.gorjeta, consumo: g.consumo, workday_id_fk: wd.id })),
-    );
-    if (error) throw new Error(`receita_grupos: ${error.message}`);
-  }
-
-  await supabase.from("receita_produtos_dia").delete().eq("workday_id_fk", wd.id);
-  if (parsed.produtos.length) {
-    const { error } = await supabase.from("receita_produtos_dia").insert(
-      parsed.produtos.map((p) => ({
-        grupo: p.grupo, produto: p.produto, qtd: p.qtd, cmv_pct: p.cmv_pct,
-        bruto: p.bruto, desconto: p.desconto, gorjeta: p.gorjeta, total: p.total,
-        workday_id_fk: wd.id,
-      })),
-    );
-    if (error) throw new Error(`receita_produtos_dia: ${error.message}`);
-  }
+  await applyBatch(supabase, [
+    ...replacement("receita_grupos", { workday_id_fk: wd.id }, parsed.grupos.map(g => ({ grupo: g.grupo, bruto: g.bruto, desconto: g.desconto, gorjeta: g.gorjeta, consumo: g.consumo, workday_id_fk: wd.id }))),
+    ...replacement("receita_produtos_dia", { workday_id_fk: wd.id }, parsed.produtos.map(p => ({ grupo: p.grupo, produto: p.produto, qtd: p.qtd, cmv_pct: p.cmv_pct, bruto: p.bruto, desconto: p.desconto, gorjeta: p.gorjeta, total: p.total, workday_id_fk: wd.id }))),
+  ]);
 }
 
 // ── Route handler — aceita Movimento e Venda misturados num único upload ───────
@@ -769,9 +661,9 @@ export async function POST(request: Request) {
       return Response.json({ processados: 0, erros: ["nenhum arquivo em 'arquivos'"], detalhes: [] }, { status: 400, headers: CORS });
     }
 
-    let supabase: ReturnType<typeof getServiceClient>;
+    let supabase: Awaited<ReturnType<typeof getServiceClient>>;
     try {
-      supabase = getServiceClient();
+      supabase = await getServiceClient();
     } catch (e) {
       return Response.json({ processados: 0, erros: [`supabase: ${String(e)}`], detalhes: [] }, { status: 500, headers: CORS });
     }

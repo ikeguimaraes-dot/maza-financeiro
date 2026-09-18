@@ -164,7 +164,16 @@ export default function ContratosPage() {
     } catch (e) { setErro(String(e)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/contratos`, { signal: controller.signal }).then(async response => {
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? `HTTP ${response.status}`);
+      if (!controller.signal.aborted) setContratos(json.contratos ?? []);
+    }).catch(error => { if (!controller.signal.aborted) setErro(String(error)); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setDetalheId(null); setNovoAberto(false); } };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);

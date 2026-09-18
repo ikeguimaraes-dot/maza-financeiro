@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     if (!body.titulo_id) return jsonError("titulo_id é obrigatório", 400);
     if (!body.linha_dre_corrigida) return jsonError("linha_dre_corrigida é obrigatória", 400);
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { error } = await supabase
       .from("titulo_override")
       .upsert(
@@ -42,7 +42,7 @@ export async function DELETE(req: Request) {
     }
     if (!tituloId) return jsonError("titulo_id é obrigatório", 400);
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { error } = await supabase.from("titulo_override").delete().eq("titulo_id", tituloId);
     if (error) return jsonError(error.message);
     return jsonOk({ ok: true });

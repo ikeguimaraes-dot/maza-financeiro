@@ -19,7 +19,7 @@ export function CatalogoTab() {
     setLoading(false)
   }
 
-  useEffect(() => { void carregar() }, [])
+  useEffect(() => { let active = true; getCatalogoGerado().then(r => { if (active) { setItens(r); setLoading(false) } }).catch(e => { if (active) { setErro(String(e)); setLoading(false) } }); return () => { active = false } }, [])
 
   async function handleGerar() {
     setGerando(true); setErro(""); setResultado(null)

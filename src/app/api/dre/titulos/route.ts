@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const mes = searchParams.get("mes"); // "todos" | "1".."12" | null
     if (!conta) return jsonError("param 'conta' é obrigatório", 400);
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     let q = supabase
       .from("titulos_a_pagar")
       .select("id, fantasia_fornecedor, razao_fornecedor, documento, n_nota_fiscal, descricao_c_gerencial, v_titulo, ref_mes, d_vencimento")

@@ -554,7 +554,7 @@ export function DespesasTab({ data, linhas = [], pessoal = [], manutencao = [], 
                 </thead>
                 <tbody>
                   {pessoalCats.map((cat) => {
-                    const isPositive = pessoalMeses.some((m) => (getPessoal(cat, m) ?? 0) > 0)
+
                     return (
                       <tr key={cat} style={{ borderTop: "1px solid var(--border)" }}>
                         <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{cat}</td>

@@ -39,7 +39,7 @@ export function ImportPagarButton() {
       const endpoint = isMaza ? "/api/financeiro/importacao-maza/preview" : "/api/financeiro/pagar/import"
       const res = await fetch(`${apiBase}${endpoint}`, { method: "POST", body: fd })
       const responseText = await res.text()
-      let json: Record<string, any>
+      let json: { ok?: boolean; error?: string; imported?: number; inserted?: number; preview?: { records?: Array<{ competencia?: string }> }; ref_meses?: string[] }
       try { json = JSON.parse(responseText) }
       catch { throw new Error(`O servidor respondeu em formato inválido (HTTP ${res.status}).`) }
 

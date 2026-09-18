@@ -11,7 +11,7 @@ export function OPTIONS() {
 export async function DELETE(_req: Request, { params }: { params: Promise<{ arquivoId: string }> }) {
   try {
     const { arquivoId } = await params;
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data: arq } = await supabase
       .from("contratos_arquivos").select("storage_path").eq("id", arquivoId).single();
     if (arq?.storage_path) await supabase.storage.from(BUCKET).remove([arq.storage_path]);

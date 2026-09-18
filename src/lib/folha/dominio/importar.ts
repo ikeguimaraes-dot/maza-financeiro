@@ -1,6 +1,7 @@
+import { applyBatch, type Mutation } from "@/lib/financeiro/db/atomic";
 // Grava um DominioParseResultado (já validado pelo parser puro) nas tabelas
 // payroll_extrato_dominio_*. Recebe `db` como parâmetro (em vez de importar
-// createServiceClient() direto) pra funcionar tanto a partir da Server
+// await createFinanceiroClient() direto) pra funcionar tanto a partir da Server
 // Action de produção quanto de um script local de carga única — mesmo
 // caminho de código nos dois casos, sem duplicar a lógica de gravação.
 import type { DominioCompetencia, DominioParseResultado } from "./types";
@@ -57,28 +58,11 @@ function validarCompetencia(comp: DominioCompetencia): { ok: boolean; error?: st
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function deleteScoped(db: any, tabela: string, unitId: string, competencia: string): Promise<void> {
-  const { error } = await db.from(tabela).delete().eq("unit_id", unitId).eq("competencia", competencia);
-  if (error) throw new Error(`${tabela}: ${error.message}`);
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function insertChunked(db: any, tabela: string, rows: any[]): Promise<void> {
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const { error } = await db.from(tabela).insert(rows.slice(i, i + CHUNK));
-    if (error) throw new Error(`${tabela}: ${error.message}`);
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function gravarCompetencia(db: any, unitId: string, comp: DominioCompetencia, arquivoOrigem: string): Promise<void> {
-  await deleteScoped(db, "payroll_extrato_dominio_linha", unitId, comp.competencia);
-  await deleteScoped(db, "payroll_extrato_dominio_rubrica", unitId, comp.competencia);
-  await deleteScoped(db, "payroll_extrato_dominio_colaborador", unitId, comp.competencia);
-  await deleteScoped(db, "payroll_extrato_dominio_competencia", unitId, comp.competencia);
-
-  const { error: compError } = await db.from("payroll_extrato_dominio_competencia").insert({
+  const operations: Mutation[] = ["linha", "rubrica", "colaborador", "competencia"].map(suffix => ({
+    table: `payroll_extrato_dominio_${suffix}`, operation: "delete", scope: { unit_id: unitId, competencia: comp.competencia },
+  }));
+  operations.push({ table: "payroll_extrato_dominio_competencia", operation: "insert", rows: [{
     unit_id: unitId,
     competencia: comp.competencia,
     cod_empresa_dominio: comp.codEmpresaDominio,
@@ -101,8 +85,7 @@ async function gravarCompetencia(db: any, unitId: string, comp: DominioCompetenc
     demitido: comp.demitido,
     admissoes: comp.admissoes,
     no_contribuintes: comp.noContribuintes,
-  });
-  if (compError) throw new Error(`payroll_extrato_dominio_competencia: ${compError.message}`);
+  }] });
 
   if (comp.colaboradores.length > 0) {
     const rows = comp.colaboradores.map((c) => ({
@@ -132,7 +115,7 @@ async function gravarCompetencia(db: any, unitId: string, comp: DominioCompetenc
       valor_fgts: c.valorFgts,
       base_irrf: c.baseIrrf,
     }));
-    await insertChunked(db, "payroll_extrato_dominio_colaborador", rows);
+    operations.push({ table: "payroll_extrato_dominio_colaborador", operation: "insert", rows });
   }
 
   const linhaRows = [
@@ -145,7 +128,7 @@ async function gravarCompetencia(db: any, unitId: string, comp: DominioCompetenc
       rubrica_codigo: l.rubricaCodigo, natureza: "DESCONTO", valor: l.valor,
     })),
   ];
-  if (linhaRows.length > 0) await insertChunked(db, "payroll_extrato_dominio_linha", linhaRows);
+  if (linhaRows.length > 0) operations.push({ table: "payroll_extrato_dominio_linha", operation: "insert", rows: linhaRows });
 
   if (comp.resumoRubricas.length > 0) {
     const rubricaRows = comp.resumoRubricas.map((r) => ({
@@ -158,8 +141,9 @@ async function gravarCompetencia(db: any, unitId: string, comp: DominioCompetenc
       quantidade_texto: r.quantidadeTexto,
       valor: r.valor,
     }));
-    await insertChunked(db, "payroll_extrato_dominio_rubrica", rubricaRows);
+    operations.push({ table: "payroll_extrato_dominio_rubrica", operation: "insert", rows: rubricaRows });
   }
+  await applyBatch(db, operations);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

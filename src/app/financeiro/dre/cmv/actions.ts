@@ -1,9 +1,14 @@
 "use server"
 
+import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
+
+import { applyBatch, replacement, type Mutation } from "@/lib/financeiro/db/atomic";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { createSupabaseServerClient } from "@maza/db/supabase/server"
 import { getCurrentUnit } from "@maza/auth/unit"
 import { requireUser } from "@maza/auth/server"
-import { createServiceClient } from "@maza/db/supabase/server"
+
 import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
 import { extrairCalibre } from "@/lib/financeiro/produtos/extrairCalibre"
 
@@ -62,7 +67,7 @@ export type ProdutoImportUnit = { id: string; name: string }
 
 export async function getProdutoImportUnits(): Promise<ProdutoImportUnit[]> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) throw new Error("Conexao administrativa com o banco nao configurada")
   const { data, error } = await db.from("units").select("id,name").order("name")
   if (error) throw new Error(error.message)
@@ -116,7 +121,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     if (!unit) return { ...empty, error: "Unidade não identificada." }
     if (!payload.notas.length) return { ...empty, error: "O ZIP não contém NF-e válida." }
 
-    const db = createServiceClient()
+    const db = await createFinanceiroClient()
     if (!db) return { ...empty, error: "Conexão administrativa com o banco não configurada." }
     // Tabelas novas ainda não constam nos tipos gerados.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,139 +185,49 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     const existingKeys = new Set(
       (existing ?? []).map((row: { unit_id: string; chave: string }) => `${row.unit_id} ${row.chave}`)
     )
-    const novas = resolvidas.filter(note => !existingKeys.has(`${note.unitId} ${note.chave}`))
-    const canceladas = novas.filter(note => note.cancelada).length
-    const validas = novas.filter(note => !note.cancelada)
-
-    // Cada unidade fiscal recebe seu próprio registro de auditoria — o pacote
-    // pode misturar notas de mais de uma unidade.
-    const notasPorUnidade = new Map<string, Array<NfeImportNota & { unitId: string }>>()
-    for (const note of resolvidas) {
-      const arr = notasPorUnidade.get(note.unitId) ?? []
-      arr.push(note)
-      notasPorUnidade.set(note.unitId, arr)
-    }
+    const canceladas = resolvidas.filter(note => note.cancelada).length
+    const validas = resolvidas.filter(note => !note.cancelada)
+    const operations: Mutation[] = []
     const importacaoIdPorUnidade = new Map<string, string>()
-    let rejeitadasRestantes = payload.rejeitadas
-    for (const [uid, notasDaUnidade] of notasPorUnidade) {
-      const novasDaUnidade = notasDaUnidade.filter(n => !existingKeys.has(`${n.unitId} ${n.chave}`))
-      const canceladasDaUnidade = novasDaUnidade.filter(n => n.cancelada).length
-      const validasDaUnidade = novasDaUnidade.filter(n => !n.cancelada)
-      const valorDaUnidade = validasDaUnidade.reduce((sum, n) => sum + n.valorTotal, 0)
-      const duplicadasDaUnidade = notasDaUnidade.length - novasDaUnidade.length
-      const { data: batch, error: batchError } = await raw.from("nfe_importacoes").insert({
-        unit_id: uid, arquivo: payload.arquivo, direcao: payload.direcao,
-        total_xml: notasDaUnidade.length + rejeitadasRestantes,
-        importadas: validasDaUnidade.length, duplicadas: duplicadasDaUnidade,
-        canceladas: canceladasDaUnidade, rejeitadas: rejeitadasRestantes, valor_total: valorDaUnidade,
-      }).select("id").single()
-      if (batchError) return { ...empty, error: batchError.message, naoImportadas, cnpjsDesconhecidos }
-      importacaoIdPorUnidade.set(uid, batch.id)
-      rejeitadasRestantes = 0 // conta só no primeiro lote registrado desta chamada
+    for (const uid of targetUnitIds) {
+      const id = crypto.randomUUID()
+      importacaoIdPorUnidade.set(uid, id)
+      const notas = resolvidas.filter(n => n.unitId === uid)
+      operations.push({ table: "nfe_importacoes", operation: "insert", rows: [{
+        id, unit_id: uid, arquivo: payload.arquivo, direcao: payload.direcao,
+        total_xml: notas.length, importadas: notas.filter(n => !n.cancelada).length,
+        duplicadas: notas.filter(n => existingKeys.has(`${uid} ${n.chave}`)).length,
+        canceladas: notas.filter(n => n.cancelada).length, rejeitadas: uid === targetUnitIds[0] ? payload.rejeitadas : 0,
+        valor_total: notas.filter(n => !n.cancelada).reduce((sum, n) => sum + n.valorTotal, 0),
+      }] })
     }
-
-    // Uma nova importação com direção corrigida deve também corrigir os
-    // documentos já conhecidos (ex.: pacote de entrada marcado como saída).
-    if (existingKeys.size) {
-      const chavesPorUnidade = new Map<string, string[]>()
-      for (const note of resolvidas) {
-        const key = `${note.unitId} ${note.chave}`
-        if (!existingKeys.has(key)) continue
-        const arr = chavesPorUnidade.get(note.unitId) ?? []
-        arr.push(note.chave)
-        chavesPorUnidade.set(note.unitId, arr)
-      }
-      for (const [uid, chaves] of chavesPorUnidade) {
-        const { error } = await raw.from("nfe_documentos")
-          .update({ direcao: payload.direcao })
-          .eq("unit_id", uid)
-          .in("chave", chaves)
-        if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
-      }
-    }
-
-    if (novas.length) {
-      const { error } = await raw.from("nfe_documentos").insert(novas.map(note => ({
+    let itemCount = 0
+    // A correction replaces the whole note, including removed items and cancellation.
+    for (const note of resolvidas) {
+      if (!/^\d{44}$/.test(note.chave) || !Number.isFinite(note.valorTotal) || !Number.isFinite(Date.parse(note.emissao))) throw new Error("NF-e com chave, data ou valor inválido.")
+      operations.push({ table: "nfe_documentos", operation: "upsert", conflict: "unit_id,chave", rows: [{
         unit_id: note.unitId, importacao_id: importacaoIdPorUnidade.get(note.unitId), chave: note.chave, direcao: payload.direcao,
         numero: note.numero, serie: note.serie, emissao: note.emissao,
         emitente_cnpj: note.emitenteCnpj, emitente_nome: note.emitenteNome,
         destinatario_cnpj: note.destinatarioCnpj, destinatario_nome: note.destinatarioNome,
         valor_total: note.valorTotal, status_sefaz: note.statusSefaz, cancelada: note.cancelada,
-      })))
-      if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
-    }
-
-    let itemCount = 0
-    // Reprocessa também documentos já conhecidos: o upsert é idempotente e isto
-    // permite reparar uma importação interrompida entre documento e itens.
-    const notasParaProdutos = resolvidas.filter(note => !note.cancelada)
-    if (notasParaProdutos.length) {
-      const rows = notasParaProdutos.flatMap(note => note.itens.map((item, index) => {
-        const date = new Date(note.emissao)
-        return {
-          unit_id: note.unitId, chave_nfe: note.chave,
-          fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
-          v_total_danfe: note.valorTotal, dt_emissao: note.emissao,
-          item_codigo: item.codigo ?? String(index + 1), item_descricao: item.descricao,
-          unidade_medida: item.unidade, tipo_item: item.ncm,
-          q_embalagem: item.quantidade, q_estoque: item.quantidade,
-          v_embalagem: item.valorUnitario, v_total_embalagem: item.valorTotal,
-          v_custo_medio: item.valorUnitario, v_custo_compra: item.valorUnitario,
-          v_custo_total: item.valorTotal, perc_variacao: null, calcula_cmv: payload.direcao === "entrada",
-          fornecedor_codigo: note.emitenteCnpj, codigo_gerencial: item.cfop,
-          desc_gerencial: payload.direcao === "entrada" ? "NF-e sem classificação" : "NF-e saída",
-          direcao_nfe: payload.direcao,
-          mes_lancamento: date.getMonth() + 1, ano_lancamento: date.getFullYear(),
-        }
+      }] })
+      const rows = note.cancelada ? [] : note.itens.map((item, index) => ({
+        unit_id: note.unitId, chave_nfe: note.chave, fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
+        v_total_danfe: note.valorTotal, dt_emissao: note.emissao,
+        item_nfe: index + 1, item_codigo: item.codigo ?? String(index + 1), item_descricao: item.descricao,
+        unidade_medida: item.unidade, tipo_item: item.ncm, q_embalagem: item.quantidade, q_estoque: item.quantidade,
+        v_embalagem: item.valorUnitario, v_total_embalagem: item.valorTotal,
+        v_custo_medio: item.valorUnitario, v_custo_compra: item.valorUnitario, v_custo_total: item.valorTotal,
+        perc_variacao: null, calcula_cmv: payload.direcao === "entrada", fornecedor_codigo: note.emitenteCnpj,
+        cfop: item.cfop, codigo_gerencial: item.cfop, desc_gerencial: payload.direcao === "entrada" ? "NF-e sem classificação" : "NF-e saída",
+        direcao_nfe: payload.direcao, mes_lancamento: Number(note.emissao.slice(5, 7)), ano_lancamento: Number(note.emissao.slice(0, 4)),
       }))
-      // O índice legado é parcial e não pode ser inferido pelo ON CONFLICT do
-      // PostgREST. Filtrar antes da inserção mantém a operação idempotente sem
-      // depender do formato desse índice.
-      const noteKeysPorUnidade = new Map<string, string[]>()
-      for (const note of notasParaProdutos) {
-        const arr = noteKeysPorUnidade.get(note.unitId) ?? []
-        arr.push(note.chave)
-        noteKeysPorUnidade.set(note.unitId, arr)
-      }
-      // Se o usuário reenviar o pacote na página correta, move também os itens
-      // que já existiam para a direção escolhida.
-      for (const [uid, chaves] of noteKeysPorUnidade) {
-        const { error: directionError } = await raw
-          .from("produtos_relatorio")
-          .update({
-            direcao_nfe: payload.direcao,
-            calcula_cmv: payload.direcao === "entrada",
-          })
-          .eq("unit_id", uid)
-          .in("chave_nfe", [...new Set(chaves)])
-        if (directionError) return { ...empty, error: directionError.message, naoImportadas, cnpjsDesconhecidos }
-      }
-
-      const { data: existingProducts, error: productsError } = await raw
-        .from("produtos_relatorio")
-        .select("unit_id,chave_nfe,item_codigo")
-        .in("unit_id", targetUnitIds)
-        .in("chave_nfe", [...new Set(notasParaProdutos.map(n => n.chave))])
-      if (productsError) return { ...empty, error: productsError.message, naoImportadas, cnpjsDesconhecidos }
-
-      const known = new Set((existingProducts ?? []).map(
-        (row: { unit_id: string; chave_nfe: string; item_codigo: string }) =>
-          `${row.unit_id}\u0000${row.chave_nfe}\u0000${row.item_codigo}`
-      ))
-      const pending = rows.filter(row => {
-        const key = `${row.unit_id}\u0000${row.chave_nfe}\u0000${row.item_codigo}`
-        if (known.has(key)) return false
-        known.add(key)
-        return true
-      })
-
-      for (let i = 0; i < pending.length; i += 500) {
-        const chunk = pending.slice(i, i + 500)
-        const { error } = await raw.from("produtos_relatorio").insert(chunk)
-        if (error) return { ...empty, error: error.message, naoImportadas, cnpjsDesconhecidos }
-        itemCount += chunk.length
-      }
+      operations.push(...replacement("produtos_relatorio", { unit_id: note.unitId, chave_nfe: note.chave }, rows))
+      itemCount += rows.length
     }
+    await applyBatch(db, operations)
+    const notasParaProdutos = validas
 
     // Catálogo automático: escopado às chaves deste lote (não reprocessa o
     // histórico inteiro a cada importação). Falha aqui não derruba a
@@ -332,28 +247,18 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
   }
 }
 
-export async function deleteProdutosMes(
-  unitId: string,
-  mes: number,
-  ano: number
-): Promise<{ ok: boolean; error?: string }> {
+export async function substituirProdutosPlanilha(rows: ProdutoInsert[]): Promise<{ ok: boolean; count: number; error?: string }> {
   try {
-    await requireUser()
-    const supabase = createServiceClient()
-    if (!supabase) return { ok: false, error: "Sem conexão com banco" }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = supabase as any
-    const { error } = await db
-      .from("produtos_relatorio")
-      .delete()
-      .eq("unit_id", unitId)
-      .eq("mes_lancamento", mes)
-      .eq("ano_lancamento", ano)
-    if (error) return { ok: false, error: error.message }
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: String(e) }
-  }
+    if (!rows.length) throw new Error("Planilha sem produtos válidos.")
+    const db = await createFinanceiroClient()
+    const scopes = new Map<string, { unit_id: string; mes_lancamento: number; ano_lancamento: number; chave_nfe: null }>()
+    for (const r of rows) {
+      if (!r.unit_id || !Number.isInteger(r.mes_lancamento) || r.mes_lancamento < 1 || r.mes_lancamento > 12 || !Number.isInteger(r.ano_lancamento)) throw new Error("Unidade ou período inválido.")
+      scopes.set(`${r.unit_id}|${r.ano_lancamento}|${r.mes_lancamento}`, { unit_id: r.unit_id, mes_lancamento: r.mes_lancamento, ano_lancamento: r.ano_lancamento, chave_nfe: null })
+    }
+    await applyBatch(db, [...scopes.values()].flatMap(scope => replacement("produtos_relatorio", scope, rows.filter(r => r.unit_id === scope.unit_id && r.mes_lancamento === scope.mes_lancamento && r.ano_lancamento === scope.ano_lancamento))))
+    return { ok: true, count: rows.length }
+  } catch (error) { return { ok: false, count: 0, error: error instanceof Error ? error.message : String(error) } }
 }
 
 export async function insertProdutos(
@@ -361,20 +266,20 @@ export async function insertProdutos(
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, count: 0, error: "Sem conexão com banco" }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
     const deduplicated = new Map<string, ProdutoInsert>()
     for (const row of rows) {
-      const key = `${row.unit_id}\u0000${row.nr_danfe ?? ""}\u0000${row.item_codigo ?? ""}`
+      const key = `${row.unit_id}\u0000${row.nr_danfe ?? ""}\u0000${row.item_codigo ?? ""}\u0000${row.fornecedor_codigo ?? ""}`
       deduplicated.set(key, row)
     }
     const records = [...deduplicated.values()]
     const { error, count } = await db
       .from("produtos_relatorio")
-      .upsert(records, { onConflict: "unit_id,nr_danfe,item_codigo" })
+      .upsert(records, { onConflict: "unit_id,nr_danfe,item_codigo,fornecedor_codigo,chave_nfe,item_nfe" })
       .select("id", { count: "exact", head: true })
 
     if (error) return { ok: false, count: 0, error: error.message }
@@ -864,9 +769,7 @@ export type ProdutoCompra = {
 }
 
 async function getProdutosDb() {
-  const supabase = await createSupabaseServerClient()
-  if (!supabase) throw new Error("Sem conexao com banco")
-  return supabase as any
+  return createFinanceiroClient()
 }
 
 export async function getBonificacoes(unitId: string | null): Promise<ProdutoCompra[]> {
@@ -1093,7 +996,7 @@ export async function criarProdutoCatalogo(
 ): Promise<{ ok: boolean; produto?: ProdutoCatalogo; error?: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1122,7 +1025,7 @@ export async function vincularProduto(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1159,7 +1062,7 @@ export async function desvincularProduto(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1187,22 +1090,6 @@ const SUFIXOS_CERTIFICACAO = ["ASC", "ISP", "S/M"]
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-// Blocos de 1000 via .range() -- o Supabase/PostgREST aplica um teto de
-// linhas por request independente do .limit() pedido no client, entao um
-// .limit(200000) sozinho e' silenciosamente truncado sem erro nenhum.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchAllPaginado(buildQuery: (from: number, to: number) => any): Promise<any[]> {
-  const pageSize = 1000
-  const result: any[] = []
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await buildQuery(from, from + pageSize - 1)
-    if (error) throw new Error(error.message)
-    const page = data ?? []
-    result.push(...page)
-    if (page.length < pageSize) return result
-  }
 }
 
 async function getCategoriasConhecidas(
@@ -1337,7 +1224,7 @@ export async function gerarCatalogoAutomatico(chavesNfe?: string[]): Promise<Ger
     if (chavesNfe && chavesNfe.length === 0) {
       return { ok: true, linhasLidas: 0, itensDistintos: 0, produtosCriados: 0, vinculosCriados: 0, excluidosPorNcm: 0, excluidosPorCategoria: 0 }
     }
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ...empty, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1541,7 +1428,7 @@ export type LimparCatalogoResultado = {
 export async function limparCatalogo(): Promise<LimparCatalogoResultado> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, produtosRemovidos: 0, vinculosRemovidos: 0, error: "Sem conexao com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1613,7 +1500,7 @@ export async function mesclarProdutos(
   try {
     await requireUser()
     if (produtoIdOrigem === produtoIdDestino) return { ok: false, error: "Origem e destino são o mesmo produto." }
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1644,7 +1531,7 @@ export async function renomearProduto(
   try {
     await requireUser()
     if (!nome.trim()) return { ok: false, error: "Nome não pode ser vazio." }
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1663,7 +1550,7 @@ export async function moverVinculo(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Sem conexão com banco" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -1969,4 +1856,3 @@ export async function getEvolucaoPorCompra(unitId: string | null): Promise<Produ
     return []
   }
 }
-

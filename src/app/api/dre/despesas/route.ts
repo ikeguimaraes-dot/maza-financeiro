@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     const ano = searchParams.get("ano");
     const linhaFiltro = searchParams.get("linha_dre");
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
 
     let q = supabase
       .from("titulos_a_pagar")

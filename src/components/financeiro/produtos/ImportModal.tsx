@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import * as XLSX from "xlsx"
-import { deleteProdutosMes, getProdutoImportUnits, insertProdutos } from "@/app/financeiro/dre/cmv/actions"
+import { substituirProdutosPlanilha, getProdutoImportUnits } from "@/app/financeiro/dre/cmv/actions"
 import type { ProdutoInsert } from "@/app/financeiro/dre/cmv/actions"
 
 interface ImportModalProps {
@@ -12,30 +12,7 @@ interface ImportModalProps {
   onSuccess: () => void
 }
 
-const COL_MAP: Record<string, keyof ProdutoInsert> = {
-  "Fantasia Fornecedor": "fornecedor_nome",
-  "Nr. DANFE":           "nr_danfe",
-  "V. Total DANFE":      "v_total_danfe",
-  "D. Emissão":          "dt_emissao",
-  "Item":                "item_codigo",
-  "Descrição do Item":   "item_descricao",
-  "Unidade Medida":      "unidade_medida",
-  "Tipo Item":           "tipo_item",
-  "Q. Embalagem":        "q_embalagem",
-  "Q. Estoque":          "q_estoque",
-  "V. Embalagem":        "v_embalagem",
-  "V. Total Embalagem":  "v_total_embalagem",
-  "V. Custo Médio":      "v_custo_medio",
-  "V. Custo Compra":     "v_custo_compra",
-  "V. Custo Total":      "v_custo_total",
-  "% Variação":          "perc_variacao",
-  "Calcula CMV":         "calcula_cmv",
-  "Fornecedor":          "fornecedor_codigo",
-  "C. Gerencial":        "codigo_gerencial",
-  "Descrição C. Gerencial": "desc_gerencial",
-  "Mês Lançamento":      "mes_lancamento",
-  "Ano Lançamento":      "ano_lancamento",
-}
+
 
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null
@@ -238,44 +215,12 @@ export function ImportModal({ unitId, onClose, onSuccess }: ImportModalProps) {
         return
       }
 
-      // Cada unidade e período é reconstruído isoladamente.
-      const byMonth = new Map<string, ProdutoInsert[]>()
-      for (const row of allRows) {
-        const key = `${row.unit_id}-${row.ano_lancamento}-${row.mes_lancamento}`
-        const bucket = byMonth.get(key) ?? []
-        bucket.push(row)
-        byMonth.set(key, bucket)
-      }
-
       setTotalRows(allRows.length)
       setStatus("uploading")
-
-      const BATCH = 500
-      let imported = 0
-      for (const rows of byMonth.values()) {
-        const { unit_id: rowUnitId, mes_lancamento: mes, ano_lancamento: ano } = rows[0]!
-
-        const del = await deleteProdutosMes(rowUnitId, mes, ano)
-        if (!del.ok) {
-          setErrorMsg(del.error ?? "Erro ao limpar mês existente.")
-          setStatus("error")
-          return
-        }
-        console.log('[import] delete ok, inserindo', rows.length, 'linhas')
-
-        for (let i = 0; i < rows.length; i += BATCH) {
-          const batch = rows.slice(i, i + BATCH)
-          const result = await insertProdutos(batch)
-          if (!result.ok) {
-            setErrorMsg(result.error ?? "Erro ao importar lote.")
-            setStatus("error")
-            return
-          }
-          imported += batch.length
-          setImportedRows(imported)
-          setProgress(Math.round((imported / allRows.length) * 100))
-        }
-      }
+      const result = await substituirProdutosPlanilha(allRows)
+      if (!result.ok) throw new Error(result.error ?? "Erro ao importar planilha.")
+      setImportedRows(result.count)
+      setProgress(100)
 
       setStatus("done")
       setTimeout(() => {

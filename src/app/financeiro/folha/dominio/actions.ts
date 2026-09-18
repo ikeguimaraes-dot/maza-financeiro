@@ -1,7 +1,9 @@
 "use server";
 
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { requireUser } from "@maza/auth/server";
-import { createServiceClient } from "@maza/db/supabase/server";
+
 import {
   importarExtratoDominioParaBanco,
   type ImportarExtratoDominioResultado,
@@ -12,7 +14,7 @@ export async function importarExtratoDominio(
   resultado: DominioParseResultado
 ): Promise<ImportarExtratoDominioResultado> {
   await requireUser();
-  const supabase = createServiceClient();
+  const supabase = await createFinanceiroClient();
   if (!supabase) {
     return {
       ok: false,

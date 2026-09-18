@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const empresa = resolveEmpresa(searchParams.get("unidade") ?? searchParams.get("empresa"));
     const ano = Number(searchParams.get("ano")) || new Date().getFullYear();
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     let q = supabase
       .from("titulos_a_pagar")
       .select("id, descricao_c_gerencial, v_titulo, ref_mes, empresa")

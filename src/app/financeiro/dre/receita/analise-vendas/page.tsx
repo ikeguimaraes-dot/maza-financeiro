@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   PieChart, Pie, Cell,
   BarChart, Bar,
@@ -110,7 +110,10 @@ export default function AnaliseVendasPage() {
   const [ambiente, setAmbiente] = useState<AmbienteRow[]>([]);
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [funcBusca, setFuncBusca] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [isReloading, setLoading] = useState(false);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loadKey = String(unit?.id);
+  const loading = Boolean(unit) && (isReloading || loadedKey !== loadKey);
   const [dbError, setDbError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   // Filtros / ordenação / accordion da seção Produtos (tudo client-side)
@@ -135,16 +138,18 @@ export default function AnaliseVendasPage() {
   const caixaRef = useRef<HTMLInputElement>(null);
   const spreadsheetsRef = useRef<HTMLInputElement>(null);
 
-  async function loadData(periodoId?: string | null) {
+  const requestIdRef = useRef(0);
+  async function loadData(periodoId?: string | null, signal?: AbortSignal) {
+    const requestId = ++requestIdRef.current;
     if (!unit) return;
-    setLoading(true);
-    setDbError(null);
     try {
       const params = new URLSearchParams({ unit_id: unit.id });
       if (periodoId) params.set("periodo_id", periodoId);
-      const res = await fetch(`${API_BASE}/api/vendas-consolidado/dados?${params}`);
+      const res = await fetch(`${API_BASE}/api/vendas-consolidado/dados?${params}`, { signal });
       const json = await res.json();
+      if (signal?.aborted || requestId !== requestIdRef.current) return;
       if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
+      setDbError(null);
       setPeriodos(json.periodos ?? []);
       setPeriodoAtual(json.periodo ?? null);
       setPeriodoSel(json.periodo?.id ?? null);
@@ -156,13 +161,20 @@ export default function AnaliseVendasPage() {
       setAmbiente(json.ambiente ?? []);
       setFuncionarios(json.funcionarios ?? []);
     } catch (e) {
-      setDbError(String(e));
+      if (!signal?.aborted && requestId === requestIdRef.current) setDbError(String(e));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && requestId === requestIdRef.current) { setLoadedKey(loadKey); setLoading(false); }
     }
   }
 
-  useEffect(() => { loadData(); }, [unit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const refreshOnChange = useEffectEvent((signal: AbortSignal) => loadData(undefined, signal));
+  useEffect(() => {
+    const controller = new AbortController();
+    // State writes happen after the awaited request; cleanup rejects stale responses.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshOnChange(controller.signal);
+    return () => controller.abort();
+  }, [unit?.id]);
 
   function onSelectPeriodo(id: string) {
     setPeriodoSel(id);
@@ -215,12 +227,14 @@ export default function AnaliseVendasPage() {
   const produtosABC = useMemo(() => {
     const ord = [...produtos].sort((a, b) => (b.valor_liquido ?? 0) - (a.valor_liquido ?? 0));
     let acc = 0;
-    return ord.map((p) => {
+    const result = [];
+    for (const p of ord) {
       const part = totalLiquido > 0 ? ((p.valor_liquido ?? 0) / totalLiquido) * 100 : 0;
       acc += part;
       const curva: Curva = acc <= 80 ? "A" : acc <= 95 ? "B" : "C";
-      return { ...p, _part: part, _acc: acc, _curva: curva };
-    });
+      result.push({ ...p, _part: part, _acc: acc, _curva: curva });
+    }
+    return result;
   }, [produtos, totalLiquido]);
 
   const resumoABC = useMemo(() => {
@@ -688,7 +702,7 @@ function CurvaABCCard({ resumo, total }: { resumo: Record<Curva, { n: number; va
   );
 }
 
-function GrupoPieCard({ rows, total }: { rows: { grupo: string; valor: number; pct: number }[]; total: number }) {
+function GrupoPieCard({ rows }: { rows: { grupo: string; valor: number; pct: number }[]; total: number }) {
   const data = rows.slice(0, 8);
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px" }}>
@@ -702,7 +716,7 @@ function GrupoPieCard({ rows, total }: { rows: { grupo: string; valor: number; p
               </Pie>
               <Tooltip
                 contentStyle={{ background: "#1A1A18", border: "1px solid rgba(245,240,232,0.12)", borderRadius: 8, fontSize: 12 }}
-                formatter={(v: any) => fmt(Number(v))}
+                formatter={(v) => fmt(Number(v))}
               />
             </PieChart>
           </div>
@@ -735,7 +749,7 @@ function TopBarCard({ title, rows, fmtVal, color }: {
             <Tooltip
               cursor={{ fill: "rgba(255,255,255,0.04)" }}
               contentStyle={{ background: "#1A1A18", border: "1px solid rgba(245,240,232,0.12)", borderRadius: 8, fontSize: 12 }}
-              formatter={(v: any) => fmtVal(Number(v))}
+              formatter={(v) => fmtVal(Number(v))}
             />
             <Bar dataKey="valor" radius={[0, 4, 4, 0]} fill={color} />
           </BarChart>
@@ -801,7 +815,7 @@ function ColBarChart({ title, data, color }: { title: string; data: { nome: stri
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <XAxis dataKey="nome" tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} interval={0} />
           <YAxis tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: C.text3 }} axisLine={false} tickLine={false} width={42} />
-          <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} contentStyle={{ background: "#1A1A18", border: "1px solid rgba(245,240,232,0.12)", borderRadius: 8, fontSize: 12 }} formatter={(v: any) => fmt(Number(v))} />
+          <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} contentStyle={{ background: "#1A1A18", border: "1px solid rgba(245,240,232,0.12)", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(Number(v))} />
           <Bar dataKey="valor" radius={[6, 6, 0, 0]} fill={color} />
         </BarChart>
       </ResponsiveContainer>

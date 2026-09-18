@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { createFinanceiroClient } from "@/lib/financeiro/db/client"
 
 export const runtime = "nodejs"
 
@@ -24,10 +24,7 @@ export async function GET(req: Request) {
     return Response.json({ error: "unit_id obrigatório" }, { status: 400, headers: CORS })
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  const supabase = await createFinanceiroClient()
 
   const { data, error } = await supabase
     .from("payroll_extrato_dominio_competencia")

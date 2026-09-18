@@ -28,7 +28,7 @@ export function CardsResumo({ resumo, confianca, temContaCadastrada }: Props) {
         label="Saldo hoje"
         value={
           temContaCadastrada
-            ? formatBRLCompact(resumo.saldoHoje)
+            ? (resumo.saldoHoje == null ? "Fora do período" : formatBRLCompact(resumo.saldoHoje))
             : <span style={{ fontSize: 15, color: "#F59E0B" }}>Saldo não cadastrado</span>
         }
         sub={temContaCadastrada ? "Consolidado das contas" : "Cadastre uma conta bancária abaixo"}

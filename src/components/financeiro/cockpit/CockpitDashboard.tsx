@@ -1,3 +1,4 @@
+import { refreshUnits } from "@/lib/financeiro/razao/refresh";
 import "server-only";
 import { requireUser } from "@maza/auth/server";
 import { getCurrentUnitComOrigem } from "@maza/auth/unit";
@@ -53,6 +54,12 @@ export async function CockpitDashboard({ searchParams, basePath = "/financeiro" 
   const db = supabase as any;
 
   const unitIdsTodos: string[] = UNIDADES.map((u) => u.id);
+
+  if (!db) throw new Error("Banco de dados indisponível");
+  try { await refreshUnits(db, unitIdsTodos); }
+  catch (error) {
+    return <div role="alert" style={{ padding: 24 }}>Não foi possível atualizar os indicadores. {error instanceof Error ? error.message : "Tente novamente."}</div>;
+  }
 
   const todasCompetencias = (await fetchAll((from, to) =>
     db.from("kpi_snapshot").select("competencia").in("unit_id", unitIdsTodos).order("competencia").range(from, to),

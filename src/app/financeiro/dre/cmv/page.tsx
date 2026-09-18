@@ -1,3 +1,4 @@
+import { fetchAllPaginado as fetchAll } from "@/lib/financeiro/razao/gerar"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 import { requireUser } from "@maza/auth/server"
@@ -37,21 +38,6 @@ export type ProdutoRow = {
   ano_lancamento: number
 }
 
-// O PostgREST limita cada resposta a 1.000 linhas. Paginar evita que a
-// tabela e os totais considerem somente o primeiro bloco da importação.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchAll(buildQuery: (from: number, to: number) => any) {
-  const pageSize = 1000
-  const result: any[] = []
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await buildQuery(from, from + pageSize - 1)
-    if (error) throw new Error(error.message)
-    const page = data ?? []
-    result.push(...page)
-    if (page.length < pageSize) return result
-  }
-}
-
 export async function NfeProdutosPage({ searchParams, direcao }: {
   searchParams: NfeSearchParams
   direcao: "entrada" | "saida"
@@ -74,9 +60,9 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const uq = (qb: any) => unitId ? qb.eq("unit_id", unitId) : qb
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const baseProdutosQuery = () => {
-    let query = uq(db.from("produtos_relatorio").select("*"))
+    const query = uq(db.from("produtos_relatorio").select("*"))
       .eq("mes_lancamento", mes)
       .eq("ano_lancamento", ano)
       .order("id")
@@ -110,7 +96,7 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
   })
 
   // Available months for this direction only.
-  const mesesData = await fetchAll((from, to) => {
+  const mesesData = await fetchAll<{ mes_lancamento: number; ano_lancamento: number }>((from, to) => {
     let query = uq(db.from("produtos_relatorio")
       .select("id,mes_lancamento,ano_lancamento"))
       .order("id")
@@ -132,7 +118,7 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
   // Somar itens pode divergir por impostos/frete e antes ainda era truncado.
   const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01T00:00:00.000Z`
   const proximoMes = new Date(Date.UTC(ano, mes, 1)).toISOString()
-  const documentos = await fetchAll((from, to) => uq(db.from("nfe_documentos")
+  const documentos = await fetchAll<{ valor_total: number | null }>((from, to) => uq(db.from("nfe_documentos")
     .select("id,valor_total")
     .eq("direcao", direcao)
     .eq("cancelada", false)

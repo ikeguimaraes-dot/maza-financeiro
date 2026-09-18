@@ -1,6 +1,8 @@
 "use server";
 
-import { createOperationsClient } from "@maza/db/supabase/operations-client";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
+
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 import type {
   VendaDiaria,
@@ -85,7 +87,7 @@ export type WorkdayDiaEnriquecido = {
  * Fonte: import automático ~8h diariamente — dados sempre atualizados.
  */
 async function getVendasDiariasMes(competencia: string): Promise<VendaDiaria[]> {
-  const ops = createOperationsClient();
+  const ops = await createFinanceiroClient();
   if (!ops) return [];
 
   const { dateFrom, dateTo } = competenciaToRange(competencia);
@@ -111,7 +113,7 @@ async function getVendasDiariasMes(competencia: string): Promise<VendaDiaria[]> 
 export async function getMetasMes(
   competencia: string,
 ): Promise<MetaProjecao | null> {
-  const ops = createOperationsClient();
+  const ops = await createFinanceiroClient();
   if (!ops) return null;
 
   const mesAno = competenciaToMesAno(competencia);
@@ -435,7 +437,7 @@ export async function getConciliacao(
   const vazio: ConciliacaoData = { notas: [], boletosSemNota: [] };
   try {
     const supabase = await createSupabaseServerClient();
-    const ops = createOperationsClient();
+    const ops = await createFinanceiroClient();
     if (!supabase || !ops) return vazio;
 
     // 1) Notas do CMV do mês/unidade — dedup por nr_danfe.

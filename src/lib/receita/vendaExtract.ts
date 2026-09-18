@@ -1,3 +1,4 @@
+import { extractedRecord } from "./extraction";
 // Lógica COMPARTILHADA de extração de PDF do Lorean via Claude.
 // Fonte única para o import diário (/api/receita/import) e o consolidado
 // (/api/vendas-consolidado/import) — assim a mecânica de chamada ao Claude e
@@ -48,15 +49,15 @@ export async function parsePdf(pdfBase64: string, prompt: string, label: string,
         ],
       },
     ],
-  } as any);
+  });
   const response = await stream.finalMessage();
 
   if (response.stop_reason === "max_tokens") {
     throw new Error(`JSON truncado para ${label} — aumentar max_tokens`);
   }
-  const textBlock = (response.content as any[]).find((b: any) => b.type === "text");
+  const textBlock = response.content.find((b) => b.type === "text");
   if (!textBlock) throw new Error(`No text block from Claude for ${label}`);
   const clean = textBlock.text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
   if (!clean.startsWith("{")) throw new Error(`Claude response not JSON for ${label}: ${clean.slice(0, 80)}`);
-  return JSON.parse(clean);
+  return extractedRecord(JSON.parse(clean));
 }

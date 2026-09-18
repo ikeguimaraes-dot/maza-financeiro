@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import type { Database } from "../types/database";
 
 /**
@@ -20,41 +20,19 @@ export async function createSupabaseServerClient(
 
   const cookieStore = resolvedCookieStore ?? (await cookies());
 
-  // Detecta ambiente pelo header Host — em localhost Domain é ignorado pelo browser.
-  const headerStore = await headers();
-  const host = headerStore.get("host") ?? "";
-  const isLocalDev =
-    host.startsWith("localhost") || host.startsWith("127.0.0.1");
-  const sharedDomain = isLocalDev ? undefined : ".vercel.app";
-
-  // Aplica o Set-Cookie do middleware se a request foi um Server Action
-  // (Next.js 14+ tem bug que dropa Set-Cookie de middleware em Server Actions)
-  const middlewareCookies = headerStore.get("x-middleware-set-cookie");
-  if (middlewareCookies) {
-    try {
-      const parsed = JSON.parse(middlewareCookies);
-      for (const { name, value, options } of parsed) {
-        cookieStore.set(name, value, { ...options, domain: sharedDomain });
-      }
-    } catch {
-      // Ignorar, provavelmente Server Component
-    }
-  }
-
   return createServerClient<Database>(url, anonKey, {
     cookieOptions: {
       path: "/",
-      domain: sharedDomain,
       sameSite: "lax",
-      secure: !isLocalDev,
+      secure: process.env.NODE_ENV === "production",
     },
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll() {
+      setAll(cookiesToSet) {
         try {
-          // Somente leitura: o middleware é o único responsável pelo refresh.
+          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
         } catch {
           // Server Component: cookies não podem ser escritos. proxy.ts
           // cuida do refresh. Ignorar é seguro.

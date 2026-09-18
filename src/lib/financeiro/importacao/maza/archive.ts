@@ -13,7 +13,7 @@ function sourceKind(name: string): MazaBatchPreview["kind"] {
 
 function previewWorkbooks(kind: MazaBatchPreview["kind"], entries: Array<{ name: string; bytes: Buffer }>): MazaBatchPreview {
   const warnings: ImportWarning[] = []
-  const records = [] as Array<any>
+  const records: Array<MazaBatchPreview["records"][number]> = []
   for (const entry of entries) {
     const wb = workbook(entry.bytes)
     if (kind === "nf_entrada") records.push(...parseNfEntrada(wb, entry.name, warnings))
@@ -23,14 +23,14 @@ function previewWorkbooks(kind: MazaBatchPreview["kind"], entries: Array<{ name:
   }
   const cents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
   const totals: Record<string, number> = { registros: records.length }
-  if (kind === "nf_entrada") totals.valor = cents(records.reduce((sum, row) => sum + row.valorTotal, 0))
-  if (kind === "contas_pagar") totals.valor = cents(records.reduce((sum, row) => sum + row.valorParcela, 0))
+  if (kind === "nf_entrada") totals.valor = cents(records.reduce((sum, row) => sum + ("valorTotal" in row ? row.valorTotal : 0), 0))
+  if (kind === "contas_pagar") totals.valor = cents(records.reduce((sum, row) => sum + ("valorParcela" in row ? row.valorParcela : 0), 0))
   if (kind === "receita") {
-    totals.receitaBruta = cents(records.reduce((sum, row) => sum + row.receitaBruta, 0))
-    totals.receitaLiquida = cents(records.reduce((sum, row) => sum + row.receitaLiquida, 0))
-    totals.taxaServico = cents(records.reduce((sum, row) => sum + row.taxaServico, 0))
+    totals.receitaBruta = cents(records.reduce((sum, row) => sum + ("receitaBruta" in row ? row.receitaBruta : 0), 0))
+    totals.receitaLiquida = cents(records.reduce((sum, row) => sum + ("receitaLiquida" in row ? row.receitaLiquida : 0), 0))
+    totals.taxaServico = cents(records.reduce((sum, row) => sum + ("taxaServico" in row ? row.taxaServico : 0), 0))
   }
-  return { kind, files: entries.map((entry) => entry.name), records, warnings, totals }
+  return { kind, files: entries.map((entry) => entry.name), records: records as MazaBatchPreview["records"], warnings, totals }
 }
 
 export function previewMazaSpreadsheet(name: string, bytes: Buffer): MazaBatchPreview {

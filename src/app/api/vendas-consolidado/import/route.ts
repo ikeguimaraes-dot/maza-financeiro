@@ -1,3 +1,6 @@
+import { extractedRecord, extractedRows, type PdfRecord } from "@/lib/receita/extraction";
+import { applyBatch, replacement, type Mutation } from "@/lib/financeiro/db/atomic";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 // Importação de relatório CONSOLIDADO (período longo) — Venda (produtos) e
 // Movimento (resumo operacional + seções consolidadas). Todos os PDFs são
 // OPCIONAIS; exige-se ao menos um. O período é UPSERTado por
@@ -6,7 +9,7 @@
 //
 // A extração de produtos (Venda) é IDÊNTICA ao import diário (parsePdf
 // compartilhada). A única diferença das duas rotas é o DESTINO no banco.
-import { createClient } from "@supabase/supabase-js";
+
 import { PDFDocument } from "pdf-lib";
 import { VENDA_PROMPT, parsePdf } from "@/lib/receita/vendaExtract";
 import { parseSalesSpreadsheets } from "@/lib/vendas/spreadsheet-parser";
@@ -32,13 +35,8 @@ function jsonOk(body: Record<string, unknown>) {
   return Response.json({ success: true, errors: [], ...body }, { headers: CORS });
 }
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
-type Supa = ReturnType<typeof getServiceClient>;
+const getServiceClient = createFinanceiroClient;
+type Supa = Awaited<ReturnType<typeof getServiceClient>>;
 
 const num = (v: unknown) => { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; };
 const str = (v: unknown) => String(v ?? "").trim();
@@ -70,12 +68,12 @@ async function processInBlocks(
   file: File,
   prompt: string,
   tag: string,
-): Promise<any[]> {
+): Promise<PdfRecord[]> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const blocks = await splitPdfIntoBlocks(bytes, 3);
   const totalPaginas = blocks.length ? blocks[blocks.length - 1]!.to : 0;
   console.log(`[${tag}] PDF tem ${totalPaginas} páginas, dividido em ${blocks.length} blocos`);
-  const parts: any[] = [];
+  const parts: PdfRecord[] = [];
   const CONC = 4;
   for (let i = 0; i < blocks.length; i += CONC) {
     const grupo = blocks.slice(i, i + CONC);
@@ -158,9 +156,9 @@ async function upsertPeriodo(
 // ── Venda → produtos (substitui os produtos do período) ───────────────────────
 async function processVenda(supabase: Supa, periodoId: string, file: File): Promise<number> {
   const parts = await processInBlocks(file, VENDA_PROMPT, "vc");
-  const produtosRaw: any[] = [];
+  const produtosRaw: PdfRecord[] = [];
   for (const p of parts) {
-    const prods = Array.isArray(p?.produtos) ? p.produtos : [];
+    const prods = extractedRows(p.produtos);
     produtosRaw.push(...prods);
   }
   console.log("[vc] produtos parseados (somados dos blocos):", produtosRaw.length);
@@ -189,33 +187,27 @@ async function processVenda(supabase: Supa, periodoId: string, file: File): Prom
   }));
 
   // Substitui os produtos do período (re-upload do Venda regrava sem duplicar).
-  await supabase.from("vendas_consolidado_produtos").delete().eq("periodo_id", periodoId);
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const slice = rows.slice(i, i + CHUNK);
-    const { error } = await supabase.from("vendas_consolidado_produtos").insert(slice);
-    if (error) throw new Error(`vendas_consolidado_produtos: ${error.message}`);
-    console.log(`[vc] chunk inserido ${i + slice.length}/${rows.length}`);
-  }
-  console.log("[vc] produtos inseridos:", rows.length);
+  await applyBatch(supabase, replacement("vendas_consolidado_produtos", { periodo_id: periodoId }, rows));
+
   return rows.length;
 }
 
 // Agrega linhas de uma seção entre blocos, somando por chave.
-function aggSection(parts: any[], listKey: string, keyField: string, sumFields: string[]) {
-  const m = new Map<string, any>();
+function aggSection(parts: PdfRecord[], listKey: string, keyField: string, sumFields: string[]) {
+  type Aggregate = { bruto: number; clientes: number; liquido: number; mes: string; turno: string; dia_semana: string; ambiente: string; ordem: number | null; [key: string]: string | number | null };
+  const m = new Map<string, Aggregate>();
   for (const part of parts) {
-    const list = Array.isArray(part?.[listKey]) ? part[listKey] : [];
+    const list = extractedRows(part[listKey]);
     for (const row of list) {
       const k = str(row[keyField]);
       if (!k) continue;
       let ex = m.get(k);
       if (!ex) {
-        ex = { [keyField]: k, ordem: row.ordem != null ? num(row.ordem) : null };
+        ex = { bruto: 0, clientes: 0, liquido: 0, mes: "", turno: "", dia_semana: "", ambiente: "", [keyField]: k, ordem: row.ordem != null ? num(row.ordem) : null };
         for (const f of sumFields) ex[f] = 0;
         m.set(k, ex);
       }
-      for (const f of sumFields) ex[f] += num(row[f]);
+      for (const f of sumFields) ex[f] = num(ex[f]) + num(row[f]);
       if (ex.ordem == null && row.ordem != null) ex.ordem = num(row.ordem);
     }
   }
@@ -228,12 +220,12 @@ async function processMovimento(supabase: Supa, periodoId: string, file: File) {
 
   // Resumo: 1 quadro de totais — aparece em um bloco só; mescla 1º valor não-vazio.
   const RES_NUM = ["acessos","ticket_medio","ticket_real","bruto","produto","custo","desconto","gorjeta","convite","lucro","entrada","consumo","devedor","pgto_fechado","pgto_recebido","pgto_diferenca","cash","card","pix"];
-  const resumo: any = { permanencia_media: null };
+  const resumo: PdfRecord = { permanencia_media: null };
   for (const f of RES_NUM) resumo[f] = null;
   let temResumo = false;
   for (const part of parts) {
-    const r = part?.resumo;
-    if (!r || typeof r !== "object") continue;
+    if (part.resumo == null) continue;
+    const r = extractedRecord(part.resumo);
     if (resumo.permanencia_media == null && str(r.permanencia_media)) resumo.permanencia_media = str(r.permanencia_media);
     for (const f of RES_NUM) {
       if (resumo[f] == null || resumo[f] === 0) {
@@ -275,52 +267,18 @@ async function processMovimento(supabase: Supa, periodoId: string, file: File) {
   console.log("[vc-mov] seções:", { mensal: mensal.length, turno: turno.length, dia: dia.length, ambiente: ambiente.length, funcionarios: funcionarios.length });
 
   // Regrava cada seção do período (delete + insert) sem tocar nos produtos.
-  await Promise.all([
-    supabase.from("vendas_consolidado_resumo").delete().eq("periodo_id", periodoId),
-    supabase.from("vendas_consolidado_mensal").delete().eq("periodo_id", periodoId),
-    supabase.from("vendas_consolidado_turno").delete().eq("periodo_id", periodoId),
-    supabase.from("vendas_consolidado_dia_semana").delete().eq("periodo_id", periodoId),
-    supabase.from("vendas_consolidado_ambiente").delete().eq("periodo_id", periodoId),
-    supabase.from("vendas_consolidado_funcionarios").delete().eq("periodo_id", periodoId),
-  ]);
-
-  if (temResumo) {
-    const row: any = { periodo_id: periodoId, permanencia_media: resumo.permanencia_media };
-    for (const f of RES_NUM) row[f] = resumo[f];
-    if (row.acessos != null) row.acessos = Math.round(num(row.acessos));
-    const { error } = await supabase.from("vendas_consolidado_resumo").insert(row);
-    if (error) throw new Error(`vendas_consolidado_resumo: ${error.message}`);
-  }
-  if (mensal.length) {
-    const { error } = await supabase.from("vendas_consolidado_mensal").insert(
-      mensal.map((r) => ({ periodo_id: periodoId, mes: r.mes, ordem: r.ordem, bruto: r.bruto, liquido: r.liquido, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio })),
-    );
-    if (error) throw new Error(`vendas_consolidado_mensal: ${error.message}`);
-  }
-  if (turno.length) {
-    const { error } = await supabase.from("vendas_consolidado_turno").insert(
-      turno.map((r) => ({ periodo_id: periodoId, turno: r.turno, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio, participacao_pct: r.participacao_pct })),
-    );
-    if (error) throw new Error(`vendas_consolidado_turno: ${error.message}`);
-  }
-  if (dia.length) {
-    const { error } = await supabase.from("vendas_consolidado_dia_semana").insert(
-      dia.map((r) => ({ periodo_id: periodoId, dia_semana: r.dia_semana, ordem: r.ordem, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio })),
-    );
-    if (error) throw new Error(`vendas_consolidado_dia_semana: ${error.message}`);
-  }
-  if (ambiente.length) {
-    const { error } = await supabase.from("vendas_consolidado_ambiente").insert(
-      ambiente.map((r) => ({ periodo_id: periodoId, ambiente: r.ambiente, bruto: r.bruto, clientes: Math.round(num(r.clientes)), participacao_pct: r.participacao_pct })),
-    );
-    if (error) throw new Error(`vendas_consolidado_ambiente: ${error.message}`);
-  }
-  if (funcionarios.length) {
-    const { error } = await supabase.from("vendas_consolidado_funcionarios").insert(
-      funcionarios.map((r) => ({ periodo_id: periodoId, funcionario: r.funcionario, bruto: r.bruto, qtd_vendas: Math.round(num(r.qtd_vendas)) })),
-    );
-    if (error) throw new Error(`vendas_consolidado_funcionarios: ${error.message}`);
-  }
+  const row: Record<string, unknown> = { periodo_id: periodoId, permanencia_media: resumo.permanencia_media };
+  for (const f of RES_NUM) row[f] = resumo[f];
+  if (row.acessos != null) row.acessos = Math.round(num(row.acessos));
+  const operations: Mutation[] = [
+    ...replacement("vendas_consolidado_resumo", { periodo_id: periodoId }, temResumo ? [row] : []),
+    ...replacement("vendas_consolidado_mensal", { periodo_id: periodoId }, mensal.map((r) => ({ periodo_id: periodoId, mes: r.mes, ordem: r.ordem, bruto: r.bruto, liquido: r.liquido, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio }))),
+    ...replacement("vendas_consolidado_turno", { periodo_id: periodoId }, turno.map((r) => ({ periodo_id: periodoId, turno: r.turno, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio, participacao_pct: r.participacao_pct }))),
+    ...replacement("vendas_consolidado_dia_semana", { periodo_id: periodoId }, dia.map((r) => ({ periodo_id: periodoId, dia_semana: r.dia_semana, ordem: r.ordem, bruto: r.bruto, clientes: Math.round(num(r.clientes)), ticket_medio: r.ticket_medio }))),
+    ...replacement("vendas_consolidado_ambiente", { periodo_id: periodoId }, ambiente.map((r) => ({ periodo_id: periodoId, ambiente: r.ambiente, bruto: r.bruto, clientes: Math.round(num(r.clientes)), participacao_pct: r.participacao_pct }))),
+    ...replacement("vendas_consolidado_funcionarios", { periodo_id: periodoId }, funcionarios.map((r) => ({ periodo_id: periodoId, funcionario: r.funcionario, bruto: r.bruto, qtd_vendas: Math.round(num(r.qtd_vendas)) }))),
+  ];
+  await applyBatch(supabase, operations);
   console.log("[vc-mov] gravado");
   return { resumo: temResumo, mensal: mensal.length, turno: turno.length, dia_semana: dia.length, ambiente: ambiente.length, funcionarios: funcionarios.length };
 }
@@ -336,27 +294,21 @@ async function processSpreadsheets(supabase: Supa, periodoId: string, files: Fil
     ["vendas_consolidado_ambiente", parsed.ambiente.map((r) => ({ periodo_id: periodoId, ...r }))],
     ["vendas_consolidado_funcionarios", parsed.funcionarios.map((r) => ({ periodo_id: periodoId, ...r }))],
   ];
-  await Promise.all(sections.map(([table]) => supabase.from(table).delete().eq("periodo_id", periodoId)));
-  for (const [table, rows] of sections) if (rows.length) {
-    const { error } = await supabase.from(table).insert(rows);
-    if (error) throw new Error(`${table}: ${error.message}`);
-  }
-  if (parsed.produtos.length) {
-    await supabase.from("vendas_consolidado_produtos").delete().eq("periodo_id", periodoId);
-    const { error } = await supabase.from("vendas_consolidado_produtos").insert(parsed.produtos.map((r) => ({ periodo_id: periodoId, ...r })));
-    if (error) throw new Error(`vendas_consolidado_produtos: ${error.message}`);
-  }
+  await applyBatch(supabase, [
+    ...sections.flatMap(([table, rows]) => replacement(table, { periodo_id: periodoId }, rows)),
+    ...replacement("vendas_consolidado_produtos", { periodo_id: periodoId }, parsed.produtos.map(r => ({ periodo_id: periodoId, ...r }))),
+  ]);
   return parsed;
 }
 
 export async function POST(request: Request) {
   console.log("[vendas-consolidado/import] POST called");
   console.log("[vendas-consolidado] ANTHROPIC_API_KEY:", !!process.env.ANTHROPIC_API_KEY);
-  console.log("[vendas-consolidado] SERVICE_ROLE:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
 
   try {
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return jsonError("Supabase (URL/SERVICE_ROLE) não configurado no ambiente", 500);
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return jsonError("Supabase (URL/ANON_KEY) não configurado no ambiente", 500);
     }
 
     let formData: FormData;
@@ -389,7 +341,7 @@ export async function POST(request: Request) {
 
     let supabase: Supa;
     try {
-      supabase = getServiceClient();
+      supabase = await getServiceClient();
     } catch (e) {
       return jsonError(`supabase: ${String(e)}`, 500);
     }

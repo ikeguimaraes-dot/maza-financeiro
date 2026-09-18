@@ -182,7 +182,7 @@ export function parseDominioItems(arquivoOrigem: string, itemsPorPagina: Positio
       const empMatch = lineText.match(/^(Empr\.|Contr\.):\s*(\d+)\s+(.+?)(?:\s+Situação:|$)/);
       if (empMatch) {
         const codColaborador = Number(empMatch[2]);
-        let nome = empMatch[3]!.trim().replace(/Situa[çc][ãa]o:.*$/i, "").trim();
+        const nome = empMatch[3]!.trim().replace(/Situa[çc][ãa]o:.*$/i, "").trim();
         const situacaoMatch = lineText.match(/Situa[çc][ãa]o:\s*(\w+)/i);
         const cpfMatch = lineText.match(CPF_RE);
         const admMatch = lineText.match(/Adm:\s*(\d{2}\/\d{2}\/\d{4})/);

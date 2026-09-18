@@ -33,7 +33,7 @@ const FALLBACK_GROUPS: RemoteNavGroup[] = [
   },
 ]
 
-const SHELL_URL_FALLBACK = "https://maza-maza.vercel.app"
+const SHELL_URL_FALLBACK = "https://maza.vercel.app"
 const FETCH_TIMEOUT_MS = 3000
 
 function isHttpUrl(value: string): boolean {

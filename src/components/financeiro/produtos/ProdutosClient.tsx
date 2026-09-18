@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useMemo, useState } from "react"
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -166,7 +166,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
     return [...map.values()]
   }, [rows])
 
-  const filtered = useMemo(() => {
+  const filtered = (() => {
     let n = notasAgrupadas
     if (localQ.trim()) {
       const busca = localQ.toLowerCase()
@@ -181,7 +181,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
     if (filterCmv === "no_cmv") n = n.filter(nota => nota.itens.some(item => item.calcula_cmv !== true))
     // Padrão: data desc — a compra mais recente primeiro.
     return [...n].sort((a, b) => (b.dtEmissao ?? "").localeCompare(a.dtEmissao ?? ""))
-  }, [notasAgrupadas, localQ, filterCat, filterCmv])
+  })()
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
   const pageNotas  = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -235,13 +235,13 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
   function handleFilterChangePlanilha() { setPagePlanilha(0) }
 
   // ── CMV data ────────────────────────────────────────────────────────────────
-  const cmvRows      = rows.filter(r => r.calcula_cmv === true)
+  const cmvRows = useMemo(() => rows.filter(r => r.calcula_cmv === true), [rows])
   const totalCmv     = cmvRows.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0)
-  const prevCmvRows  = prevRows.filter(r => r.calcula_cmv === true)
+  const prevCmvRows = useMemo(() => prevRows.filter(r => r.calcula_cmv === true), [prevRows])
   const prevTotalCmv = prevCmvRows.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0)
   const cmvVarPct    = prevTotalCmv > 0 ? (totalCmv - prevTotalCmv) / prevTotalCmv * 100 : null
 
-  const cmvByCat = useMemo(() => {
+  const cmvByCat = (() => {
     const map = new Map<string, number>()
     for (const r of cmvRows) {
       const cat = r.desc_gerencial ?? "Sem categoria"
@@ -250,7 +250,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
     return [...map.entries()]
       .map(([cat, total]) => ({ cat, total }))
       .sort((a, b) => b.total - a.total)
-  }, [cmvRows])
+  })()
 
   const top10Chart = cmvByCat.slice(0, 10).map(d => ({
     name: d.cat.length > 22 ? d.cat.slice(0, 20) + "…" : d.cat,
@@ -258,14 +258,14 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
     total: d.total,
   }))
 
-  const prevCmvByCat = useMemo(() => {
+  const prevCmvByCat = (() => {
     const map = new Map<string, number>()
     for (const r of prevCmvRows) {
       const cat = r.desc_gerencial ?? "Sem categoria"
       map.set(cat, (map.get(cat) ?? 0) + Math.abs(r.v_custo_total ?? 0))
     }
     return map
-  }, [prevCmvRows])
+  })()
 
   const hasData       = rows.length > 0 || rowsPlanilha.length > 0
   const totalComprado = rows.reduce((s, r) => s + Math.abs(r.v_total_embalagem ?? 0), 0)

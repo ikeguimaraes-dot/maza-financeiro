@@ -9,7 +9,6 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ReferenceLine,
 } from "recharts"
 
 export type HistoricoRow = {
@@ -46,7 +45,7 @@ type Props = { data: HistoricoRow[] }
 
 export function HistoricoTab({ data }: Props) {
   const restaurante = data.filter((d) => d.categoria === "restaurante").sort((a, b) => a.mes_num - b.mes_num)
-  const total = data.filter((d) => d.categoria === "total").sort((a, b) => a.mes_num - b.mes_num)
+
 
   const chartData = restaurante.map((r) => ({
     mes: MESES_SHORT[(r.mes_num - 1) % 12],

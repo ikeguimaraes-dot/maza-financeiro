@@ -722,7 +722,7 @@ export function AuditTab({ dreRows, linhas, despRows, prestadores, contratosFixo
     () => new Set(checks.filter(c=>!c.passed&&(c.rows??[]).length>0).map(c=>c.id))
   )
   const toggle = (id: string) => setExpanded(s => {
-    const n = new Set(s); n.has(id)?n.delete(id):n.add(id); return n
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n
   })
 
   return (

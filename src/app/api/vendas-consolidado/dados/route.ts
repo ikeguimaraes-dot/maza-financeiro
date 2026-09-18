@@ -1,7 +1,8 @@
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 // Leitura dos dados consolidados de vendas.
 // GET ?unit_id=&periodo_id=  → produtos do período (ou do último período da unidade).
 // Sempre retorna a lista de períodos importados (para o seletor) + os produtos.
-import { createClient } from "@supabase/supabase-js";
+
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,12 +17,7 @@ export function OPTIONS() {
   return new Response(null, { headers: CORS });
 }
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
+const getServiceClient = createFinanceiroClient;
 
 export async function GET(request: Request) {
   try {
@@ -33,7 +29,7 @@ export async function GET(request: Request) {
       return Response.json({ error: "unit_id é obrigatório" }, { status: 400, headers: CORS });
     }
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
 
     // Lista de períodos da unidade (mais recente primeiro)
     const { data: periodos, error: perErr } = await supabase

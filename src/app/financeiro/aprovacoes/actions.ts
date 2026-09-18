@@ -1,7 +1,9 @@
 "use server"
 
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { requireUser } from "@maza/auth/server"
-import { createServiceClient } from "@maza/db/supabase/server"
+
 import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 import {
   calcularAlertasGrupo1,
@@ -21,7 +23,7 @@ export type ConferenciaResultado = {
   conferidos: AlertaComStatus[]
 } | null
 
-// Só leitura — requireUser() + createServiceClient() por cima da lógica pura
+// Só leitura — requireUser() + await createFinanceiroClient() por cima da lógica pura
 // em src/lib/financeiro/conferencia/calcularAlertas.ts, mesmo padrão de
 // src/app/financeiro/razao/actions.ts. Cruza os alertas recalculados com o
 // que já foi conferido nesta unidade+competência.
@@ -32,7 +34,7 @@ export async function getConferencia(
   competencia: string
 ): Promise<ConferenciaResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return null
 
   const [grupo1, grupo2, grupo3, grupo4] = await Promise.all([
@@ -78,7 +80,7 @@ export async function conferirAlerta(
   observacao: string | null
 ): Promise<ConferirAlertaResultado> {
   const user = await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     const conferidoPor = user.displayName ?? user.email ?? user.id

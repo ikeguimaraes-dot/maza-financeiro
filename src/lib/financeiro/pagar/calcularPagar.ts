@@ -1,3 +1,4 @@
+import { competenciaTitulo, hojeSaoPaulo } from "@/lib/financeiro/dates"
 // Lógica pura da tela de Contas a Pagar — lê titulos_a_pagar diretamente.
 // ref_mes é coluna legada do clone (nunca populada pelo pipeline atual) —
 // NÃO USAR pra competência. Competência vem de d_competencia, com fallback
@@ -68,24 +69,14 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100
 }
 
-function mesDe(dataIso: string): string {
-  return `${dataIso.slice(0, 7)}-01`
-}
-
-function resolverCompetenciaTitulo(t: { d_competencia: string | null; d_vencimento: string | null }): string | null {
-  if (t.d_competencia) return mesDe(t.d_competencia)
-  if (t.d_vencimento) return mesDe(t.d_vencimento)
-  return null
-}
-
 function classificarSituacao(
   vencimento: string | null,
   liquidacaoOrigem: string | null,
   hojeIso: string
 ): Situacao {
-  if (!vencimento) return "sem_data"
   const status = classificarLiquidacao(liquidacaoOrigem)
   if (status === "pago") return "pago"
+  if (!vencimento) return "sem_data"
   if (status === "indefinido") return "sem_confirmacao"
   return vencimento < hojeIso ? "vencido" : "a_vencer"
 }
@@ -110,9 +101,9 @@ export async function calcularPagar(
     liquidacao_origem: string | null
   }>
 
-  const hojeIso = new Date().toISOString().slice(0, 10)
-  const doMes = todosOsTitulos.filter((t) => resolverCompetenciaTitulo(t) === competencia)
-  const semCompetenciaTitulos = todosOsTitulos.filter((t) => resolverCompetenciaTitulo(t) === null)
+  const hojeIso = hojeSaoPaulo()
+  const doMes = todosOsTitulos.filter((t) => competenciaTitulo(t) === competencia)
+  const semCompetenciaTitulos = todosOsTitulos.filter((t) => competenciaTitulo(t) === null)
 
   const ids = doMes.map((t) => t.id)
   const [lancamentosRows, reconciliacoesRows, regrasCategoria] = await Promise.all([

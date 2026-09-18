@@ -1,6 +1,7 @@
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 // Helpers das rotas /api/dre/* — service role do projeto principal
 // (iqgrvptrtphvbmvrqntm, onde vive titulos_a_pagar) + CORS para o shell maza.
-import { createClient } from "@supabase/supabase-js";
+
 
 export const CORS = {
   "Access-Control-Allow-Origin":  "https://maza.vercel.app",
@@ -18,12 +19,7 @@ export function jsonError(message: string, status = 500) {
   return Response.json({ error: message }, { status, headers: CORS });
 }
 
-export function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
+export const getServiceClient = createFinanceiroClient;
 
 // Unidades: empresa do Everest ↔ unit_id. Só Meet & Eat ("1") por enquanto.
 export const EMPRESA_POR_UNIT: Record<string, string> = {

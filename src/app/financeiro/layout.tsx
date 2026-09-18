@@ -1,7 +1,8 @@
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 import { AuthProvider } from "@maza/auth/context";
 import { requireUser } from "@maza/auth/server";
 import { getCurrentUnit } from "@maza/auth/unit";
-import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server";
+import {  createSupabaseServerClient } from "@maza/db/supabase/server";
 import type { Unit } from "@maza/db/types/database";
 import { Sidebar } from "@maza/ui/sidebar";
 import { fetchNavConfig } from "@maza/ui/nav/fetchNavConfig";
@@ -38,7 +39,7 @@ export default async function FinanceiroLayout({
 }
 
 async function hasAnyActiveUnit(): Promise<boolean> {
-  const service = createServiceClient();
+  const service = await createFinanceiroClient();
   if (!service) return false;
   const { count, error } = await service.from("units").select("id", { count: "exact", head: true }).eq("active", true);
   return !error && (count ?? 0) > 0;

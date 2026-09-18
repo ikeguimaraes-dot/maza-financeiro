@@ -78,24 +78,9 @@ type DreMensalRow = {
 
 // ── DRE line definitions ──────────────────────────────────────────────────────
 
-type DreLine = { key: string; label: string; isTotal?: boolean }
 
-const DRE_LINES: DreLine[] = [
-  { key: "receita_bruta",     label: "Receita Bruta" },
-  { key: "impostos",          label: "(-) Impostos" },
-  { key: "receita_liquida",   label: "(=) Receita Líquida",   isTotal: true },
-  { key: "cmv",               label: "(-) CMV" },
-  { key: "pessoal",           label: "(-) Pessoal" },
-  { key: "ocupacao",          label: "(-) Ocupação" },
-  { key: "utilidades",        label: "(-) Utilidades" },
-  { key: "operacao",          label: "(-) Operação" },
-  { key: "manutencao",        label: "(-) Manutenção" },
-  { key: "administrativa",    label: "(-) Administrativa" },
-  { key: "marketing",         label: "(-) Marketing" },
-  { key: "taxa_cartao",       label: "(-) Taxa Cartão" },
-  { key: "ebitda",            label: "(=) EBITDA",            isTotal: true },
-  { key: "resultado_liquido", label: "(=) Resultado Líquido", isTotal: true },
-]
+
+
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -128,10 +113,7 @@ function rowVal(key: string, row: DreMensalRow | undefined): number | null {
   return (row as unknown as Record<string, number | null>)[key] ?? null
 }
 
-function varR(real: number | null, bd: number | null): number | null {
-  if (real === null || bd === null) return null
-  return real - bd
-}
+
 
 function varPctFn(real: number | null, bd: number | null): number | null {
   if (real === null || bd === null || bd === 0) return null
@@ -148,21 +130,11 @@ function fmtPct(v: number | null, digits = 1): string {
   return `${v.toFixed(digits).replace(".", ",")}%`
 }
 
-function fmtVarPct(v: number | null): string {
-  if (v === null) return "—"
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")}%`
-}
 
-function fmtVarR(v: number | null): string {
-  if (v === null) return "—"
-  const s = formatBRLCompact(Math.abs(v))
-  return `${v >= 0 ? "+" : "-"}${s}`
-}
 
-function varColor(v: number | null): string {
-  if (v === null || Math.abs(v) < 0.5) return "var(--text-3)"
-  return v > 0 ? "#22C55E" : "#EF4444"
-}
+
+
+
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -602,68 +574,5 @@ function VarBadge({
     >
       {label}
     </span>
-  )
-}
-
-function DreThLeft({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: "8px 14px",
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 0.4,
-        textTransform: "uppercase",
-        borderBottom: "1px solid var(--border)",
-        textAlign: "left",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </th>
-  )
-}
-
-function DreTh({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: "8px 12px",
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 0.4,
-        textTransform: "uppercase",
-        borderBottom: "1px solid var(--border)",
-        textAlign: "right",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </th>
-  )
-}
-
-function DreTd({
-  children,
-  muted = false,
-  bold = false,
-}: {
-  children: React.ReactNode
-  muted?: boolean
-  bold?: boolean
-}) {
-  return (
-    <td
-      style={{
-        padding: "8px 12px",
-        fontSize: 12,
-        textAlign: "right",
-        color: muted ? "var(--text-3)" : "var(--text)",
-        fontWeight: bold ? 700 : 400,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </td>
   )
 }

@@ -1,7 +1,9 @@
 "use server"
 
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { requireUser } from "@maza/auth/server"
-import { createServiceClient } from "@maza/db/supabase/server"
+
 import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 import { gerarFornecedoresAutomatico, type ResultadoGeracaoFornecedores } from "@/lib/financeiro/fornecedores/gerarFornecedoresAutomatico"
 
@@ -9,7 +11,7 @@ export type { ResultadoGeracaoFornecedores } from "@/lib/financeiro/fornecedores
 
 export async function gerarFornecedoresAutomaticoAction(): Promise<ResultadoGeracaoFornecedores> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, criados: 0, vinculados: 0, ignoradosPorConflito: 0, error: "Sem conexão com banco" }
   return gerarFornecedoresAutomatico(db)
 }
@@ -36,7 +38,7 @@ export type ListarFornecedoresResultado = { ok: boolean; fornecedores: Fornecedo
 // tela; não participa do match título↔NF-e (isso é gerarLancamentosTitulos).
 export async function listarFornecedores(): Promise<ListarFornecedoresResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, fornecedores: [], error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,7 +119,7 @@ export type FornecedorActionResultado = { ok: boolean; error?: string }
 export async function renomearFornecedor(fornecedorId: string, nome: string): Promise<FornecedorActionResultado> {
   await requireUser()
   if (!nome.trim()) return { ok: false, error: "Nome não pode ser vazio." }
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -135,7 +137,7 @@ export async function renomearFornecedor(fornecedorId: string, nome: string): Pr
 export async function mesclarFornecedores(origemId: string, destinoId: string): Promise<FornecedorActionResultado> {
   await requireUser()
   if (origemId === destinoId) return { ok: false, error: "Selecione dois fornecedores diferentes." }
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -154,7 +156,7 @@ export async function mesclarFornecedores(origemId: string, destinoId: string): 
 
 export async function moverVinculoFornecedor(deparaId: string, novoFornecedorId: string): Promise<FornecedorActionResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,23 +1,13 @@
 import type { Metadata } from "next";
-import { Fraunces, Instrument_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
-  subsets: ["latin"],
-  axes: ["SOFT", "WONK", "opsz"],
-  weight: "variable",
-  style: ["normal", "italic"],
-  display: "swap",
+const fraunces = localFont({
+  src: [{ path: "./fonts/Fraunces.ttf", style: "normal", weight: "100 900" }, { path: "./fonts/Fraunces-Italic.ttf", style: "italic", weight: "100 900" }],
+  variable: "--font-fraunces", display: "swap",
 });
-
-const instrumentSans = Instrument_Sans({
-  variable: "--font-instrument-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
+const instrumentSans = localFont({ src: "./fonts/InstrumentSans.ttf", weight: "400 700", variable: "--font-instrument-sans", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Maza Financeiro",

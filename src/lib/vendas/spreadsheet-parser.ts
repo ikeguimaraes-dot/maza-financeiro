@@ -54,8 +54,11 @@ function parseItems(detail: string): Array<{ name: string; qty: number }> {
   }).filter((item) => item.name && item.qty > 0);
 }
 
-function add(map: Map<string, any>, key: string, seed: Record<string, unknown>, sale: Sale) {
-  const row = map.get(key) ?? { ...seed, bruto: 0, liquido: 0, clientes: 0 };
+type Aggregate = { bruto: number; liquido: number; clientes: number; ordem: number; [key: string]: string | number };
+type Product = { grupo: string; produto: string; quantidade: number; valor_bruto: number; valor_desconto: number; valor_liquido: number; participacao_pct?: number };
+
+function add(map: Map<string, Aggregate>, key: string, seed: Record<string, string | number>, sale: Sale) {
+  const row = map.get(key) ?? { ordem: 0, ...seed, bruto: 0, liquido: 0, clientes: 0 };
   row.bruto += sale.gross; row.liquido += sale.net; row.clientes += sale.clients ?? 1;
   map.set(key, row);
 }
@@ -121,14 +124,14 @@ export function parseSalesSpreadsheets(buffers: Array<{ name: string; data: Arra
   const list = [...sales.values()].filter((x) => x.date).sort((a, b) => a.date.localeCompare(b.date));
   if (!list.length) throw new Error("Nenhuma venda válida encontrada nas planilhas");
 
-  const mensal = new Map<string, any>(), turno = new Map<string, any>(), dia = new Map<string, any>(), ambiente = new Map<string, any>(), funcs = new Map<string, any>();
-  const productMap = new Map<string, any>();
+  const mensal = new Map<string, Aggregate>(), turno = new Map<string, Aggregate>(), dia = new Map<string, Aggregate>(), ambiente = new Map<string, Aggregate>(), funcs = new Map<string, Aggregate>();
+  const productMap = new Map<string, Product>();
   const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   for (const sale of list) {
     const month = sale.date.slice(0, 7), [year, mon] = month.split("-").map(Number);
     add(mensal, month, { mes: new Intl.DateTimeFormat("pt-BR", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year!, mon! - 1, 1))).replace(" de ", "/"), ordem: year! * 12 + mon! }, sale);
     const shift = sale.hour < 16 ? "Almoço" : "Jantar"; add(turno, shift, { turno: shift }, sale);
-    const dow = new Date(`${sale.date}T12:00:00Z`).getUTCDay(); add(dia, String(dow), { dia_semana: weekdays[dow], ordem: dow + 1 }, sale);
+    const dow = new Date(`${sale.date}T12:00:00Z`).getUTCDay(); add(dia, String(dow), { dia_semana: weekdays[dow]!, ordem: dow + 1 }, sale);
     add(ambiente, sale.channel, { ambiente: sale.channel }, sale); add(funcs, sale.operator || sale.store, { funcionario: sale.operator || sale.store }, sale);
     if (sale.items) {
       const items = parseItems(sale.items), totalQty = items.reduce((sum, item) => sum + item.qty, 0) || 1;
@@ -140,7 +143,7 @@ export function parseSalesSpreadsheets(buffers: Array<{ name: string; data: Arra
   }
   const gross = list.reduce((x, r) => x + r.gross, 0), net = list.reduce((x, r) => x + r.net, 0), tips = list.reduce((x, r) => x + r.tip, 0);
   const clients = list.reduce((x, r) => x + (r.clients ?? 1), 0);
-  const finish = (map: Map<string, any>, pct = false) => { const total = [...map.values()].reduce((x, r) => x + r.bruto, 0); return [...map.values()].map((r) => ({ ...r, ticket_medio: r.clientes ? r.bruto / r.clientes : 0, ...(pct ? { participacao_pct: total ? r.bruto / total * 100 : 0 } : {}) })); };
+  const finish = (map: Map<string, Aggregate>, pct = false): Array<Aggregate & { ticket_medio: number; participacao_pct?: number }> => { const total = [...map.values()].reduce((x, r) => x + r.bruto, 0); return [...map.values()].map((r) => ({ ...r, ticket_medio: r.clientes ? r.bruto / r.clientes : 0, ...(pct ? { participacao_pct: total ? r.bruto / total * 100 : 0 } : {}) })); };
   const produtos = [...productMap.values()]; const productTotal = produtos.reduce((x, r) => x + r.valor_liquido, 0);
   for (const p of produtos) p.participacao_pct = productTotal ? p.valor_liquido / productTotal * 100 : 0;
   return { files: buffers.length, rows: sourceRows, orders: clients, products: produtos.length, dateStart: list[0]!.date, dateEnd: list.at(-1)!.date,

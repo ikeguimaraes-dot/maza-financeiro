@@ -1,12 +1,14 @@
 "use server"
 
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { requireUser } from "@maza/auth/server"
-import { createServiceClient } from "@maza/db/supabase/server"
+
 import { calcularFluxo, type ResultadoFluxo } from "@/lib/financeiro/fluxo/calcularFluxo"
 
 export type { ResultadoFluxo } from "@/lib/financeiro/fluxo/calcularFluxo"
 
-// Só leitura — requireUser() + createServiceClient() por cima da lógica pura
+// Só leitura — requireUser() + await createFinanceiroClient() por cima da lógica pura
 // em src/lib/financeiro/fluxo/calcularFluxo.ts, mesmo padrão de
 // src/app/financeiro/dre/divergencias/actions.ts.
 export async function getFluxoCaixa(
@@ -16,7 +18,7 @@ export async function getFluxoCaixa(
   dataFim: string
 ): Promise<ResultadoFluxo | null> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return null
   return calcularFluxo(db, unitId, contaId, dataInicio, dataFim)
 }
@@ -31,12 +33,12 @@ export type ContaBancaria = {
 
 export async function getContasBancarias(unitId: string): Promise<ContaBancaria[]> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return []
   // contas_bancarias não está nos tipos gerados do Supabase — mesmo padrão de
-  // (db as any) usado em dre/divergencias/fornecedores-actions.ts pras
+  // db usado em dre/divergencias/fornecedores-actions.ts pras
   // tabelas novas desta fase.
-  const { data } = await (db as any)
+  const { data } = await db
     .from("contas_bancarias")
     .select("id,banco,apelido,saldo_inicial,data_saldo_inicial")
     .eq("unit_id", unitId)
@@ -63,11 +65,11 @@ export async function createContaBancaria(input: {
   dataSaldoInicial: string
 }): Promise<SalvarContaResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com o banco de dados." }
   if (!input.banco.trim()) return { ok: false, error: "Banco é obrigatório." }
 
-  const { error } = await (db as any).from("contas_bancarias").insert({
+  const { error } = await db.from("contas_bancarias").insert({
     unit_id: input.unitId,
     banco: input.banco.trim(),
     apelido: input.apelido?.trim() || null,
@@ -84,10 +86,10 @@ export async function updateSaldoInicial(
   dataSaldoInicial: string
 ): Promise<SalvarContaResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com o banco de dados." }
 
-  const { error } = await (db as any)
+  const { error } = await db
     .from("contas_bancarias")
     .update({ saldo_inicial: saldoInicial, data_saldo_inicial: dataSaldoInicial })
     .eq("id", contaId)

@@ -22,7 +22,7 @@ export const maxDuration = 60;
 // Linha DRE resolvida com precedência override > mapa, reusando o helper
 // compartilhado das rotas /api/dre/*.
 
-type SupabaseClient = ReturnType<typeof getServiceClient>;
+type SupabaseClient = Awaited<ReturnType<typeof getServiceClient>>;
 type Resolver = ReturnType<typeof buildLinhaResolver>;
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -208,7 +208,7 @@ export async function GET(req: Request) {
 
     const empresa = empresaEverestDaUnit(unidade); // estrito: unidade sem empresa Everest → null
     const R = monthRange(mes);
-    const db = getServiceClient();
+    const db = await getServiceClient();
 
     // Mapa + overrides são globais (independem de mês) — carrega uma vez.
     const [mapaRes, ovRes] = await Promise.all([

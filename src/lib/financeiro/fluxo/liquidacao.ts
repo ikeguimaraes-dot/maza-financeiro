@@ -8,6 +8,7 @@ export type StatusLiquidacao = "pago" | "nao_pago" | "indefinido"
 export function classificarLiquidacao(liquidacaoOrigem: string | null): StatusLiquidacao {
   if (liquidacaoOrigem == null) return "indefinido"
   const v = liquidacaoOrigem.trim().toUpperCase()
+  if (!v) return "indefinido"
   if (v.startsWith("OK") || v === "OIK") return "pago"
   return "nao_pago"
 }

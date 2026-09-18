@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!body.nome || !body.storage_path) {
       return jsonError("nome e storage_path são obrigatórios", 400);
     }
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data, error } = await supabase
       .from("contratos_arquivos")
       .insert({

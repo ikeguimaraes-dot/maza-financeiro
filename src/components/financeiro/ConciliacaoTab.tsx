@@ -1,9 +1,11 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { useResource } from "@/lib/hooks/use-resource"
+
+import { Fragment, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
 import { getConciliacao } from "@/app/financeiro/actions-operations"
-import type { ConciliacaoData, NotaConciliacao, TituloComUnidade } from "@/app/financeiro/actions-operations"
+import type { NotaConciliacao, TituloComUnidade } from "@/app/financeiro/actions-operations"
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -90,30 +92,16 @@ const STATUS_LABELS: Record<StatusFiltro, string> = {
 
 // ── Component ────────────────────────────────────────────────────────────────
 export function ConciliacaoTab({ unitId, mes, ano }: Props) {
-  const [data, setData]             = useState<ConciliacaoData | null>(null)
-  const [loading, setLoading]       = useState(true)
   const [buscaFornecedor, setBuscaFornecedor] = useState("")
   const [buscaNota, setBuscaNota]             = useState("")
   const [statusFiltro, setStatusFiltro]       = useState<StatusFiltro>("todos")
   const [expandedNotas, setExpandedNotas]     = useState<Set<string>>(new Set())
   const [expandedFornecedores, setExpandedFornecedores] = useState<Set<string>>(new Set())
 
-  useEffect(() => {
-    setLoading(true)
-    setData(null)
-    setBuscaFornecedor("")
-    setBuscaNota("")
-    setStatusFiltro("todos")
-    setExpandedNotas(new Set())
-    setExpandedFornecedores(new Set())
-    getConciliacao(unitId, mes, ano).then(result => {
-      setData(result)
-      setLoading(false)
-    })
-  }, [unitId, mes, ano])
+  const { data, loading } = useResource(`${unitId}|${mes}|${ano}`, () => getConciliacao(unitId, mes, ano), null)
 
-  const notas = data?.notas ?? []
-  const boletosSemNota = data?.boletosSemNota ?? []
+  const notas = useMemo(() => data?.notas ?? [], [data])
+  const boletosSemNota = useMemo(() => data?.boletosSemNota ?? [], [data])
 
   const fornecedores = useMemo(() => {
     const set = new Set<string>()

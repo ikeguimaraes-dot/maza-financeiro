@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useResource } from "@/lib/hooks/use-resource"
+
+import { useMemo, useState } from "react"
 import {
   getBonificacoes, getComprasPorFornecedor, getFornecedoresLista, getNotasARevisar,
   type ProdutoCompra,
@@ -52,20 +54,16 @@ function ComprasTable({ rows, highlightZero = false }: { rows: ProdutoCompra[]; 
 }
 
 export function BonificacaoTab({ unitId }: { unitId: string | null }) {
-  const [rows, setRows] = useState<ProdutoCompra[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => { setLoading(true); getBonificacoes(unitId).then(setRows).finally(() => setLoading(false)) }, [unitId])
+  const { data: rows, loading } = useResource(String(unitId), () => getBonificacoes(unitId), [])
   if (loading) return <p style={{ color: "var(--text-3)" }}>Carregando bonificações...</p>
   return <section><p style={{ color: "var(--text-3)", fontSize: 13 }}>Notas identificadas por CFOP 5910 ou 6910, ou valor total igual a zero ou um centavo.</p><ComprasTable rows={rows}/></section>
 }
 
 export function FornecedorTab({ unitId, mes, ano }: { unitId: string | null; mes: number; ano: number }) {
-  const [list, setList] = useState<string[]>([])
   const [selected, setSelected] = useState("")
-  const [rows, setRows] = useState<ProdutoCompra[]>([])
   const [query, setQuery] = useState("")
-  useEffect(() => { getFornecedoresLista(unitId, mes, ano).then(setList) }, [unitId, mes, ano])
-  useEffect(() => { if (!selected) return setRows([]); getComprasPorFornecedor(unitId, selected, mes, ano).then(setRows) }, [unitId, selected, mes, ano])
+  const { data: list } = useResource(`${unitId}|${mes}|${ano}`, () => getFornecedoresLista(unitId, mes, ano), [])
+  const { data: rows } = useResource(`${unitId}|${selected}|${mes}|${ano}`, () => selected ? getComprasPorFornecedor(unitId, selected, mes, ano) : Promise.resolve([]), [])
   const filtered = list.filter(name => name.toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR")))
   return <section style={{ display: "grid", gap: 12 }}>
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -79,10 +77,8 @@ export function FornecedorTab({ unitId, mes, ano }: { unitId: string | null; mes
 }
 
 export function ARevisarTab({ unitId }: { unitId: string | null }) {
-  const [rows, setRows] = useState<ProdutoCompra[]>([])
-  const [loading, setLoading] = useState(true)
   const [onlyCmv, setOnlyCmv] = useState(false)
-  useEffect(() => { setLoading(true); getNotasARevisar(unitId).then(setRows).finally(() => setLoading(false)) }, [unitId])
+  const { data: rows, loading } = useResource(String(unitId), () => getNotasARevisar(unitId), [])
   const filtered = useMemo(() => {
     if (!onlyCmv) return rows
     const qualifying = new Set(rows

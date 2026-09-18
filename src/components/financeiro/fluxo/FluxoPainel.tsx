@@ -13,6 +13,7 @@ type Props = {
 export function FluxoPainel({ dados, temContaCadastrada }: Props) {
   return (
     <div>
+      {dados.contaId && <p className="maza-panel">Esta visão considera o saldo e os movimentos da conta selecionada. Para ver previsões ainda sem conta bancária definida, selecione todas as contas.</p>}
       <CardsResumo resumo={dados.resumo} confianca={dados.confianca} temContaCadastrada={temContaCadastrada} />
       <FluxoCalendario dias={dados.dias} hoje={dados.hoje} diaCruzaZero={dados.resumo.diaCruzaZero} />
       <APagarPorFaixa aPagarPorFaixa={dados.aPagarPorFaixa} aPagarSemData={dados.aPagarSemData} />

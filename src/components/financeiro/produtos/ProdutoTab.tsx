@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useResource } from "@/lib/hooks/use-resource"
+
+import { useMemo, useState } from "react"
 import { getItensProdutoBusca, getHistoricoProduto } from "@/app/financeiro/dre/cmv/actions"
 import type { ItemProdutoRow, HistoricoRow, RankingItem } from "@/app/financeiro/dre/cmv/actions"
 import { HistoricoDrawer } from "./RankingTab"
@@ -41,8 +43,6 @@ const COLUNAS: Array<[keyof ItemProdutoRow, string, "left" | "right"]> = [
 type Props = { unitId: string | null }
 
 export function ProdutoTab({ unitId }: Props) {
-  const [rows, setRows] = useState<ItemProdutoRow[]>([])
-  const [loading, setLoading] = useState(true)
   const [q, setQ] = useState("")
   const [categoria, setCategoria] = useState("")
   const [de, setDe] = useState("")
@@ -55,10 +55,7 @@ export function ProdutoTab({ unitId }: Props) {
   const [historico, setHistorico] = useState<HistoricoRow[]>([])
   const [loadingHist, setLoadingHist] = useState(false)
 
-  useEffect(() => {
-    setLoading(true)
-    getItensProdutoBusca(unitId).then(r => { setRows(r); setLoading(false) })
-  }, [unitId])
+  const { data: rows, loading } = useResource(String(unitId), () => getItensProdutoBusca(unitId), [])
 
   const categorias = useMemo(() =>
     [...new Set(rows.map(r => r.categoria).filter((c): c is string => Boolean(c)))].sort()

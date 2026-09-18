@@ -1,3 +1,4 @@
+import { competenciaTitulo } from "@/lib/financeiro/dates"
 // Lógica pura de leitura pra tela /financeiro/dre/divergencias — NÃO grava
 // lançamento nenhum. Decisão do Ike (FASE 7): parar de ajustar heurística
 // pra o CMV bater e, em vez disso, EXPOR a divergência entre a planilha de
@@ -13,11 +14,7 @@
 // não o que o pipeline de lançamento escolheu processar.
 import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 
-function competenciaFim(competencia: string): string {
-  const ano = Number(competencia.slice(0, 4))
-  const mes = Number(competencia.slice(5, 7))
-  return mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`
-}
+
 
 export type ComNotaComXml = {
   fornecedor: string | null
@@ -93,14 +90,13 @@ export async function calcularDivergenciasContasPagarNotas(
   unitName: string,
   competencia: string
 ): Promise<DivergenciasResultado> {
-  const fim = competenciaFim(competencia)
 
-  const titulos = await fetchAllPaginado((from, to) =>
+
+  const titulosTodos = await fetchAllPaginado((from, to) =>
     db.from("titulos_a_pagar")
       .select("id,fantasia_fornecedor,razao_fornecedor,c_gerencial,parcela,v_titulo,valor_total_nf_origem,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
       .eq("unit_id", unitId)
       .in("origem", ["nf_pedidos", "contas_pagar"])
-      .or(`d_competencia.eq.${competencia},and(d_competencia.is.null,d_vencimento.gte.${competencia},d_vencimento.lt.${fim})`)
       .range(from, to)
   ) as Array<{
     id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
@@ -109,6 +105,8 @@ export async function calcularDivergenciasContasPagarNotas(
     d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
     n_nota_fiscal: string | null; origem: string
   }>
+
+  const titulos = titulosTodos.filter(t => competenciaTitulo(t) === competencia)
 
   const notasCandidatas = await fetchAllPaginado((from, to) =>
     db.from("nfe_documentos")

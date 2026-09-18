@@ -12,7 +12,7 @@ export function OPTIONS() {
 export async function GET(_req: Request, { params }: { params: Promise<{ arquivoId: string }> }) {
   try {
     const { arquivoId } = await params;
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data: arq, error: aErr } = await supabase
       .from("contratos_arquivos").select("storage_path, nome").eq("id", arquivoId).single();
     if (aErr || !arq) return jsonError("arquivo não encontrado", 404);

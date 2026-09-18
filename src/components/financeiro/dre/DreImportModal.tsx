@@ -187,26 +187,7 @@ function detectMonthCols(headerRow: unknown[]): MonthCol[] {
 // Month cols for gorjeta: accepts "JAN 2026" or bare "JAN" (defaults to defaultYear)
 interface SimpleMonthCol { mesAno: string; colIdx: number }
 
-function detectGorjetaMonthCols(headerRow: unknown[], defaultYear: number): SimpleMonthCol[] {
-  const cols: SimpleMonthCol[] = []
-  for (let i = 0; i < headerRow.length; i++) {
-    const cell = toStr(headerRow[i])
-    if (!cell) continue
-    const trimmed = normalizeSpaces(cell).toUpperCase()
-    const m2 = trimmed.match(/^(JAN|FEV|MAR|ABR|MAIO?|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+(\d{4})$/)
-    if (m2) {
-      const mesNum = MES_MAP[m2[1]!]
-      if (mesNum !== undefined) cols.push({ mesAno: `${m2[2]}-${mesNum}`, colIdx: i })
-      continue
-    }
-    const m1 = trimmed.match(/^(JAN|FEV|MAR|ABR|MAIO?|JUN|JUL|AGO|SET|OUT|NOV|DEZ)$/)
-    if (m1) {
-      const mesNum = MES_MAP[m1[1]!]
-      if (mesNum !== undefined) cols.push({ mesAno: `${defaultYear}-${mesNum}`, colIdx: i })
-    }
-  }
-  return cols
-}
+
 
 // ── Parse results & reconciliation types ──────────────────────────────────────
 
@@ -1491,7 +1472,7 @@ function parseDespesaMDNA(wb: XLSX.WorkBook, unitId: string): DreDespesaInsert[]
     if (hRow < 0) return []
     const cm = colMapByName(raw[hRow] ?? [])
     const descCol    = cm["DESCRIÇÃO"]    ?? cm["DESCRICAO"]
-    const fornCol    = cm["NOME DO FORNECEDOR/CLIENTE"]
+
     const catCol     = cm["CATEGORIA 1"]
     const valorCol   = cm["VALOR NA CATEGORIA 1"]
     const mesCol     = cm["MÊS PAGTO"]   ?? cm["MES PAGTO"]

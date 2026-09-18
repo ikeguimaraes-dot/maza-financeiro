@@ -1,7 +1,10 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+import { competenciaTitulo } from "@/lib/financeiro/dates"
+import { applyBatch, replacement, type Mutation, type Row } from "@/lib/financeiro/db/atomic"
 // Lógica pura de geração do razão — recebe o client Supabase como parâmetro
 // em vez de criar o seu próprio, pra ser chamável tanto pela Server Action
 // (src/app/financeiro/razao/actions.ts, que faz requireUser() +
-// createServiceClient() por cima) quanto por scripts/regerar-razao.ts (CLI,
+// await createFinanceiroClient() por cima) quanto por scripts/regerar-razao.ts (CLI,
 // sem sessão de app) — mesmo código nos dois casos, sem duplicar regra de
 // classificação.
 import { normalizeDescricao } from "@/lib/financeiro/normalizeDescricao"
@@ -19,10 +22,9 @@ const CONTA_RECEITA_POR_UNIDADE: Record<string, string> = {
 
 export type GerarLancamentosResultado = { ok: boolean; inseridos: number; error?: string }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function fetchAllPaginado(buildQuery: (from: number, to: number) => any): Promise<any[]> {
+export async function fetchAllPaginado<T>(buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const pageSize = 1000
-  const result: any[] = []
+  const result: T[] = []
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await buildQuery(from, from + pageSize - 1)
     if (error) throw new Error(error.message)
@@ -41,33 +43,9 @@ function competenciaRange(competencia: string): { mes: number; ano: number; inic
   return { mes, ano, inicio, fim }
 }
 
-// Apaga por (origem, origem_id) — NUNCA por competência. A linha segue o
-// dado, não o mês: se a competência de uma origem_id muda entre execuções
-// (ex. título recalculado pra outro mês), isso garante que a linha antiga
-// (em QUALQUER competência) é removida antes da nova ser inserida — sem
-// isso, a unique constraint (origem, origem_id, conta_codigo), que não
-// tem competência, rejeita o insert. Lotes pequenos (100, não 500) porque
-// PostgREST manda o IN como query string — origem_id de nfe_entrada é
-// "chave_nfe:item_codigo" (~55 chars); 500 desses estoura o limite de
-// tamanho de URL e volta "Bad Request", diferente do origem_id curto
-// (uuid) de título, que aguentaria bem mais.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function deletarPorOrigemId(db: any, origem: string, origemIds: Array<string | number>): Promise<void> {
-  const CHUNK = 100
-  for (let i = 0; i < origemIds.length; i += CHUNK) {
-    const chunk = origemIds.slice(i, i + CHUNK).map(String)
-    const { error } = await db.from("lancamentos").delete().eq("origem", origem).in("origem_id", chunk)
-    if (error) throw new Error(error.message)
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function inserirLancamentos(db: any, rows: any[]): Promise<void> {
-  const CHUNK = 500
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const { error } = await db.from("lancamentos").insert(rows.slice(i, i + CHUNK))
-    if (error) throw new Error(error.message)
-  }
+// Replace the whole source/month, including records removed by a correction.
+async function substituirOrigem(db: Pick<SupabaseClient, "rpc">, origem: string, unitId: string, competencia: string, rows: Row[]): Promise<void> {
+  await applyBatch(db, replacement("lancamentos", { origem, unit_id: unitId, competencia }, rows))
 }
 
 // Projeta produtos_relatorio (compras por XML) em lançamentos de CMV.
@@ -84,7 +62,7 @@ export async function gerarLancamentosNfeEntrada(
 
     const linhas = await fetchAllPaginado((from, to) =>
       db.from("produtos_relatorio")
-        .select("chave_nfe,item_codigo,fornecedor_codigo,fornecedor_nome,tipo_item,dt_emissao,v_total_danfe,v_custo_total")
+        .select("chave_nfe,item_nfe,item_codigo,fornecedor_codigo,fornecedor_nome,tipo_item,dt_emissao,v_total_danfe,v_custo_total")
         .eq("unit_id", unitId)
         .eq("mes_lancamento", mes)
         .eq("ano_lancamento", ano)
@@ -92,7 +70,7 @@ export async function gerarLancamentosNfeEntrada(
         .not("chave_nfe", "is", null)
         .range(from, to)
     ) as Array<{
-      chave_nfe: string; item_codigo: string | null; fornecedor_codigo: string | null
+      chave_nfe: string; item_nfe: number | null; item_codigo: string | null; fornecedor_codigo: string | null
       fornecedor_nome: string | null; tipo_item: string | null; dt_emissao: string | null
       v_total_danfe: number | null; v_custo_total: number | null
     }>
@@ -138,7 +116,7 @@ export async function gerarLancamentosNfeEntrada(
         conta_codigo: contaCodigo,
         valor: Math.abs(Number(r.v_custo_total ?? 0)),
         origem: "nfe_entrada",
-        origem_id: `${r.chave_nfe}:${r.item_codigo}`,
+        origem_id: `${r.chave_nfe}:${r.item_nfe ?? r.item_codigo}`,
         descricao: null,
         fornecedor_cnpj: r.fornecedor_codigo,
         fornecedor_nome: r.fornecedor_nome,
@@ -147,8 +125,7 @@ export async function gerarLancamentosNfeEntrada(
       }
     })
 
-    await deletarPorOrigemId(db, "nfe_entrada", rows.map((r) => r.origem_id))
-    await inserirLancamentos(db, rows)
+    await substituirOrigem(db, "nfe_entrada", unitId, inicio, rows)
 
     return { ok: true, inseridos: rows.length }
   } catch (e) {
@@ -237,8 +214,7 @@ export async function gerarLancamentosReceita(
       }
     }
 
-    await deletarPorOrigemId(db, "receita", rows.map((r) => r.origem_id))
-    await inserirLancamentos(db, rows)
+    await substituirOrigem(db, "receita", unitId, inicio, rows)
 
     return { ok: true, inseridos: rows.length }
   } catch (e) {
@@ -313,19 +289,6 @@ export async function gerarLancamentosTitulos(
     // d_vencimento, só como último recurso. d_competencia nunca é lido
     // aqui — a fonte guarda o que a planilha disse, o razão decide a
     // competência.
-    function resolverCompetencia(t: {
-      n_nota_fiscal: string | null; d_lancamento: string | null; d_vencimento: string | null
-    }): string | null {
-      if (t.n_nota_fiscal) {
-        const emissoes = (notasPorNumero.get(t.n_nota_fiscal) ?? [])
-          .map((n) => n.emissao).filter((e): e is string => e != null).sort()
-        if (emissoes.length > 0) return `${emissoes[0]!.slice(0, 7)}-01`
-      }
-      if (t.d_lancamento) return `${t.d_lancamento.slice(0, 7)}-01`
-      if (t.d_vencimento) return `${t.d_vencimento.slice(0, 7)}-01`
-      return null
-    }
-
     // FASE 7 PASSO 5: fonte é titulos_a_pagar origem in (nf_pedidos,
     // contas_pagar) — a origem antiga ('PLANILHA MAZA', ~2.000 linhas de
     // fonte desconhecida) é ignorada por design, não só por estar apagada.
@@ -334,7 +297,7 @@ export async function gerarLancamentosTitulos(
     // filtra-se em memória.
     const todosOsTitulos = await fetchAllPaginado((from, to) =>
       db.from("titulos_a_pagar")
-        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,valor_total_nf_origem,d_vencimento,d_lancamento,n_nota_fiscal,origem")
+        .select("id,fantasia_fornecedor,razao_fornecedor,cnpj_cpf_fornecedor,c_gerencial,descricao_c_gerencial,v_titulo,valor_total_nf_origem,d_competencia,d_vencimento,d_lancamento,n_nota_fiscal,origem")
         .eq("unit_id", unitId)
         .in("origem", ["nf_pedidos", "contas_pagar"])
         .range(from, to)
@@ -342,14 +305,11 @@ export async function gerarLancamentosTitulos(
       id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
       cnpj_cpf_fornecedor: string | null; c_gerencial: string | null; descricao_c_gerencial: string | null
       v_titulo: number | null; valor_total_nf_origem: number | null
-      d_vencimento: string | null; d_lancamento: string | null
+      d_competencia: string | null; d_vencimento: string | null; d_lancamento: string | null
       n_nota_fiscal: string | null; origem: string
     }>
-    const titulos = todosOsTitulos.filter((t) => resolverCompetencia(t) === inicio)
+    const titulos = todosOsTitulos.filter((t) => competenciaTitulo(t) === inicio)
 
-    if (titulos.length === 0) {
-      return { ok: true, inseridos: 0 }
-    }
 
     // ENCARGO FOLHA/RESCISAO/FERIAS na planilha de compras são o pagamento
     // de um custo que o extrato Domínio já registra por rubrica (9.98,
@@ -578,23 +538,10 @@ export async function gerarLancamentosTitulos(
       }
     }
 
-    await deletarPorOrigemId(db, "titulo", titulos.map((t) => t.id))
-    await inserirLancamentos(db, lancamentosRows)
-
-    // Idempotência: sem isso, sugestão de um match que a lógica não faz
-    // mais (ex. mudança de regra de competência) nunca some — só se
-    // acumula upsert após upsert. status='rejeitada' é decisão humana da
-    // tela de classificação e nunca é apagada por reprocessamento.
-    const { error: delSugestoesError } = await db.from("reconciliacoes_sugeridas").delete()
-      .eq("unit_id", unitId).eq("competencia", inicio).in("status", ["confirmada", "sem_xml"])
-    if (delSugestoesError) throw new Error(delSugestoesError.message)
-
-    for (let i = 0; i < sugestoesRows.length; i += 500) {
-      const chunk = sugestoesRows.slice(i, i + 500)
-      const { error } = await db.from("reconciliacoes_sugeridas")
-        .upsert(chunk, { onConflict: "titulo_id,chave_nfe", ignoreDuplicates: true })
-      if (error) throw new Error(error.message)
-    }
+    const operations: Mutation[] = replacement("lancamentos", { origem: "titulo", unit_id: unitId, competencia: inicio }, lancamentosRows)
+    for (const status of ["confirmada", "sem_xml"]) operations.push({ table: "reconciliacoes_sugeridas", operation: "delete", scope: { unit_id: unitId, competencia: inicio, status } })
+    if (sugestoesRows.length) operations.push({ table: "reconciliacoes_sugeridas", operation: "upsert", rows: sugestoesRows, conflict: "titulo_id,chave_nfe", ignoreDuplicates: true })
+    await applyBatch(db, operations)
 
     return { ok: true, inseridos: lancamentosRows.length }
   } catch (e) {
@@ -702,8 +649,7 @@ export async function gerarLancamentosFolha(
       })
     }
 
-    await deletarPorOrigemId(db, "folha", rows.map((r) => r.origem_id))
-    await inserirLancamentos(db, rows)
+    await substituirOrigem(db, "folha", unitId, inicio, rows)
 
     return { ok: true, inseridos: rows.length }
   } catch (e) {
@@ -761,8 +707,7 @@ async function gravarMetasBaseline(db: any, unitId: string, competencia: string)
     .filter((r): r is NonNullable<typeof r> => r !== null)
 
   if (rows.length > 0) {
-    const { error } = await db.from("metas").upsert(rows, { onConflict: "unit_id,competencia,chave" })
-    if (error) throw new Error(error.message)
+    await applyBatch(db, [{ table: "metas", operation: "upsert", rows, conflict: "unit_id,competencia,chave" }])
   }
 }
 
@@ -774,7 +719,8 @@ export async function recalcularSnapshot(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   unitId: string,
-  competencia: string
+  competencia: string,
+  projected?: Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>
 ): Promise<SnapshotResultado> {
   try {
     const { inicio, fim } = competenciaRange(competencia)
@@ -784,7 +730,7 @@ export async function recalcularSnapshot(
     ) as Array<{ codigo: string; grupo: string }>
     const grupoPorConta = new Map(planoContas.map(p => [p.codigo, p.grupo]))
 
-    const lancamentos = await fetchAllPaginado((from, to) =>
+    const lancamentos = projected ?? await fetchAllPaginado((from, to) =>
       db.from("lancamentos").select("conta_codigo,valor,origem,origem_id")
         .eq("unit_id", unitId).eq("competencia", inicio)
         .range(from, to)
@@ -799,16 +745,10 @@ export async function recalcularSnapshot(
       porConta.set(l.conta_codigo, cur)
     }
 
-    const { error: delDreError } = await db.from("dre_snapshot").delete().eq("unit_id", unitId).eq("competencia", inicio)
-    if (delDreError) throw new Error(delDreError.message)
-    if (porConta.size > 0) {
-      const dreRows = [...porConta.entries()].map(([conta_codigo, v]) => ({
-        unit_id: unitId, competencia: inicio, conta_codigo,
-        valor: Math.round(v.valor * 100) / 100, qtd_lancamentos: v.qtd,
-      }))
-      const { error } = await db.from("dre_snapshot").insert(dreRows)
-      if (error) throw new Error(error.message)
-    }
+    const dreRows = [...porConta.entries()].map(([conta_codigo, v]) => ({
+      unit_id: unitId, competencia: inicio, conta_codigo,
+      valor: round2(v.valor), qtd_lancamentos: v.qtd,
+    }))
 
     // ── KPIs ────────────────────────────────────────────────────────────
     let receitaBruta = 0, deducao = 0, cmv = 0, maoDeObra = 0, despesaOp = 0
@@ -913,9 +853,10 @@ export async function recalcularSnapshot(
       possivel_dupla_contagem: round2(possivelDuplaContagem),
     }
 
-    const { error: upsertError } = await db.from("kpi_snapshot")
-      .upsert(kpiRow, { onConflict: "unit_id,competencia" })
-    if (upsertError) throw new Error(upsertError.message)
+    await applyBatch(db, [
+      ...replacement("dre_snapshot", { unit_id: unitId, competencia: inicio }, dreRows),
+      { table: "kpi_snapshot", operation: "upsert", rows: [kpiRow], conflict: "unit_id,competencia" },
+    ])
 
     await gravarMetasBaseline(db, unitId, inicio)
 
@@ -945,11 +886,32 @@ export async function gerarRazao(
   unitId: string,
   competencia: string
 ): Promise<GerarRazaoResultado> {
-  const nfeEntrada = await gerarLancamentosNfeEntrada(db, unitId, competencia)
-  const titulos = await gerarLancamentosTitulos(db, unitId, competencia)
-  const folha = await gerarLancamentosFolha(db, unitId, competencia)
-  const receita = await gerarLancamentosReceita(db, unitId, competencia)
-  const snapshot = await recalcularSnapshot(db, unitId, competencia)
+  const operations: Mutation[] = []
+  const staged = {
+    from: db.from.bind(db),
+    rpc: async (_name: string, args: { p_operations: Mutation[] }) => {
+      operations.push(...args.p_operations)
+      return { error: null }
+    },
+  }
+  const { data: state, error: stateError } = await db.from("financeiro_revisoes").select("revisao").eq("unit_id", unitId).maybeSingle()
+  if (stateError) throw new Error(stateError.message)
+  const revision = Number(state?.revisao ?? 0)
+  const nfeEntrada = await gerarLancamentosNfeEntrada(staged, unitId, competencia)
+  const titulos = await gerarLancamentosTitulos(staged, unitId, competencia)
+  const folha = await gerarLancamentosFolha(staged, unitId, competencia)
+  const receita = await gerarLancamentosReceita(staged, unitId, competencia)
+  let snapshot: SnapshotResultado = { ok: false, error: "Indicadores não atualizados: uma das fontes falhou." }
+  if (nfeEntrada.ok && titulos.ok && folha.ok && receita.ok) {
+    const manual = await fetchAllPaginado((from, to) => db.from("lancamentos").select("conta_codigo,valor,origem,origem_id").eq("unit_id", unitId).eq("competencia", competencia).in("origem", ["manual", "inventario"]).range(from, to))
+    const projected = [...manual, ...operations.filter(op => op.table === "lancamentos" && op.operation === "insert").flatMap(op => op.rows ?? [])]
+    snapshot = await recalcularSnapshot(staged, unitId, competencia, projected as Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>)
+    if (snapshot.ok) {
+      for (const op of operations) if (op.table === "kpi_snapshot") op.rows?.forEach(row => { row.revisao_fonte = revision })
+      const { error } = await db.rpc("financeiro_aplicar_lote", { p_operations: operations, p_expected: { unit_id: unitId, revisao: revision } })
+      if (error) snapshot = { ok: false, error: error.message }
+    }
+  }
   const ok = nfeEntrada.ok && titulos.ok && folha.ok && receita.ok && snapshot.ok
   return { ok, nfeEntrada, titulos, folha, receita, snapshot }
 }

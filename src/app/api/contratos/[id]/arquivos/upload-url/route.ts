@@ -17,7 +17,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const nome = body.nome?.trim();
     if (!nome) return jsonError("nome do arquivo é obrigatório", 400);
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data: contrato, error: cErr } = await supabase
       .from("contratos").select("unit_id").eq("id", id).single();
     if (cErr || !contrato) return jsonError("contrato não encontrado", 404);

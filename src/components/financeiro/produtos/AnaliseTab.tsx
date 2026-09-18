@@ -1,5 +1,7 @@
 "use client"
 
+import { useResource } from "@/lib/hooks/use-resource"
+
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import {
@@ -40,8 +42,6 @@ type Props = { unitId: string | null; onSelecionarNota?: (chaveNfe: string) => v
 
 // ── Component ────────────────────────────────────────────────────────────────
 export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
-  const [produtos, setProdutos] = useState<ProdutoEvolucao[] | null>(null)
-  const [loading, setLoading]   = useState(true)
   const [busca, setBusca]       = useState("")
   const [sortMode, setSort]     = useState<SortMode>("variacao")
   const [selId, setSelId]       = useState<string | null>(null)
@@ -53,17 +53,9 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
     if (selId) detalheRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
   }, [selId])
 
-  useEffect(() => {
-    setLoading(true)
-    setProdutos(null)
-    setSelId(null)
-    getEvolucaoPorCompra(unitId).then(r => {
-      setProdutos(r)
-      setLoading(false)
-    })
-  }, [unitId])
+  const { data: produtos, loading } = useResource(String(unitId), () => getEvolucaoPorCompra(unitId), null)
 
-  const lista = produtos ?? []
+  const lista = useMemo(() => produtos ?? [], [produtos])
 
   // ── KPIs e blocos de destaque (independem de busca/ordenação/seleção) ──────
   const maioresAltas = useMemo(() =>

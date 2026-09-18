@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   AreaChart, Area,
   ComposedChart, Bar, Line,
@@ -146,7 +146,7 @@ function useCountUp(target: number, duration = 600): number {
     if (prevRef.current === target) return;
     prevRef.current = target;
     if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setVal(target); return;
+      rafRef.current = requestAnimationFrame(() => setVal(target)); return () => cancelAnimationFrame(rafRef.current);
     }
     cancelAnimationFrame(rafRef.current);
     const t0 = performance.now();
@@ -171,7 +171,10 @@ export default function ReceitaPage() {
   const [mes, setMes] = useState(today.getMonth() + 1);
   const [ano, setAno] = useState(today.getFullYear());
   const [showImport, setShowImport] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isReloading, setLoading] = useState(false);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loadKey = `${unit?.id}|${ano}|${mes}`;
+  const loading = Boolean(unit) && (isReloading || loadedKey !== loadKey);
 
   const [workdays,       setWorkdays]       = useState<Workday[]>([]);
   const [pagamentos,     setPagamentos]     = useState<Pagamento[]>([]);
@@ -209,15 +212,17 @@ export default function ReceitaPage() {
   const [dbError, setDbError] = useState<string | null>(null);
 
   // ── Load ──────────────────────────────────────────────────────────────────
-  async function loadData() {
+  const requestIdRef = useRef(0);
+  async function loadData(signal?: AbortSignal) {
+    const requestId = ++requestIdRef.current;
     if (!unit) return;
-    setLoading(true);
     const mm    = String(mes).padStart(2, "0");
     const start = `${ano}-${mm}-01`;
     const end   = new Date(ano, mes, 0).toISOString().split("T")[0]!;
     try {
       const params = new URLSearchParams({ unit_id: unit.id, start, end, mes_ano: `${ano}-${mm}` });
-      const { response: res, json } = await fetchApiJson<any>(`/api/receita/workdays?${params}`);
+      const { response: res, json } = await fetchApiJson<{ error?: string; latestDataDate?: string; workdays?: Workday[]; pagamentos?: Pagamento[]; descontos?: Desconto[]; ambientes?: Ambiente[]; turnos?: Turno[]; grupos?: Grupo[]; meta?: number; metasDiaSemana?: MetaDiaSemana[]; metasOverride?: MetaOverride[]; horarios?: Horario[]; usuarios?: Usuario[]; caixas?: Caixa[]; produtosDia?: ProdutoDia[]; descontosDetalhe?: DescontoDetalhe[]; cancelamentos?: Cancelamento[]; cancelamentosDetalhe?: CancelamentoDetalhe[] }>(`/api/receita/workdays?${params}`, { signal });
+      if (signal?.aborted || requestId !== requestIdRef.current) return;
       if (!res.ok) { setDbError(json.error ?? `HTTP ${res.status}`); setLoading(false); return; }
       if ((json.workdays?.length ?? 0) === 0 && json.latestDataDate) {
         const [latestYear, latestMonth] = String(json.latestDataDate).split("-").map(Number);
@@ -246,11 +251,18 @@ export default function ReceitaPage() {
       const initDates = [...new Set<string>((json.workdays as Workday[]).map((w) => w.data))].sort((a, b) => b.localeCompare(a));
       setSelectedDate(initDates[0] ?? null);
       setMetaEdits(new Map()); setMetaSaveMsg(null); setExpandedDates(new Set()); setDbError(null);
-    } catch (e) { setDbError(String(e)); }
-    finally { setLoading(false); }
+    } catch (e) { if (!signal?.aborted && requestId === requestIdRef.current) setDbError(String(e)); }
+    finally { if (!signal?.aborted && requestId === requestIdRef.current) { setLoadedKey(loadKey); setLoading(false); } }
   }
 
-  useEffect(() => { loadData(); }, [unit?.id, mes, ano]); // eslint-disable-line react-hooks/exhaustive-deps
+  const refreshOnChange = useEffectEvent((signal: AbortSignal) => loadData(signal));
+  useEffect(() => {
+    const controller = new AbortController();
+    // State writes happen after the awaited request; cleanup rejects stale responses.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshOnChange(controller.signal);
+    return () => controller.abort();
+  }, [unit?.id, mes, ano]);
 
   // ── Import ─────────────────────────────────────────────────────────────────
   async function handleImport() {
@@ -790,8 +802,8 @@ export default function ReceitaPage() {
                   ))}
                 </Bar>
                 <Line dataKey="meta" type="monotone" stroke={C.meta} strokeDasharray="4 3" strokeWidth={1.5}
-                  dot={(props: any) => {
-                    const item = chartData[props.index];
+                  dot={(props: { cx?: number; cy?: number; index?: number; payload?: { meta?: number; bruto?: number } }) => {
+                    const item = chartData[props.index ?? -1];
                     if (!item || !metaOverrideByData.has(item.data)) return <g />;
                     return <circle cx={props.cx} cy={props.cy} r={4} fill={C.meta} stroke="#1A1A18" strokeWidth={1.5} />;
                   }}
@@ -883,10 +895,10 @@ function SparklineChart({ data, color, id }: { data: { v: number }[]; color: str
   );
 }
 
-function ChartTooltip({ active, payload }: any) {
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{ dataKey?: string | number; value?: number | null }> }) {
   if (!active || !payload?.length) return null;
-  const bruto = payload.find((p: any) => p.dataKey === "bruto")?.value as number ?? 0;
-  const meta  = payload.find((p: any) => p.dataKey === "meta")?.value as number | null ?? null;
+  const bruto = payload.find((p) => p.dataKey === "bruto")?.value as number ?? 0;
+  const meta  = payload.find((p) => p.dataKey === "meta")?.value as number | null ?? null;
   const ating = meta && meta > 0 ? (bruto / meta) * 100 : null;
   return (
     <div style={{
@@ -1566,7 +1578,7 @@ function ProdutosVendidosCard({ produtos }: { produtos: ProdutoDia[] }) {
             <ChipBtn active={activeGrupos.size === 0} onClick={() => setActiveGrupos(new Set())}>Todos</ChipBtn>
             {grupos.map(([g, cnt]) => (
               <ChipBtn key={g} active={activeGrupos.has(g)} onClick={() => setActiveGrupos((prev) => {
-                const n = new Set(prev); n.has(g) ? n.delete(g) : n.add(g); return n;
+                const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n;
               })}>
                 {g} <span style={{ opacity: 0.65 }}>({cnt})</span>
               </ChipBtn>

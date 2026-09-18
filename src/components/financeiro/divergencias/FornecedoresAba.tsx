@@ -55,7 +55,7 @@ export function FornecedoresAba() {
     if (r.ok) { setFornecedores(r.fornecedores); setErro(null) } else { setErro(r.error ?? "Erro ao carregar.") }
   }
 
-  useEffect(() => { void carregar() }, [])
+  useEffect(() => { let active = true; listarFornecedores().then(r => { if (!active) return; if (r.ok) setFornecedores(r.fornecedores); else setErro(r.error ?? "Erro ao carregar.") }); return () => { active = false } }, [])
 
   async function gerar() {
     setGerando(true)

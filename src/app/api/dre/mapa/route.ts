@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     const anoP = searchParams.get("ano");
     const mesP = searchParams.get("mes"); // "todos" | "1".."12" | null
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const [titRes, mapaRes] = await Promise.all([
       supabase.from("titulos_a_pagar").select("descricao_c_gerencial, v_titulo, ref_mes"),
       supabase.from("mapa_conta_dre").select("descricao_c_gerencial, linha_dre, esperada_mensal"),
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
     const lista = (body.mapeamentos ?? []).filter((m) => m.descricao_c_gerencial);
     if (!lista.length) return jsonError("nenhum mapeamento enviado", 400);
 
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const rows = lista.map((m) => ({
       descricao_c_gerencial: m.descricao_c_gerencial,
       linha_dre: m.linha_dre || null,

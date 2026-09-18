@@ -1,6 +1,12 @@
 "use server"
 
-import { createServiceClient, createSupabaseServerClient } from "@maza/db/supabase/server"
+import { applyBatch, replacement } from "@/lib/financeiro/db/atomic";
+import { stableId } from "@/lib/receita/persist";
+
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
+import {  createSupabaseServerClient } from "@maza/db/supabase/server"
+import { getCurrentUnit } from "@maza/auth/unit"
 import { requireUser } from "@maza/auth/server"
 import { parseProtesto } from "@/lib/protestos/parse-protesto"
 import type { TextItemLike, ProtestoRegistro } from "@/lib/protestos/parse-protesto"
@@ -93,9 +99,11 @@ export async function getProtestoUploadUrl(
 ): Promise<{ path: string; token: string; signedUrl: string } | { error: string }> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { error: "Supabase não configurado" }
-    const path = `${Date.now()}-${safeFileName(nome)}`
+    const unit = await getCurrentUnit()
+    if (!unit) return { error: "Selecione uma unidade" }
+    const path = `${unit.id}/${Date.now()}-${safeFileName(nome)}`
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path)
     if (error || !data) return { error: error?.message ?? "falha ao gerar signed URL" }
     return { path: data.path, token: data.token, signedUrl: data.signedUrl }
@@ -119,7 +127,7 @@ export async function processarCertidaoProtesto(input: {
 }): Promise<ProcessarResultado> {
   try {
     await requireUser()
-    const supabase = createServiceClient()
+    const supabase = await createFinanceiroClient()
     if (!supabase) return { ok: false, error: "Supabase não configurado" }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any
@@ -157,35 +165,22 @@ export async function processarCertidaoProtesto(input: {
       if (match.length === 1) unit_id = match[0]!.id
     }
 
-    const { data: certidaoRow, error: upErr } = await db
-      .from("protestos_certidoes")
-      .upsert(
-        {
-          unit_id,
-          data_certidao: certidao.data_certidao,
-          nome_devedor: certidao.nome_devedor,
-          cnpj_devedor: certidao.cnpj_devedor,
-          protestos_declarados: certidao.protestos_declarados,
-          storage_path: input.storage_path,
-          nome_arquivo: input.nome_arquivo,
-          tamanho_bytes: input.tamanho_bytes,
-        },
-        { onConflict: "cnpj_devedor,data_certidao" }
-      )
-      .select("id")
-      .single()
-    if (upErr || !certidaoRow) return { ok: false, error: upErr?.message ?? "falha ao gravar certidão" }
-
-    const certidao_id = certidaoRow.id as string
+    if (!unit_id || !certidao.cnpj_devedor || !certidao.data_certidao) throw new Error("Certidão sem unidade, CNPJ ou data identificável; nenhum registro foi substituído.")
+    if (input.storage_path.split("/")[0] !== unit_id) throw new Error("O CNPJ da certidão não corresponde à unidade selecionada no upload.")
+    const { data: existing, error: lookupError } = await db.from("protestos_certidoes").select("id").eq("cnpj_devedor", certidao.cnpj_devedor).eq("data_certidao", certidao.data_certidao).maybeSingle()
+    if (lookupError) throw new Error(lookupError.message)
+    const certidao_id: string = existing?.id ?? stableId(`protesto|${certidao.cnpj_devedor}|${certidao.data_certidao}`)
     const dedup = new Map<number, ProtestoRegistro>()
     for (const r of certidao.registros) dedup.set(r.numero_registro, r)
-    // avisos é só diagnóstico do parser — não é coluna da tabela.
-    const rows = [...dedup.values()].map(({ avisos: _avisos, ...r }) => ({ ...r, certidao_id }))
-
-    const { error: regErr } = await db
-      .from("protestos_registros")
-      .upsert(rows, { onConflict: "certidao_id,numero_registro" })
-    if (regErr) return { ok: false, error: regErr.message }
+    const rows = [...dedup.values()].map(r => ({ ...Object.fromEntries(Object.entries(r).filter(([key]) => key !== "avisos")), certidao_id }))
+    await applyBatch(db, [
+      { table: "protestos_certidoes", operation: "upsert", conflict: "cnpj_devedor,data_certidao", rows: [{
+        id: certidao_id, unit_id, data_certidao: certidao.data_certidao, nome_devedor: certidao.nome_devedor,
+        cnpj_devedor: certidao.cnpj_devedor, protestos_declarados: certidao.protestos_declarados,
+        storage_path: input.storage_path, nome_arquivo: input.nome_arquivo, tamanho_bytes: input.tamanho_bytes,
+      }] },
+      ...replacement("protestos_registros", { certidao_id }, rows),
+    ])
 
     const cancelados = certidao.registros.filter((r) => r.situacao === "cancelado").length
     return { ok: true, certidao_id, protestos: certidao.registros.length, cancelados, unit_id }

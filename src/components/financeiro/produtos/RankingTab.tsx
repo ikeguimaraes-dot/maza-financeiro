@@ -1,13 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useResource } from "@/lib/hooks/use-resource"
+
+import { useState } from "react"
 import type { CSSProperties } from "react"
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts"
 import { getRankingProdutos, getHistoricoProduto } from "@/app/financeiro/dre/cmv/actions"
-import type { HistoricoRow, RankingItem, RankingResult } from "@/app/financeiro/dre/cmv/actions"
+import type { HistoricoRow, RankingItem } from "@/app/financeiro/dre/cmv/actions"
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -69,24 +71,13 @@ type Props = {
 // ── Component ────────────────────────────────────────────────────────────────
 export function RankingTab({ unitId, mes, ano }: Props) {
   const [subTab, setSubTab]           = useState<SubTab>("valor")
-  const [data, setData]               = useState<RankingResult | null>(null)
-  const [loadingRanking, setLoading]  = useState(true)
   const [drawerItem, setDrawerItem]   = useState<RankingItem | null>(null)
   const [historico, setHistorico]     = useState<HistoricoRow[]>([])
   const [loadingHist, setLoadingHist] = useState(false)
   const [filterForn, setFilterForn]   = useState("")
   const [filterCat, setFilterCat]     = useState("")
 
-  useEffect(() => {
-    setLoading(true)
-    setData(null)
-    setFilterForn("")
-    setFilterCat("")
-    getRankingProdutos(unitId, mes, ano).then(result => {
-      setData(result)
-      setLoading(false)
-    })
-  }, [unitId, mes, ano])
+  const { data, loading: loadingRanking } = useResource(`${unitId}|${mes}|${ano}`, () => getRankingProdutos(unitId, mes, ano), null)
 
   // ── Drawer ─────────────────────────────────────────────────────────────────
   async function openDrawer(item: RankingItem) {

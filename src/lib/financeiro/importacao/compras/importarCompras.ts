@@ -1,3 +1,4 @@
+import { applyBatch, replacement } from "@/lib/financeiro/db/atomic"
 // Lógica pura de gravação das linhas de compra — recebe o client Supabase
 // por parâmetro, igual ao padrão de src/lib/financeiro/razao/gerar.ts,
 // pra ser chamável tanto pela Server Action
@@ -24,19 +25,10 @@ export async function importarLinhasCompra(
   origem: "nf_pedidos" | "contas_pagar"
 ): Promise<ImportarComprasResultado> {
   try {
-    const competencias = [...new Set(linhas.map((l) => l.dCompetencia))]
-    // Idempotência: apaga o escopo (origem, unit, competencia) pras DUAS
-    // unidades possíveis (base + IKY Delivery) — a exceção de roteamento
-    // pode mandar linhas pra IKY mesmo com a unidade base = Yoshimori.
-    const unitIdsEnvolvidos = [...new Set([unitIdBase, IKY_UNIT_ID])]
-    for (const competencia of competencias) {
-      for (const uid of unitIdsEnvolvidos) {
-        const { error } = await db.from("titulos_a_pagar").delete()
-          .eq("origem", origem).eq("unit_id", uid).eq("d_competencia", competencia)
-        if (error) throw new Error(error.message)
-      }
+    if (!linhas.length) throw new Error("Arquivo sem linhas válidas; nenhum dado foi substituído.")
+    for (const l of linhas) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])-01$/.test(l.dCompetencia) || !Number.isFinite(l.vTitulo) || l.vTitulo < 0) throw new Error("Competência ou valor de compra inválido.")
     }
-
     let roteadosParaIky = 0
     let valorRoteadoParaIky = 0
     const rows = linhas.map((l) => {
@@ -58,6 +50,7 @@ export async function importarLinhasCompra(
         tipo,
         origem,
         unit_id: unitId,
+        import_unit_id: unitIdBase,
         fantasia_fornecedor: l.fornecedorNome,
         d_lancamento: l.dLancamento,
         n_nota_fiscal: l.nNotaFiscal,
@@ -72,11 +65,11 @@ export async function importarLinhasCompra(
       }
     })
 
-    const CHUNK = 500
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const { error } = await db.from("titulos_a_pagar").insert(rows.slice(i, i + CHUNK))
-      if (error) throw new Error(error.message)
-    }
+    const months = [...new Set(rows.map(r => r.d_competencia))]
+    await applyBatch(db, months.flatMap(month => replacement("titulos_a_pagar",
+      { import_unit_id: unitIdBase, d_competencia: month, origem },
+      rows.filter(r => r.d_competencia === month)
+    ).map(operation => ({ ...operation, affectedUnits: [unitIdBase, IKY_UNIT_ID] }))))
 
     return {
       ok: true, inseridos: rows.length, roteadosParaIky,

@@ -1,8 +1,11 @@
+import { applyBatch, replacement } from "@/lib/financeiro/db/atomic"
+import { competenciaTitulo } from "@/lib/financeiro/dates"
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 export const runtime = "nodejs"
 export const maxDuration = 60
 
 import * as XLSX from "xlsx"
-import { createOperationsClient } from "@maza/db/supabase/operations-client"
+
 import { requireUser } from "@maza/auth/server"
 import { mapRow, normalizeUnitName } from "@/lib/pagar-import/parse-titulos"
 
@@ -28,7 +31,7 @@ export async function POST(req: Request) {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[sheetName]!, { defval: null })
   if (!rows.length) return Response.json({ error: "Nenhuma linha encontrada" }, { status: 400 })
 
-  const db = createOperationsClient() as any
+  const db = await createFinanceiroClient()
   if (!db) return Response.json({ error: "Banco indisponível" }, { status: 500 })
   const { data: units, error: unitsError } = await db.from("units").select("id,name")
   if (unitsError) return Response.json({ error: `Erro ao carregar unidades: ${unitsError.message}` }, { status: 500 })
@@ -118,44 +121,16 @@ export async function POST(req: Request) {
     const key = `${rec.n_titulo}|${rec.parcela}|${rec.fantasia_empresa}|${rec.ref_mes}`
     dedup.set(key, rec)
   }
-  const records = [...dedup.values()]
+  const records = [...dedup.values()].map(rec => ({ ...rec, unit_id: String(rec.unit_id), import_unit_id: String(rec.unit_id), origem: "contas_pagar", d_competencia: competenciaTitulo(rec),
+    c_gerencial: rec.c_gerencial ?? rec.descricao_c_gerencial,
+    liquidacao_origem: rec.v_saldo_atual != null && Number(rec.v_saldo_atual) === 0 && Number(rec.v_titulo) > 0 ? "OK" : null,
+  }))
   if (records.length === 0) {
     return Response.json({ error: "Nenhum título válido foi reconhecido. Confira se a planilha possui o layout esperado." }, { status: 422 })
   }
 
-  // Delete por (unit_id, ref_mes), não só ref_mes — um reimport que traz
-  // só algumas unidades não pode apagar títulos de outras unidades no
-  // mesmo mês (mesmo padrão do import de produtos: delete escopado por
-  // unidade, não só por período).
-  const refMesesSet = new Set<string>()
-  const refMesesPorUnidade = new Map<string, Set<string>>()
-  for (const rec of records) {
-    if (!rec.ref_mes) continue
-    const unitId = rec.unit_id as string
-    const bucket = refMesesPorUnidade.get(unitId) ?? new Set<string>()
-    bucket.add(rec.ref_mes as string)
-    refMesesPorUnidade.set(unitId, bucket)
-    refMesesSet.add(rec.ref_mes as string)
-  }
-
-  for (const [unitId, refMesesDaUnidade] of refMesesPorUnidade) {
-    const { error: delErr } = await db
-      .from("titulos_a_pagar")
-      .delete()
-      .eq("unit_id", unitId)
-      .in("ref_mes", [...refMesesDaUnidade])
-    if (delErr) return Response.json({ error: `Erro ao limpar dados: ${delErr.message}` }, { status: 500 })
-  }
-
-  const BATCH = 200
-  let inserted = 0
-  for (let i = 0; i < records.length; i += BATCH) {
-    const { error: insErr } = await db
-      .from("titulos_a_pagar")
-      .upsert(records.slice(i, i + BATCH) as any, { onConflict: "n_titulo,parcela,fantasia_empresa,ref_mes" })
-    if (insErr) return Response.json({ error: `Erro ao inserir lote ${i / BATCH + 1}: ${insErr.message}` }, { status: 500 })
-    inserted += Math.min(BATCH, records.length - i)
-  }
-
-  return Response.json({ ok: true, inserted, ref_meses: [...refMesesSet] })
+  if (records.some(r => !r.d_competencia)) return Response.json({ error: "Há títulos sem competência, lançamento ou vencimento; nenhum dado foi alterado." }, { status: 422 })
+  const scopes = new Map(records.map(r => [`${r.unit_id}|${r.d_competencia}`, { unit_id: r.unit_id, import_unit_id: r.unit_id, d_competencia: r.d_competencia, origem: "contas_pagar" }]))
+  await applyBatch(db, [...scopes.values()].flatMap(scope => replacement("titulos_a_pagar", scope, records.filter(r => r.unit_id === scope.unit_id && r.d_competencia === scope.d_competencia))))
+  return Response.json({ ok: true, inserted: records.length, ref_meses: [...new Set(records.map(r => r.d_competencia))] })
 }

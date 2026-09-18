@@ -1,3 +1,4 @@
+import { hojeSaoPaulo } from "@/lib/financeiro/dates"
 // Fluxo de caixa — DESEMBOLSO, não competência. Não lê lancamentos nem
 // dre_snapshot (são projeções por competência); lê as fontes com data de
 // movimentação real: titulos_a_pagar (d_vencimento + liquidacao_origem),
@@ -8,18 +9,6 @@
 import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 import { classificarLiquidacao } from "./liquidacao"
 import { prazoDiasPorForma, somarDias } from "./prazoRecebimento"
-
-const TZ = "America/Sao_Paulo"
-
-function hojeIso(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(now).reduce<Record<string, string>>((acc, p) => {
-    if (p.type !== "literal") acc[p.type] = p.value
-    return acc
-  }, {})
-  return `${parts.year}-${parts.month}-${parts.day}`
-}
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100
@@ -87,7 +76,7 @@ export type ResultadoFluxo = {
   hoje: string
   dias: DiaFluxo[]
   resumo: {
-    saldoHoje: number
+    saldoHoje: number | null
     aPagarVencido: number
     aPagar7Dias: number
     aReceber7Dias: number
@@ -117,7 +106,7 @@ export type ResultadoFluxo = {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export async function calcularFluxo(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
@@ -126,7 +115,8 @@ export async function calcularFluxo(
   dataInicio: string,
   dataFim: string
 ): Promise<ResultadoFluxo> {
-  const hoje = hojeIso()
+  const hoje = hojeSaoPaulo()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim) || !Number.isFinite(Date.parse(dataInicio)) || !Number.isFinite(Date.parse(dataFim)) || dataInicio > dataFim || (Date.parse(dataFim) - Date.parse(dataInicio)) / 86400000 > 366) throw new Error("Selecione um intervalo válido de até 366 dias.")
 
   // ── Contas bancárias (saldo inicial consolidado) ──────────────────────
   let queryContas = db.from("contas_bancarias").select("id,saldo_inicial,data_saldo_inicial").eq("unit_id", unitId).eq("ativo", true)
@@ -134,24 +124,25 @@ export async function calcularFluxo(
   const contas = await fetchAllPaginado((from: number, to: number) => queryContas.range(from, to)) as Array<{
     id: string; saldo_inicial: number; data_saldo_inicial: string
   }>
-  // Simplificação assumida: data_saldo_inicial de cada conta é sempre <=
-  // dataInicio (a tela só existe pra período >= hoje) — soma direta cobre
-  // o caso real de hoje (nenhuma conta cadastrada, saldo 0).
   const saldoInicialConsolidado = contas.reduce((s, c) => s + Number(c.saldo_inicial ?? 0), 0)
 
   // ── Movimentações realizadas (extrato) ────────────────────────────────
-  let queryMov = db.from("movimentacoes_caixa").select("data,tipo,valor,origem,origem_id,conciliado").eq("unit_id", unitId).lte("data", dataFim)
+  let queryMov = db.from("movimentacoes_caixa").select("conta_id,data,tipo,valor,origem,origem_id,conciliado").eq("unit_id", unitId).lte("data", dataFim)
   if (contaId) queryMov = queryMov.eq("conta_id", contaId)
   const movimentacoes = await fetchAllPaginado((from: number, to: number) => queryMov.range(from, to)) as Array<{
-    data: string; tipo: string; valor: number; origem: string; origem_id: string | null; conciliado: boolean
+    conta_id: string | null; data: string; tipo: string; valor: number; origem: string; origem_id: string | null; conciliado: boolean
   }>
   const titulosConciliadosIds = new Set(
     movimentacoes.filter((m) => m.origem === "titulo" && m.conciliado).map((m) => m.origem_id)
   )
 
+  if (contas.some(c => c.data_saldo_inicial > dataInicio)) throw new Error("O início do período deve ser igual ou posterior à data do saldo inicial das contas.")
+  const basePorConta = new Map(contas.map(c => [c.id, c.data_saldo_inicial]))
+  const movimentosAposBase = movimentacoes.filter(m => !m.conta_id || (basePorConta.has(m.conta_id) && m.data >= basePorConta.get(m.conta_id)!))
+  const saldoAntesPeriodo = movimentosAposBase.filter(m => m.data < dataInicio).reduce((saldo, m) => saldo + (m.tipo === "entrada" ? 1 : -1) * Math.abs(Number(m.valor)), saldoInicialConsolidado)
   const entradasRealizadasPorDia = new Map<string, number>()
   const saidasRealizadasPorDia = new Map<string, number>()
-  for (const m of movimentacoes) {
+  for (const m of movimentosAposBase) {
     const mapa = m.tipo === "entrada" ? entradasRealizadasPorDia : saidasRealizadasPorDia
     mapa.set(m.data, (mapa.get(m.data) ?? 0) + Math.abs(Number(m.valor ?? 0)))
   }
@@ -159,7 +150,7 @@ export async function calcularFluxo(
   // ── Títulos a pagar ────────────────────────────────────────────────────
   const titulos = await fetchAllPaginado((from: number, to: number) =>
     db.from("titulos_a_pagar")
-      .select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal,v_titulo,d_vencimento,d_lancamento,d_competencia,c_gerencial,liquidacao_origem")
+      .select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal,v_titulo,d_vencimento,d_lancamento,d_competencia,c_gerencial,liquidacao_origem,d_liquidacao,d_liquidacao_atual")
       .eq("unit_id", unitId)
       .in("origem", ["nf_pedidos", "contas_pagar"])
       .range(from, to)
@@ -167,7 +158,7 @@ export async function calcularFluxo(
     id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
     n_nota_fiscal: string | null; v_titulo: number | null
     d_vencimento: string | null; d_lancamento: string | null; d_competencia: string | null
-    c_gerencial: string | null; liquidacao_origem: string | null
+    c_gerencial: string | null; liquidacao_origem: string | null; d_liquidacao: string | null; d_liquidacao_atual: string | null
   }>
 
   const saidasPrevistasPorDia = new Map<string, number>()
@@ -192,8 +183,8 @@ export async function calcularFluxo(
       valorPago += valor
       // Título pago é fato histórico — fallback de data serve só pra registrar
       // quando o dinheiro já saiu, nunca pra projetar (já aconteceu).
-      const dataEfetivaPago = t.d_vencimento ?? t.d_lancamento ?? t.d_competencia
-      if (dataEfetivaPago && !titulosConciliadosIds.has(t.id)) {
+      const dataEfetivaPago = t.d_liquidacao ?? t.d_liquidacao_atual
+      if (!contaId && dataEfetivaPago && !titulosConciliadosIds.has(t.id)) {
         saidasRealizadasPorDia.set(dataEfetivaPago, (saidasRealizadasPorDia.get(dataEfetivaPago) ?? 0) + valor)
       }
       continue
@@ -292,10 +283,15 @@ export async function calcularFluxo(
   const diasSemDetalheFormaSet = new Set<string>()
   let valorSemDetalheForma = 0
 
+  const receitaRealizadaRestante = new Map<string, number>()
+  for (const m of movimentacoes) if (m.origem === "receita" && m.origem_id && m.conciliado && m.tipo === "entrada") receitaRealizadaRestante.set(m.origem_id, (receitaRealizadaRestante.get(m.origem_id) ?? 0) + Math.abs(Number(m.valor)))
   for (const p of receitaPagamentos) {
     const dataVenda = dataPorWorkdayId.get(p.workday_id_fk)
     if (!dataVenda) continue
-    const valor = Math.abs(Number(p.valor_recebido ?? 0))
+    const bruto = Math.abs(Number(p.valor_recebido ?? 0))
+    const realizado = receitaRealizadaRestante.get(p.workday_id_fk) ?? 0
+    const valor = Math.max(0, bruto - realizado)
+    receitaRealizadaRestante.set(p.workday_id_fk, Math.max(0, realizado - bruto))
     const { dias: prazoDias, conhecida } = prazoDiasPorForma(p.forma)
     const dataEfetiva = somarDias(dataVenda, prazoDias)
     // Venda com dataEfetiva fora da janela exibida já devia ter virado caixa
@@ -323,15 +319,15 @@ export async function calcularFluxo(
 
   // ── Série diária ───────────────────────────────────────────────────────
   const dias: DiaFluxo[] = []
-  let saldoAcumulado = saldoInicialConsolidado
+  let saldoAcumulado = saldoAntesPeriodo
   let cruzaZero = false
   let diaCruzaZero: string | null = null
 
   for (let d = dataInicio; d <= dataFim; d = somarDias(d, 1)) {
     const entradasRealizadas = entradasRealizadasPorDia.get(d) ?? 0
-    const entradasPrevistas = entradasPrevistasPorDia.get(d) ?? 0
+    const entradasPrevistas = contaId ? 0 : (entradasPrevistasPorDia.get(d) ?? 0)
     const saidasRealizadas = saidasRealizadasPorDia.get(d) ?? 0
-    const saidasPrevistas = saidasPrevistasPorDia.get(d) ?? 0
+    const saidasPrevistas = contaId ? 0 : (saidasPrevistasPorDia.get(d) ?? 0)
     const saldoInicialDia = saldoAcumulado
     const saldoFinalDia = saldoInicialDia + entradasRealizadas + entradasPrevistas - saidasRealizadas - saidasPrevistas
     if (saldoFinalDia < 0 && !cruzaZero) { cruzaZero = true; diaCruzaZero = d }
@@ -409,16 +405,16 @@ export async function calcularFluxo(
   return {
     unitId, contaId, dataInicio, dataFim, hoje, dias,
     resumo: {
-      saldoHoje: diaHoje ? diaHoje.saldoFinal : round2(saldoInicialConsolidado),
-      aPagarVencido: round2(aPagarVencido),
-      aPagar7Dias: round2(aPagar7Dias),
-      aReceber7Dias: round2(aReceber7Dias),
+      saldoHoje: diaHoje ? diaHoje.saldoFinal : null,
+      aPagarVencido: contaId ? 0 : round2(aPagarVencido),
+      aPagar7Dias: contaId ? 0 : round2(aPagar7Dias),
+      aReceber7Dias: contaId ? 0 : round2(aReceber7Dias),
       projecao30Dias: dia30 ? dia30.saldoFinal : round2(saldoAcumulado),
       cruzaZero, diaCruzaZero,
     },
-    aPagarPorFaixa,
-    aPagarSemData,
-    aReceberPorForma,
+    aPagarPorFaixa: contaId ? [] : aPagarPorFaixa,
+    aPagarSemData: contaId ? { titulos: [], total: 0 } : aPagarSemData,
+    aReceberPorForma: contaId ? [] : aReceberPorForma,
     ultimaReceitaImportada,
     antecipacaoRegistrada,
     confianca: {

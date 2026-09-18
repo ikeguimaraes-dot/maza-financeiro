@@ -366,13 +366,13 @@ function ImportLoteXlsx({ selectedUnitId, unitLabel }: { selectedUnitId: string;
             background: "rgba(96,165,250,0.08)", color: C.text2, border: "1px solid rgba(96,165,250,0.2)",
           }}>
             ℹ Cada arquivo é importado independentemente. Se uma Venda vier antes do Movimento do mesmo dia,
-            ela falha com "Workday não encontrado" — reimporte só ela depois de importar o Movimento correspondente.
+            ela falha com &quot;Workday não encontrado&quot; — reimporte só ela depois de importar o Movimento correspondente.
           </div>
 
           {naoReconhecidos.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
-                Arquivos sem tipo reconhecível no nome (esperado "Movimento", "Venda" ou "Faturamento") — não serão processados
+                Arquivos sem tipo reconhecível no nome (esperado &quot;Movimento&quot;, &quot;Venda&quot; ou &quot;Faturamento&quot;) — não serão processados
               </p>
               {naoReconhecidos.map((f) => (
                 <p key={f.key} style={{ fontSize: 12, color: C.text3, margin: "2px 0" }}>{f.file.name}</p>
@@ -704,7 +704,7 @@ function ImportLotePdf({ selectedUnitId, unitLabel }: { selectedUnitId: string; 
           {semTipo.length > 0 && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: C.alerta, margin: "0 0 8px" }}>
-                Arquivos não reconhecidos (nome não contém "Movimento", "Venda" ou "Caixa")
+                Arquivos não reconhecidos (nome não contém &quot;Movimento&quot;, &quot;Venda&quot; ou &quot;Caixa&quot;)
               </p>
               {semTipo.map((f) => (
                 <p key={f.key} style={{ fontSize: 12, color: C.text3, margin: "2px 0" }}>{f.file.name}</p>

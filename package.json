@@ -8,7 +8,8 @@
     "start": "next start --port 3001",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
-    "test:ui": "node --test tests/*.test.mjs"
+    "test:ui": "node --test tests/*.test.mjs",
+    "test:db": "bash scripts/test-financeiro-db.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

@@ -1,5 +1,7 @@
 "use client"
 
+import { useResource } from "@/lib/hooks/use-resource"
+
 // src/app/financeiro/dre/folha/page.tsx
 // Repo: maza-financeiro
 
@@ -152,16 +154,12 @@ export default function FolhaPage() {
   const unitId = unit?.id ?? null
   const [mes, setMes] = useState(now.getMonth() + 1)
   const [ano, setAno] = useState(now.getFullYear())
-  const [data, setData] = useState<FolhaData | null>(null)
   const [colaboradorAberto, setColaboradorAberto] = useState<Colaborador | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [buscaColab, setBuscaColab] = useState("")
   const [sortColab, setSortColab] = useState<"nome" | "custo">("custo")
   const [dominioModalAberto, setDominioModalAberto] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const monthsRequestRef = useRef(0)
-  const dataRequestRef = useRef(0)
 
   // Default inteligente: ao trocar de unidade, busca a competência mais recente
   // COM dados e ajusta os seletores — evita abrir num mês sem folha (ex.: mês
@@ -181,32 +179,12 @@ export default function FolhaPage() {
       .catch(() => {})
   }, [unitId, reloadKey])
 
-  useEffect(() => {
-    if (!unitId) {
-      setData(null)
-      setLoading(false)
-      setError("Nenhuma unidade ativa selecionada.")
-      return
-    }
-    const requestId = ++dataRequestRef.current
-    setLoading(true)
-    setError(null)
-    setData(null)
-    fetchJsonWithSessionRetry(
-      `${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`
-    )
-      .then((d) => {
-        if (requestId !== dataRequestRef.current) return
-        if (d.error) throw new Error(d.error)
-        setData(d)
-      })
-      .catch((e: Error) => {
-        if (requestId === dataRequestRef.current) setError(e.message)
-      })
-      .finally(() => {
-        if (requestId === dataRequestRef.current) setLoading(false)
-      })
-  }, [unitId, mes, ano, reloadKey])
+  const { data, loading, error } = useResource<FolhaData | null>(`${unitId}|${mes}|${ano}|${reloadKey}`, async () => {
+    if (!unitId) throw new Error("Nenhuma unidade ativa selecionada.")
+    const result = await fetchJsonWithSessionRetry(`${API_BASE}/api/folha/dados?unit_id=${unitId}&mes=${mes}&ano=${ano}`)
+    if (result.error) throw new Error(result.error)
+    return result
+  }, null)
 
   // Colaboradores filtrados + ordenados
   const colabFiltrados = useMemo(() => {

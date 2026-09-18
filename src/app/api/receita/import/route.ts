@@ -1,5 +1,9 @@
+import { extractedRows, type PdfRecord } from "@/lib/receita/extraction";
+import { persistMovimento, turnoDoMovimento } from "@/lib/receita/persist";
+import { applyBatch, replacement } from "@/lib/financeiro/db/atomic";
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 // NextResponse not needed — using native Response.json() throughout
-import { createClient } from "@supabase/supabase-js";
+
 // Extração do PDF de Venda compartilhada com /api/vendas-consolidado/import
 import { VENDA_PROMPT, fileToBase64, parsePdf } from "@/lib/receita/vendaExtract";
 
@@ -134,12 +138,7 @@ Regras:
 // (compartilhados com a rota consolidada). WORKDAY_PROMPT/CAIXA_PROMPT seguem
 // locais por serem exclusivos do import diário.
 
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key);
-}
+const getServiceClient = createFinanceiroClient;
 
 function extractDateFromFilename(filename: string): string | null {
   const m = filename.match(/\[(\d{2})\.(\d{2})\.(\d{2})\]/);
@@ -148,11 +147,7 @@ function extractDateFromFilename(filename: string): string | null {
   return `20${yy}-${mm}-${dd}`;
 }
 
-function classifyTurno(aberturaAt: string | null | undefined): "almoco" | "jantar" | "dia_inteiro" {
-  if (!aberturaAt) return "dia_inteiro";
-  const hora = new Date(aberturaAt).getHours();
-  return hora >= 10 && hora < 17 ? "almoco" : "jantar";
-}
+
 
 const MONTHS_PT: Record<string, string> = {
   JAN: "01", FEV: "02", MAR: "03", ABR: "04", MAI: "05", JUN: "06",
@@ -173,18 +168,15 @@ function extractTimestamps(pdfText: string): { abertura_at: string | null; fecha
 // ── DB inserts ────────────────────────────────────────────────────────────────
 
 async function insertWorkday(
-  supabase: ReturnType<typeof getServiceClient>,
-  parsed: any,
+  supabase: Awaited<ReturnType<typeof getServiceClient>>,
+  parsed: PdfRecord,
   unitId: string,
 ): Promise<string> {
-  const { data: wd, error } = await supabase
-    .from("receita_dias")
-    .upsert(
-      {
+  return persistMovimento(supabase, {
         unit_id: unitId,
         data: parsed.data,
         workday_id: parsed.workday_id,
-        turno: "dia_inteiro",  // placeholder — reclassificado abaixo
+        turno: turnoDoMovimento(extractedRows(parsed.turnos).map(t => String(t.turno ?? ""))),  // placeholder — reclassificado abaixo
         abertura_at: parsed.abertura_at,
         fechamento_at: parsed.fechamento_at,
         receita_bruta: parsed.receita_bruta,
@@ -200,80 +192,17 @@ async function insertWorkday(
         permanencia_media: parsed.permanencia_media,
         previsto: parsed.previsto,
         devedor: parsed.devedor,
-      },
-      { onConflict: "unit_id,workday_id" },
-    )
-    .select()
-    .single();
-
-  if (error) throw new Error(`receita_dias: ${error.message}`);
-
-  // Classifica turno pela seção "Turno" extraída do PDF
-  const turnosNomes: string[] = (parsed.turnos ?? []).map((t: any) => (t.turno ?? "").toLowerCase());
-  const temTarde = turnosNomes.some((t: string) => t.includes("tarde"));
-  const temNoite = turnosNomes.some((t: string) => t.includes("noite"));
-
-  let turnoClassificado: "almoco" | "jantar" | "dia_inteiro";
-  if (temTarde && temNoite) {
-    turnoClassificado = "dia_inteiro";
-  } else if (temTarde) {
-    turnoClassificado = "almoco";
-  } else if (temNoite) {
-    turnoClassificado = "jantar";
-  } else {
-    // Fallback: sem seção Turno no PDF — usa lógica de siblings
-    const { data: siblings } = await supabase
-      .from("receita_dias")
-      .select("id, workday_id")
-      .eq("unit_id", unitId)
-      .eq("data", parsed.data)
-      .order("workday_id", { ascending: true });
-    if (siblings?.length === 1) {
-      turnoClassificado = "dia_inteiro";
-      console.log("[lorean/import] turno fallback: dia_inteiro (único workday do dia)");
-    } else if (siblings && siblings.length >= 2) {
-      await supabase.from("receita_dias").update({ turno: "almoco" }).eq("id", siblings[0]!.id);
-      await supabase.from("receita_dias").update({ turno: "jantar" }).eq("id", siblings[1]!.id);
-      console.log(`[lorean/import] turno fallback siblings: ${siblings[0]!.workday_id}→almoco, ${siblings[1]!.workday_id}→jantar`);
-      turnoClassificado = wd.workday_id === siblings[0]!.workday_id ? "almoco" : "jantar";
-    } else {
-      turnoClassificado = "dia_inteiro";
-    }
-  }
-
-  await supabase.from("receita_dias").update({ turno: turnoClassificado }).eq("id", wd.id);
-  console.log(`[lorean/import] turno: ${turnoClassificado} (PDF turnos: [${turnosNomes.join(", ")}])`);
-
-  await Promise.all([
-    supabase.from("receita_pagamentos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_ambientes").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_turnos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_grupos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_descontos").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_descontos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_cancelamentos_detalhe").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_horarios").delete().eq("workday_id_fk", wd.id),
-    supabase.from("receita_usuarios").delete().eq("workday_id_fk", wd.id),
-  ]);
-
-  const inserts: PromiseLike<any>[] = [];
-  if (parsed.pagamentos?.length)             inserts.push(supabase.from("receita_pagamentos").insert(parsed.pagamentos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.ambientes?.length)              inserts.push(supabase.from("receita_ambientes").insert(parsed.ambientes.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.turnos?.length)                 inserts.push(supabase.from("receita_turnos").insert(parsed.turnos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.grupos?.length)                 inserts.push(supabase.from("receita_grupos").insert(parsed.grupos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.descontos?.length)              inserts.push(supabase.from("receita_descontos").insert(parsed.descontos.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.descontos_detalhe?.length)      inserts.push(supabase.from("receita_descontos_detalhe").insert(parsed.descontos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.cancelamentos_detalhe?.length)  inserts.push(supabase.from("receita_cancelamentos_detalhe").insert(parsed.cancelamentos_detalhe.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.horarios?.length)               inserts.push(supabase.from("receita_horarios").insert(parsed.horarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  if (parsed.usuarios?.length)               inserts.push(supabase.from("receita_usuarios").insert(parsed.usuarios.map((r: any) => ({ ...r, workday_id_fk: wd.id }))).then());
-  await Promise.all(inserts as Promise<any>[]);
-
-  return wd.id;
+      }, {
+    receita_pagamentos: extractedRows(parsed.pagamentos), receita_ambientes: extractedRows(parsed.ambientes),
+    receita_turnos: extractedRows(parsed.turnos), receita_grupos: extractedRows(parsed.grupos), receita_descontos: extractedRows(parsed.descontos),
+    receita_descontos_detalhe: extractedRows(parsed.descontos_detalhe), receita_cancelamentos: extractedRows(parsed.cancelamentos),
+    receita_cancelamentos_detalhe: extractedRows(parsed.cancelamentos_detalhe), receita_horarios: extractedRows(parsed.horarios), receita_usuarios: extractedRows(parsed.usuarios)
+  });
 }
 
 async function insertVenda(
-  supabase: ReturnType<typeof getServiceClient>,
-  parsed: any,
+  supabase: Awaited<ReturnType<typeof getServiceClient>>,
+  parsed: PdfRecord,
   unitId: string,
   workdayUuid: string | null,
   filename: string,
@@ -294,18 +223,14 @@ async function insertVenda(
     wdId = wd.id;
   }
 
-  await supabase.from("receita_produtos_dia").delete().eq("workday_id_fk", wdId);
-  if (parsed.produtos?.length) {
-    const { error } = await supabase.from("receita_produtos_dia").insert(
-      (parsed.produtos as any[]).map((r) => ({ ...r, workday_id_fk: wdId })),
-    );
-    if (error) throw new Error(`receita_produtos_dia insert: ${error.message}`);
-  }
+  if (!wdId) throw new Error("Movimento não encontrado");
+  await applyBatch(supabase, replacement("receita_produtos_dia", { workday_id_fk: wdId },
+    extractedRows(parsed.produtos).map((r: Record<string, unknown>) => ({ ...r, workday_id_fk: wdId }))));
 }
 
 async function insertCaixa(
-  supabase: ReturnType<typeof getServiceClient>,
-  parsed: any,
+  supabase: Awaited<ReturnType<typeof getServiceClient>>,
+  parsed: PdfRecord,
   unitId: string,
   workdayUuid: string | null,
 ): Promise<void> {
@@ -317,7 +242,8 @@ async function insertCaixa(
     .maybeSingle()
     .then(({ data }) => data?.id ?? null));
 
-  await supabase.from("receita_caixas").insert({
+  if (!wdId || parsed.caixa_id == null) throw new Error("Movimento e caixa são obrigatórios");
+  await applyBatch(supabase, replacement("receita_caixas", { workday_id_fk: wdId, caixa_id: parsed.caixa_id }, [{
     workday_id_fk: wdId,
     caixa_id: parsed.caixa_id,
     operador: parsed.operador,
@@ -326,7 +252,7 @@ async function insertCaixa(
     total_fechado: parsed.total_fechado,
     total_recebido: parsed.total_recebido,
     diferenca: parsed.diferenca,
-  });
+  }]));
 }
 
 // ── Route handler — processes ONE PDF per call ────────────────────────────────
@@ -356,9 +282,9 @@ export async function POST(request: Request) {
       return Response.json({ success: false, errors: [`tipo inválido: ${tipo}`] }, { status: 400, headers: CORS });
     }
 
-    let supabase: ReturnType<typeof getServiceClient>;
+    let supabase: Awaited<ReturnType<typeof getServiceClient>>;
     try {
-      supabase = getServiceClient();
+      supabase = await getServiceClient();
     } catch (e) {
       return Response.json({ success: false, errors: [`supabase: ${String(e)}`] }, { status: 500, headers: CORS });
     }
@@ -379,15 +305,15 @@ export async function POST(request: Request) {
       if (fechamento_at !== null) parsed.fechamento_at = fechamento_at;
       console.log("[lorean/import] timestamps from regex:", abertura_at, fechamento_at);
       console.log("[lorean/import] Movimento parsed —", {
-        pagamentos: parsed.pagamentos?.length ?? 0,
-        ambientes: parsed.ambientes?.length ?? 0,
-        turnos: parsed.turnos?.length ?? 0,
-        grupos: parsed.grupos?.length ?? 0,
-        descontos: parsed.descontos?.length ?? 0,
-        descontos_detalhe: parsed.descontos_detalhe?.length ?? 0,
-        cancelamentos_detalhe: parsed.cancelamentos_detalhe?.length ?? 0,
-        horarios: parsed.horarios?.length ?? 0,
-        usuarios: parsed.usuarios?.length ?? 0,
+        pagamentos: extractedRows(parsed.pagamentos).length,
+        ambientes: extractedRows(parsed.ambientes).length,
+        turnos: extractedRows(parsed.turnos).length,
+        grupos: extractedRows(parsed.grupos).length,
+        descontos: extractedRows(parsed.descontos).length,
+        descontos_detalhe: extractedRows(parsed.descontos_detalhe).length,
+        cancelamentos_detalhe: extractedRows(parsed.cancelamentos_detalhe).length,
+        horarios: extractedRows(parsed.horarios).length,
+        usuarios: extractedRows(parsed.usuarios).length,
       });
       workday_id = await insertWorkday(supabase, parsed, unitId);
       console.log("[lorean/import] Movimento done, workday_id:", workday_id);
@@ -396,7 +322,7 @@ export async function POST(request: Request) {
     else if (tipo === "venda" || tipo === "venda_produtos") {
       const parsed = await parsePdf(b64, VENDA_PROMPT, "venda", 32768);
       await insertVenda(supabase, parsed, unitId, workdayUuid, arquivo.name);
-      console.log(`[lorean/import] Venda produtos done: ${parsed.produtos?.length ?? 0} produtos`);
+      console.log(`[lorean/import] Venda produtos done: ${extractedRows(parsed.produtos).length} produtos`);
     }
 
     else if (tipo === "caixa") {

@@ -1,7 +1,9 @@
 "use server"
 
+import { createFinanceiroClient } from "@/lib/financeiro/db/client";
+
 import { requireUser } from "@maza/auth/server"
-import { createServiceClient } from "@maza/db/supabase/server"
+
 import * as Gerar from "@/lib/financeiro/razao/gerar"
 
 export type {
@@ -10,7 +12,7 @@ export type {
   GerarRazaoResultado,
 } from "@/lib/financeiro/razao/gerar"
 
-// Cada função aqui é só requireUser() + createServiceClient() por cima da
+// Cada função aqui é só requireUser() + await createFinanceiroClient() por cima da
 // lógica pura em src/lib/financeiro/razao/gerar.ts — a mesma lógica é usada
 // por scripts/regerar-razao.ts (CLI, sem sessão de app), sem duplicação.
 
@@ -19,7 +21,7 @@ export async function gerarLancamentosNfeEntrada(
   competencia: string
 ): Promise<Gerar.GerarLancamentosResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, inseridos: 0, error: "Sem conexão com banco" }
   return Gerar.gerarLancamentosNfeEntrada(db, unitId, competencia)
 }
@@ -29,7 +31,7 @@ export async function gerarLancamentosReceita(
   competencia: string
 ): Promise<Gerar.GerarLancamentosResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, inseridos: 0, error: "Sem conexão com banco" }
   return Gerar.gerarLancamentosReceita(db, unitId, competencia)
 }
@@ -39,7 +41,7 @@ export async function gerarLancamentosTitulos(
   competencia: string
 ): Promise<Gerar.GerarLancamentosResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, inseridos: 0, error: "Sem conexão com banco" }
   return Gerar.gerarLancamentosTitulos(db, unitId, competencia)
 }
@@ -49,7 +51,7 @@ export async function gerarLancamentosFolha(
   competencia: string
 ): Promise<Gerar.GerarLancamentosResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, inseridos: 0, error: "Sem conexão com banco" }
   return Gerar.gerarLancamentosFolha(db, unitId, competencia)
 }
@@ -59,7 +61,7 @@ export async function recalcularSnapshot(
   competencia: string
 ): Promise<Gerar.SnapshotResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   return Gerar.recalcularSnapshot(db, unitId, competencia)
 }
@@ -69,7 +71,7 @@ export async function gerarRazao(
   competencia: string
 ): Promise<Gerar.GerarRazaoResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) {
     const semConexao = { ok: false, inseridos: 0, error: "Sem conexão com banco" } as const
     return {
@@ -113,7 +115,7 @@ export async function getLancamentosNaoClassificados(
   competencia: string
 ): Promise<GetLancamentosNaoClassificadosResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, totalNaoClassificado: 0, fornecedores: [], planoContas: [], error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,7 +168,7 @@ export async function criarRegraClassificacao(
   contaCodigo: string
 ): Promise<CriarRegraResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -194,7 +196,7 @@ export type ListarRegrasResultado = { ok: boolean; regras: RegraClassificacao[];
 
 export async function listarRegras(unitId: string): Promise<ListarRegrasResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, regras: [], error: "Sem conexão com banco" }
   try {
     const linhas = await Gerar.fetchAllPaginado((from, to) =>
@@ -220,7 +222,7 @@ export type RemoverRegraResultado = { ok: boolean; error?: string }
 
 export async function removerRegra(id: string): Promise<RemoverRegraResultado> {
   await requireUser()
-  const db = createServiceClient()
+  const db = await createFinanceiroClient()
   if (!db) return { ok: false, error: "Sem conexão com banco" }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
