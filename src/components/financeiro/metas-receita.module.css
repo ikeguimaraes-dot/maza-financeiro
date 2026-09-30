@@ -1,0 +1,44 @@
+.root { color: var(--text); font-family: var(--font-instrument-sans), sans-serif; font-variant-numeric: tabular-nums; }
+.performance, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; }
+.performance { padding: 22px; margin-bottom: 16px; }
+.performance h2 { color: var(--text-3); font-family: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin: 0 0 5px; }
+.percentage { display: block; font-size: 40px; line-height: 1.15; color: var(--brand); letter-spacing: -1.5px; }
+.performance p { margin: 2px 0 15px; font-size: 13px; color: var(--text-2); }
+.track, .smallTrack { background: var(--surface-3); border-radius: 8px; overflow: hidden; }
+.track { height: 8px; }
+.track span, .smallTrack span { display: block; height: 100%; border-radius: inherit; background: var(--brand); transition: width 180ms ease; }
+.heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 17px 18px; }
+.heading h3 { font-family: inherit; font-size: 14px; margin: 0; font-weight: 700; }
+.heading > div { color: var(--text-3); display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: 12px; }
+.heading strong { color: var(--text-2); }
+.heading span { margin-left: 14px; }
+.negative { color: var(--color-danger); } .positive { color: var(--color-success); }
+.scroll { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; min-width: 880px; font-size: 13px; }
+.table th, .table td { padding: 11px 12px; text-align: right; border-top: 1px solid var(--border); white-space: nowrap; }
+.table thead { background: var(--surface-2); color: var(--text-3); text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
+.table th:first-child { text-align: left; }
+.table th:nth-child(3), .table td:nth-child(3) { text-align: center; }
+.table tbody th { font-weight: 600; }
+.input { display: flex; align-items: center; background: var(--surface); border: 1px solid var(--input); border-radius: 6px; padding: 7px 10px; width: 130px; margin-left: auto; box-sizing: border-box; }
+.input span { color: var(--text-3); margin-right: 6px; }
+.input input { background: transparent; border: 0; color: var(--text); width: 100%; min-width: 0; text-align: right; font: inherit; outline: none; appearance: textfield; }
+.input input::-webkit-inner-spin-button, .input input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.input:focus-within { outline: 2px solid var(--brand); outline-offset: 1px; }
+.atingimento { display: flex; align-items: center; justify-content: flex-end; gap: 12px; color: var(--text-3); }
+.atingimento strong { min-width: 50px; font-size: 12px; }
+.smallTrack { width: 64px; height: 5px; }
+.atingimento[data-tone="bad"] { color: var(--color-danger); }
+.atingimento[data-tone="warn"] { color: var(--color-warning); }
+.atingimento[data-tone="good"] { color: var(--color-success); }
+.atingimento .smallTrack span { background: currentColor; }
+.table tfoot { background: var(--brand-soft); font-weight: 700; }
+.table tfoot th { color: var(--brand); border-left: 2px solid var(--brand); }
+.footer { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 13px 18px; background: var(--surface-2); }
+.footer p, .explanation { font-size: 11px; color: var(--text-3); line-height: 1.6; margin: 0; }
+.footer button { background: var(--primary); color: var(--primary-foreground); font: inherit; font-weight: 600; font-size: 13px; padding: 11px 20px; border: none; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+.footer button:hover:not(:disabled) { background: var(--brand-strong); }
+.footer button:disabled { opacity: .5; cursor: not-allowed; }
+.explanation { margin-top: 12px; color: var(--text-3); }
+.notice { padding: 0 18px 14px; font-size: 13px; color: var(--text); }
+@media(max-width: 600px) { .performance { padding: 18px; } .footer { align-items: stretch; flex-direction: column; } .heading span { margin-left: 0; } }

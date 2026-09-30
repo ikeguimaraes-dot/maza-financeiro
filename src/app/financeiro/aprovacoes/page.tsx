@@ -1,3 +1,6 @@
+import { Suspense } from "react";
+import { ultimaCompetencia } from "@/lib/financeiro/competencia-atual";
+import { competenciasDisponiveis } from "@/lib/financeiro/competencias";
 import Link from "next/link"
 
 import { requireUser } from "@maza/auth/server"
@@ -11,23 +14,23 @@ import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallba
 
 export const dynamic = "force-dynamic"
 
-// Mesmo range com dado real carregado nesta fase — ver dre/divergencias/page.tsx.
-const COMPETENCIAS = ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"] as const
+
+
 
 type SearchParams = Promise<{ competencia?: string }>
 
 export default async function AprovacoesPage({ searchParams }: { searchParams: SearchParams }) {
-  await requireUser()
-  const sp = await searchParams
+  const [, sp, { unit, cookiePresente }] = await Promise.all([requireUser(), searchParams, getCurrentUnitComOrigem()])
+
+  const COMPETENCIAS = competenciasDisponiveis(sp.competencia);
 
   // Unidade é contexto global (cookie do shell) — não um seletor local.
-  const { unit, cookiePresente } = await getCurrentUnitComOrigem()
   const unitId = unit?.id ?? null
   const unitNome = unit?.name ?? "—"
   const unitTag: UnidadeTag = unitId === YOSHIMORI_UNIT_ID ? "yoshimori" : "iky_delivery"
   const competencia = sp.competencia && (COMPETENCIAS as readonly string[]).includes(sp.competencia)
     ? sp.competencia
-    : COMPETENCIAS[COMPETENCIAS.length - 1]!
+    : await ultimaCompetencia(unitId)
 
   const href = (competenciaVal: string) => {
     const params = new URLSearchParams()
@@ -42,7 +45,6 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
     border: "1px solid var(--border)",
   })
 
-  const dados = unitId ? await getConferencia(unitId, unitNome, unitTag, competencia) : null
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -65,7 +67,7 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {COMPETENCIAS.map((c) => (
-              <Link key={c} href={href(c)} style={linkStyle(c === competencia)}>
+              <Link key={c} prefetch={false} href={href(c)} style={linkStyle(c === competencia)}>
                 {competenciaLabel(c)}
               </Link>
             ))}
@@ -73,14 +75,15 @@ export default async function AprovacoesPage({ searchParams }: { searchParams: S
         </div>
       </header>
 
-      {!dados || !unitId ? (
-        <div style={{ padding: 48, textAlign: "center", background: "var(--surface)",
-          border: "1px dashed var(--border)", borderRadius: 14, color: "var(--text-3)", fontSize: 13 }}>
-          Erro ao carregar conferência — sem conexão com o banco.
-        </div>
-      ) : (
-        <ConferenciaPainel unitId={unitId} competencia={competencia} ativos={dados.ativos} conferidos={dados.conferidos} />
-      )}
+      <Suspense key={`${unitId}-${competencia}`} fallback={<div className="maza-panel" role="status" style={{ padding: 24 }}>Calculando os alertas desta unidade e período…</div>}>
+        <ResultadoConferencia unitId={unitId} unitNome={unitNome} unitTag={unitTag} competencia={competencia} />
+      </Suspense>
     </div>
   )
+}
+
+async function ResultadoConferencia({ unitId, unitNome, unitTag, competencia }: { unitId: string | null; unitNome: string; unitTag: UnidadeTag; competencia: string }) {
+  const dados = unitId ? await getConferencia(unitId, unitNome, unitTag, competencia) : null;
+  if (!dados || !unitId) return <div className="maza-panel" style={{ padding: 24 }}>Não foi possível carregar a conferência.</div>;
+  return <ConferenciaPainel unitId={unitId} competencia={competencia} ativos={dados.ativos} conferidos={dados.conferidos} />;
 }

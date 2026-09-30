@@ -38,7 +38,7 @@ export type ProdutoRow = {
   ano_lancamento: number
 }
 
-export async function NfeProdutosPage({ searchParams, direcao }: {
+async function NfeProdutosPage({ searchParams, direcao }: {
   searchParams: NfeSearchParams
   direcao: "entrada" | "saida"
 }) {
@@ -61,40 +61,6 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
   const uq = (qb: any) => unitId ? qb.eq("unit_id", unitId) : qb
 
 
-  const baseProdutosQuery = () => {
-    const query = uq(db.from("produtos_relatorio").select("*"))
-      .eq("mes_lancamento", mes)
-      .eq("ano_lancamento", ano)
-      .order("id")
-    return direcao === "entrada"
-      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
-      : query.eq("direcao_nfe", "saida")
-  }
-
-  // chave_nfe IS NOT NULL = veio de XML; chave_nfe IS NULL = veio de planilha/Excel.
-  const rows = await fetchAll((from, to) =>
-    baseProdutosQuery().not("chave_nfe", "is", null).range(from, to)
-  )
-  const rowsPlanilha = direcao === "entrada"
-    ? await fetchAll((from, to) => baseProdutosQuery().is("chave_nfe", null).range(from, to))
-    : []
-
-  // Previous month for MoM comparison
-  const prevMes = mes === 1 ? 12 : mes - 1
-  const prevAno = mes === 1 ? ano - 1 : ano
-  const prevRows = await fetchAll((from, to) => {
-    let query = uq(db.from("produtos_relatorio")
-      .select("id,v_custo_total,calcula_cmv,desc_gerencial"))
-      .eq("mes_lancamento", prevMes)
-      .eq("ano_lancamento", prevAno)
-      .not("chave_nfe", "is", null)
-      .order("id")
-    query = direcao === "entrada"
-      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
-      : query.eq("direcao_nfe", "saida")
-    return query.range(from, to)
-  })
-
   // Available months for this direction only.
   const mesesData = await fetchAll<{ mes_lancamento: number; ano_lancamento: number }>((from, to) => {
     let query = uq(db.from("produtos_relatorio")
@@ -114,22 +80,6 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
     a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes
   )
 
-  // Para saída, o indicador deve usar o valor fiscal total das notas (vNF).
-  // Somar itens pode divergir por impostos/frete e antes ainda era truncado.
-  const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01T00:00:00.000Z`
-  const proximoMes = new Date(Date.UTC(ano, mes, 1)).toISOString()
-  const documentos = await fetchAll<{ valor_total: number | null }>((from, to) => uq(db.from("nfe_documentos")
-    .select("id,valor_total")
-    .eq("direcao", direcao)
-    .eq("cancelada", false)
-    .gte("emissao", inicioMes)
-    .lt("emissao", proximoMes)
-    .order("id")
-    .range(from, to)))
-  const totalDocumentos = documentos.reduce(
-    (sum, row) => sum + Number(row.valor_total ?? 0), 0
-  )
-
   const mesDisponivel = meses.some(m => m.mes === mes && m.ano === ano)
   if (!mesDisponivel && meses.length > 0) {
     const ultimo = meses[meses.length - 1]!
@@ -140,6 +90,79 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
     const pathname = direcao === "entrada" ? "/financeiro/dre/cmv" : "/financeiro/dre/nfe-saida"
     redirect(`${pathname}?${params.toString()}`)
   }
+
+
+  const baseProdutosQuery = () => {
+    const query = uq(db.from("produtos_relatorio").select("*"))
+      .eq("mes_lancamento", mes)
+      .eq("ano_lancamento", ano)
+      .order("id")
+    return direcao === "entrada"
+      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+      : query.eq("direcao_nfe", "saida")
+  }
+
+  // chave_nfe IS NOT NULL = veio de XML; chave_nfe IS NULL = veio de planilha/Excel.
+  const rowsPromise = fetchAll((from, to) =>
+    baseProdutosQuery().not("chave_nfe", "is", null).range(from, to)
+  )
+  const rowsPlanilhaPromise = direcao === "entrada"
+    ? fetchAll((from, to) => baseProdutosQuery().is("chave_nfe", null).range(from, to))
+    : []
+
+  // Previous month for MoM comparison
+  const prevMes = mes === 1 ? 12 : mes - 1
+  const prevAno = mes === 1 ? ano - 1 : ano
+  const prevRowsPromise = fetchAll((from, to) => {
+    let query = uq(db.from("produtos_relatorio")
+      .select("id,v_custo_total,calcula_cmv,desc_gerencial"))
+      .eq("mes_lancamento", prevMes)
+      .eq("ano_lancamento", prevAno)
+      .not("chave_nfe", "is", null)
+      .order("id")
+    query = direcao === "entrada"
+      ? query.or("direcao_nfe.eq.entrada,direcao_nfe.is.null")
+      : query.eq("direcao_nfe", "saida")
+    return query.range(from, to)
+  })
+
+  // Para saída, o indicador deve usar o valor fiscal total das notas (vNF).
+  // Somar itens pode divergir por impostos/frete e antes ainda era truncado.
+  const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01T00:00:00.000Z`
+  const proximoMes = new Date(Date.UTC(ano, mes, 1)).toISOString()
+  // Seleciona os dias da unidade/mês e soma os pagamentos efetivamente recebidos.
+  const receitasPromise = direcao === "entrada" && unitId
+    ? fetchAll<{ id: string }>((from, to) =>
+      db.from("receita_dias").select("id")
+        .eq("unit_id", unitId)
+        .gte("data", inicioMes.slice(0, 10)).lt("data", proximoMes.slice(0, 10))
+        .order("id").range(from, to))
+    : []
+  const documentosPromise = fetchAll<{ valor_total: number | null }>((from, to) => uq(db.from("nfe_documentos")
+    .select("id,valor_total")
+    .eq("direcao", direcao)
+    .eq("cancelada", false)
+    .gte("emissao", inicioMes)
+    .lt("emissao", proximoMes)
+    .order("id")
+    .range(from, to)))
+  const [rows, rowsPlanilha, prevRows, receitas, documentos] = await Promise.all([
+    rowsPromise, rowsPlanilhaPromise, prevRowsPromise, receitasPromise, documentosPromise,
+  ])
+  const pagamentos: { valor_recebido: number | null }[] = []
+  for (let i = 0; i < receitas.length; i += 100) {
+    pagamentos.push(...await fetchAll<{ valor_recebido: number | null }>((from, to) =>
+      db.from("receita_pagamentos").select("workday_id_fk,forma,valor_recebido")
+        .in("workday_id_fk", receitas.slice(i, i + 100).map(row => row.id))
+        .order("workday_id_fk").order("forma").range(from, to)))
+  }
+  const recebido = pagamentos.length > 0
+    ? pagamentos.reduce((sum, row) => sum + Math.round(Number(row.valor_recebido ?? 0) * 100), 0) / 100
+    : null
+  const totalDocumentos = documentos.reduce(
+    (sum, row) => sum + Number(row.valor_total ?? 0), 0
+  )
+
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -164,6 +187,7 @@ export async function NfeProdutosPage({ searchParams, direcao }: {
         q={q}
         direcao={direcao}
         totalDocumentos={totalDocumentos}
+        recebido={recebido}
       />
     </div>
   )

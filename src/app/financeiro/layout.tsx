@@ -1,9 +1,6 @@
-import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 import { AuthProvider } from "@maza/auth/context";
 import { requireUser } from "@maza/auth/server";
-import { getCurrentUnit } from "@maza/auth/unit";
-import {  createSupabaseServerClient } from "@maza/db/supabase/server";
-import type { Unit } from "@maza/db/types/database";
+import { getAccessibleUnits, getCurrentUnit } from "@maza/auth/unit";
 import { Sidebar } from "@maza/ui/sidebar";
 import { fetchNavConfig } from "@maza/ui/nav/fetchNavConfig";
 
@@ -14,16 +11,15 @@ export const dynamic = "force-dynamic";
 export default async function FinanceiroLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const user = await requireUser();
-  const [units, hasRegisteredUnits, navConfig, currentUnit] = await Promise.all([
-    loadAccessibleUnits(),
-    hasAnyActiveUnit(),
+  const [user, units, navConfig, currentUnit] = await Promise.all([
+    requireUser(),
+    getAccessibleUnits(),
     fetchNavConfig(),
     getCurrentUnit(),
   ]);
 
   return (
-    <AuthProvider user={user} units={units} hasRegisteredUnits={hasRegisteredUnits} initialUnitId={currentUnit?.id}>
+    <AuthProvider user={user} units={units} hasRegisteredUnits={units.length > 0} initialUnitId={currentUnit?.id}>
       <div className="maza-workspace">
         <a className="maza-skip-link" href="#conteudo">Pular para o conteúdo</a>
         <Sidebar navGroups={navConfig.groups} shellUrl={navConfig.shellUrl} navOffline={navConfig.offline} />
@@ -36,27 +32,4 @@ export default async function FinanceiroLayout({
       </div>
     </AuthProvider>
   );
-}
-
-async function hasAnyActiveUnit(): Promise<boolean> {
-  const service = await createFinanceiroClient();
-  if (!service) return false;
-  const { count, error } = await service.from("units").select("id", { count: "exact", head: true }).eq("active", true);
-  return !error && (count ?? 0) > 0;
-}
-
-async function loadAccessibleUnits(): Promise<Unit[]> {
-  try {
-    const supabase = await createSupabaseServerClient();
-    if (!supabase) return [];
-    const { data, error } = await supabase
-      .from("units")
-      .select("*")
-      .eq("active", true)
-      .order("name");
-    if (error) return [];
-    return data ?? [];
-  } catch {
-    return [];
-  }
 }

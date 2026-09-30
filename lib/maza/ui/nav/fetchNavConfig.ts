@@ -1,3 +1,4 @@
+import { visibleFinanceiroGroups } from "./visible"
 import type { NavConfigResponse, RemoteNavGroup, RemoteNavItem } from "./types"
 
 // Config mínimo local — só as rotas de /financeiro que esta zona conhece e
@@ -33,7 +34,7 @@ const FALLBACK_GROUPS: RemoteNavGroup[] = [
   },
 ]
 
-const SHELL_URL_FALLBACK = "https://maza.vercel.app"
+const SHELL_URL_FALLBACK = "https://maza-maza.vercel.app"
 const FETCH_TIMEOUT_MS = 3000
 
 function isHttpUrl(value: string): boolean {
@@ -112,7 +113,7 @@ async function fetchFromShell(base: string): Promise<NavConfig> {
   const data: unknown = await res.json()
   if (!isValidNavConfigResponse(data)) throw new Error("/api/nav respondeu payload em formato inesperado")
   return {
-    groups: data.groups,
+    groups: visibleFinanceiroGroups(data.groups),
     shellUrl: sanitizeShellUrl(data.shellUrl, base),
     offline: false,
   }
@@ -134,6 +135,6 @@ export async function fetchNavConfig(): Promise<NavConfig> {
     return await fetchFromShell(base)
   } catch (error) {
     console.error("[nav] Falha ao buscar /api/nav do shell — usando menu local mínimo.", error)
-    return { groups: FALLBACK_GROUPS, shellUrl: base, offline: true }
+    return { groups: visibleFinanceiroGroups(FALLBACK_GROUPS), shellUrl: base, offline: true }
   }
 }

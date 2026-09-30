@@ -23,6 +23,13 @@ export async function calcularAlertaCustoUnitarioAnomalo(db: Db, unitId: string,
   const ano = Number(competencia.slice(0, 4))
   const mes = Number(competencia.slice(5, 7))
 
+  const deparaRows = await fetchAllPaginado((from, to) =>
+    db.from("produtos_depara").select("fornecedor_cnpj,item_codigo,produto_id").range(from, to)
+  ) as Array<{ fornecedor_cnpj: string; item_codigo: string; produto_id: string | null }>
+  const produtoIdPorPar = new Map(deparaRows.filter((d) => d.produto_id).map((d) => [`${d.fornecedor_cnpj}|${d.item_codigo}`, d.produto_id!]))
+
+  if (produtoIdPorPar.size === 0) return null
+
   const linhas = await fetchAllPaginado((from, to) =>
     db.from("produtos_relatorio")
       .select("unit_id,fornecedor_codigo,item_codigo,item_descricao,v_custo_compra,v_total_danfe,chave_nfe,nr_danfe,mes_lancamento,ano_lancamento")
@@ -36,10 +43,6 @@ export async function calcularAlertaCustoUnitarioAnomalo(db: Db, unitId: string,
   }>
   const validas = linhas.filter((l) => !ehBonificacao(l.v_total_danfe))
 
-  const deparaRows = await fetchAllPaginado((from, to) =>
-    db.from("produtos_depara").select("fornecedor_cnpj,item_codigo,produto_id").range(from, to)
-  ) as Array<{ fornecedor_cnpj: string; item_codigo: string; produto_id: string | null }>
-  const produtoIdPorPar = new Map(deparaRows.filter((d) => d.produto_id).map((d) => [`${d.fornecedor_cnpj}|${d.item_codigo}`, d.produto_id!]))
 
   const somaPorProduto = new Map<string, { soma: number; qtd: number }>()
   for (const l of validas) {

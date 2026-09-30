@@ -136,7 +136,7 @@ export function AnaliseTab({ unitId, onSelecionarNota }: Props) {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       {/* ── Topo: maiores altas, maiores quedas, KPIs ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%, 300px),1fr))", gap: 12 }}>
         <TopoCard title="Maiores altas" icon="▲" cor="#EF4444"
           itens={maioresAltas} selId={selId} onSelect={setSelId} vazio="Nenhum produto subiu de preço na última compra." />
         <TopoCard title="Maiores quedas" icon="▼" cor="#22C55E"
@@ -242,7 +242,7 @@ function TopoCard({ title, icon, cor, itens, selId, onSelect, vazio }: {
   itens: ProdutoEvolucao[]; selId: string | null; onSelect: (id: string) => void; vazio: string
 }) {
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 16px" }}>
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 16px", minWidth: 0 }}>
       <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase",
         color: "var(--text-3)", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ color: cor }}>{icon}</span> {title}
@@ -250,7 +250,7 @@ function TopoCard({ title, icon, cor, itens, selId, onSelect, vazio }: {
       {itens.length === 0 ? (
         <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>{vazio}</p>
       ) : (
-        <div style={{ display: "grid", gap: 2 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2 }}>
           {itens.map((p, i) => {
             const active = p.produtoId === selId
             return (
@@ -258,15 +258,15 @@ function TopoCard({ title, icon, cor, itens, selId, onSelect, vazio }: {
                 onMouseEnter={e => { e.currentTarget.style.background = "var(--surface-2)" }}
                 onMouseLeave={e => { e.currentTarget.style.background = active ? "var(--surface-2)" : "transparent" }}
                 style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                  display: "grid", gridTemplateColumns: "minmax(0, 1fr) max-content", alignItems: "center", gap: 8, width: "100%", minWidth: 0,
                   padding: "5px 6px", borderRadius: 6, border: "none",
                   background: active ? "var(--surface-2)" : "transparent",
                   cursor: "pointer", textAlign: "left",
                 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-3)", width: 14 }}>{i + 1}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-3)", width: 14, flexShrink: 0 }}>{i + 1}</span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 12, color: "var(--text)", overflow: "hidden",
+                    <span title={p.nome} style={{ display: "block", fontSize: 12, color: "var(--text)", overflow: "hidden",
                       textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {p.nome}
                     </span>

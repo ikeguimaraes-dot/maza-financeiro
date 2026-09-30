@@ -1,3 +1,4 @@
+import { saldoTitulo, type Pagamento } from "./pagamentos"
 import { competenciaTitulo, hojeSaoPaulo } from "@/lib/financeiro/dates"
 // Lógica pura da tela de Contas a Pagar — lê titulos_a_pagar diretamente.
 // ref_mes é coluna legada do clone (nunca populada pelo pipeline atual) —
@@ -27,6 +28,10 @@ export type ReconciliacaoInfo = { status: string; chaveNfe: string } | null
 
 export type TituloPagar = {
   id: string
+  unitId: string
+  saldo: number
+  duplicidade: boolean
+  pagamentos: Pagamento[]
   fornecedor: string | null
   categoria: string | null
   nNota: string | null
@@ -85,24 +90,28 @@ export async function calcularPagar(
   db: Db,
   unitId: string,
   competencia: string,
-  origem: OrigemTitulo
+  origem: OrigemTitulo,
+  visao: "competencia" | "vencimento" = "competencia"
 ): Promise<PagarResultado> {
-  const todosOsTitulos = await fetchAllPaginado((from, to) =>
+  const pagamentosPromise = fetchAllPaginado((from, to) => db.from("titulo_pagamentos").select("id,titulo_id,data,valor,comprovante,estornado_em").eq("unit_id", unitId).range(from, to)) as Promise<Pagamento[]>;
+  const titulosPromise = fetchAllPaginado((from, to) =>
     db.from("titulos_a_pagar")
       .select("id,fantasia_fornecedor,razao_fornecedor,c_gerencial,descricao_c_gerencial,n_nota_fiscal,parcela,v_titulo,d_lancamento,d_vencimento,d_competencia,liquidacao_origem")
       .eq("unit_id", unitId)
       .eq("origem", origem)
       .range(from, to)
-  ) as Array<{
+  ) as Promise<Array<{
     id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
     c_gerencial: string | null; descricao_c_gerencial: string | null
     n_nota_fiscal: string | null; parcela: string | null; v_titulo: number | null
     d_lancamento: string | null; d_vencimento: string | null; d_competencia: string | null
     liquidacao_origem: string | null
-  }>
+  }>>
+
+  const [todosOsTitulos, pagamentos] = await Promise.all([titulosPromise, pagamentosPromise])
 
   const hojeIso = hojeSaoPaulo()
-  const doMes = todosOsTitulos.filter((t) => competenciaTitulo(t) === competencia)
+  const doMes = todosOsTitulos.filter((t) => (visao === "vencimento" ? t.d_vencimento?.slice(0, 7) : competenciaTitulo(t)?.slice(0, 7)) === competencia.slice(0, 7))
   const semCompetenciaTitulos = todosOsTitulos.filter((t) => competenciaTitulo(t) === null)
 
   const ids = doMes.map((t) => t.id)
@@ -132,8 +141,18 @@ export async function calcularPagar(
     if (!contaPorCategoria.has(chave)) contaPorCategoria.set(chave, r.conta_codigo)
   }
 
+
+  const pagamentosPorTitulo = new Map<string, Pagamento[]>();
+  for (const p of pagamentos) pagamentosPorTitulo.set(p.titulo_id, [...pagamentosPorTitulo.get(p.titulo_id) ?? [], p]);
+  const identidade = (t: typeof doMes[number]) => t.n_nota_fiscal ? JSON.stringify([t.n_nota_fiscal, (t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").trim().toUpperCase(), t.parcela, t.d_lancamento, t.d_vencimento]) : null;
+  const identidades = new Map<string, number>();
+  for (const t of todosOsTitulos) { const key = identidade(t); if (key) identidades.set(key, (identidades.get(key) ?? 0) + 1); }
   const titulos: TituloPagar[] = doMes.map((t) => ({
     id: t.id,
+    unitId,
+    duplicidade: (identidades.get(identidade(t) ?? "") ?? 0) > 1,
+    saldo: saldoTitulo(Number(t.v_titulo ?? 0), t.liquidacao_origem, pagamentosPorTitulo.get(t.id) ?? []).saldo,
+    pagamentos: pagamentosPorTitulo.get(t.id) ?? [],
     fornecedor: t.fantasia_fornecedor ?? t.razao_fornecedor,
     categoria: t.descricao_c_gerencial ?? t.c_gerencial,
     nNota: t.n_nota_fiscal,
@@ -141,7 +160,7 @@ export async function calcularPagar(
     entrada: t.d_lancamento,
     vencimento: t.d_vencimento,
     valor: round2(Math.abs(Number(t.v_titulo ?? 0))),
-    situacao: classificarSituacao(t.d_vencimento, t.liquidacao_origem, hojeIso),
+    situacao: classificarSituacao(t.d_vencimento, pagamentosPorTitulo.has(t.id) ? (saldoTitulo(Number(t.v_titulo ?? 0), t.liquidacao_origem, pagamentosPorTitulo.get(t.id)!).saldo === 0 ? "OK" : "ABERTO") : t.liquidacao_origem, hojeIso),
     liquidacaoOrigem: t.liquidacao_origem,
     contaRazao: contaPorTituloId.get(t.id) ?? null,
     reconciliacao: reconciliacaoPorTituloId.get(t.id) ?? null,
@@ -151,11 +170,11 @@ export async function calcularPagar(
   const cards: CardsPagar = { totalMes: 0, pago: 0, vencido: 0, aVencer: 0, semConfirmacao: 0, semDataVencimento: 0 }
   for (const t of titulos) {
     cards.totalMes += t.valor
-    if (t.situacao === "pago") cards.pago += t.valor
-    else if (t.situacao === "vencido") cards.vencido += t.valor
-    else if (t.situacao === "a_vencer") cards.aVencer += t.valor
-    else if (t.situacao === "sem_confirmacao") cards.semConfirmacao += t.valor
-    else if (t.situacao === "sem_data") cards.semDataVencimento += t.valor
+    cards.pago += t.valor - t.saldo
+    if (t.situacao === "vencido") cards.vencido += t.saldo
+    else if (t.situacao === "a_vencer") cards.aVencer += t.saldo
+    else if (t.situacao === "sem_confirmacao") cards.semConfirmacao += t.saldo
+    else if (t.situacao === "sem_data") cards.semDataVencimento += t.saldo
   }
   cards.totalMes = round2(cards.totalMes)
   cards.pago = round2(cards.pago)

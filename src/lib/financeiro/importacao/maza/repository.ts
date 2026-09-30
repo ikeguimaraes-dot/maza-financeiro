@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { createFinanceiroClient } from "@/lib/financeiro/db/client"
 import { applyBatch, replacement, type Mutation } from "@/lib/financeiro/db/atomic"
 import { importarLinhasCompra } from "../compras/importarCompras"
+import { refreshUnits } from "@/lib/financeiro/razao/refresh"
 import { normalizarCategoria } from "../compras/normalizarCategoria"
 import type { MazaBatchPreview, NfEntradaRow, ContaPagarRow, ReceitaCaixaRow } from "./types"
 
@@ -27,7 +28,10 @@ export async function persistMazaArchive(input: {
   const operations: Mutation[] = []
   // Reuse the canonical purchase pipeline, but collect its transaction together
   // with the audit record. Re-uploading an older file intentionally restores it.
-  const collector = { rpc: async (_name: string, args: { p_operations: Mutation[] }) => { operations.push(...args.p_operations); return { error: null } } }
+  let titulosIncrementais: Record<string, unknown>[] = [];
+  const collector = { rpc: async (_name: string, args: { p_rows: Record<string, unknown>[] }) => {
+    titulosIncrementais = args.p_rows.map(row => ({ ...row, importacao_id: id })); return { error: null };
+  } };
   if (input.preview.kind === "nf_entrada" || input.preview.kind === "contas_pagar") {
     const compras = input.preview.kind === "nf_entrada"
     const linhas = compras
@@ -66,6 +70,10 @@ export async function persistMazaArchive(input: {
     registros: input.preview.records.length, totais: input.preview.totals, avisos: input.preview.warnings,
     status: "concluido", criado_por: input.userId, concluido_em: new Date().toISOString(), erro: null,
   }] })
-  await applyBatch(db, operations)
+  if (titulosIncrementais.length) {
+    const { error } = await db.rpc("financeiro_importar_titulos", { p_rows: titulosIncrementais, p_operations: operations });
+    if (error) throw new Error(error.message);
+  } else await applyBatch(db, operations);
+  if (input.preview.kind === "nf_entrada" || input.preview.kind === "contas_pagar") await refreshUnits(db, [input.unitId, "674eac8c-5a38-4a42-aa60-0a666387909b"]);
   return { ok: true, duplicate: false, imported: input.preview.records.length, importId: id }
 }

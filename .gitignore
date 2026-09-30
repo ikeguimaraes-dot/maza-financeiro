@@ -25,3 +25,6 @@ npm-debug.log*
 .vercel
 .env*
 tests/fixtures/
+
+# Generated reports, spreadsheets and local inspection artifacts
+outputs/

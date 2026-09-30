@@ -16,6 +16,7 @@ import { AnaliseTab } from "./AnaliseTab"
 import { ARevisarTab, BonificacaoTab, FornecedorTab } from "./ProdutosExtraTabs"
 import { CatalogoTab } from "./CatalogoTab"
 import { ProdutoTab } from "./ProdutoTab"
+import { calcularCmvCasa } from "@/lib/financeiro/cmv-casa"
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v: number | null | undefined) =>
@@ -58,12 +59,13 @@ type Props = {
   q?: string
   direcao: "entrada" | "saida"
   totalDocumentos: number
+  recebido: number | null
 }
 
 const PAGE_SIZE = 50
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos }: Props) {
+export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, unitId, q = "", direcao, totalDocumentos, recebido }: Props) {
   const router = useRouter()
   const [tab, setTab] = useState<"tabela" | "ranking" | "cmv" | "analise" | "bonificacao" | "fornecedor" | "arevisar" | "planilha" | "catalogo" | "produto">(direcao === "entrada" ? "analise" : "tabela")
   const [showImport, setShowImport] = useState(false)
@@ -235,10 +237,11 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
   function handleFilterChangePlanilha() { setPagePlanilha(0) }
 
   // ── CMV data ────────────────────────────────────────────────────────────────
-  const cmvRows = useMemo(() => rows.filter(r => r.calcula_cmv === true), [rows])
-  const totalCmv     = cmvRows.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0)
-  const prevCmvRows = useMemo(() => prevRows.filter(r => r.calcula_cmv === true), [prevRows])
-  const prevTotalCmv = prevCmvRows.reduce((s, r) => s + Math.abs(r.v_custo_total ?? 0), 0)
+  // Regra aprovada: todas as compras da base de NF-e, inclusive sem categoria.
+  const cmvRows = rows
+  const { total: totalCmv, percentual: cmvPercentual, imposto, gorjeta, baseReceita } = calcularCmvCasa(cmvRows, recebido)
+  const prevCmvRows = prevRows
+  const prevTotalCmv = calcularCmvCasa(prevCmvRows, null).total
   const cmvVarPct    = prevTotalCmv > 0 ? (totalCmv - prevTotalCmv) / prevTotalCmv * 100 : null
 
   const cmvByCat = (() => {
@@ -817,13 +820,29 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
       {/* ── CMV tab ── */}
       {hasData && tab === "cmv" && (
         <div style={{ display:"grid", gap:24 }}>
+          <div style={{ background:"var(--surface)", border:"1px solid var(--border)", borderRadius:10, padding:"16px 20px", color:"var(--text-3)", fontSize:12, lineHeight:1.6 }}>
+            <strong style={{ color:"var(--text)" }}>CMV da casa — compras consumidas no mês</strong><br />
+            Estoque inicial e final considerados zerados. Todas as compras de NF-e de entrada deste mês entram no CMV, inclusive sem classificação. Folha não incluída.<br />
+            CMV (%) = compras ÷ (recebido − 10% do recebido (imposto) − 7% do recebido (gorjeta)) × 100.<br />
+            As duas deduções são percentuais fixos sobre o recebido da mesma unidade e mês.
+            {recebido != null && <p style={{ margin:"8px 0 0" }}>
+              Recebido: {fmtBRL(recebido)} − Imposto (10%): {fmtBRL(imposto)} − Gorjeta (7%): {fmtBRL(gorjeta)} = <strong style={{ color:"var(--text)" }}>Base do CMV: {fmtBRL(baseReceita)}</strong>
+            </p>}
+            {rowsPlanilha.length > 0 && <p style={{ margin:"8px 0 0" }}>Base atual: notas em XML. As compras da aba Planilha ainda precisam ser conciliadas com as notas para incluir compras adicionais sem duplicidade.</p>}
+          </div>
           {/* KPIs */}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12 }}>
             {[
               {
-                label:"Total CMV do Mês",
-                value: fmtBRLc(totalCmv),
+                label:"CMV da casa",
+                value: fmtBRL(totalCmv),
                 sub: mesLabel(mes, ano),
+                color: undefined,
+              },
+              {
+                label:"CMV / recebido ajustado",
+                value: cmvPercentual == null ? "—" : `${cmvPercentual.toFixed(2).replace(".", ",")}%`,
+                sub: recebido == null ? "Sem recebimentos cadastrados no mês" : baseReceita == null || baseReceita <= 0 ? "Sem base de receita positiva" : `Base após imposto e gorjeta: ${fmtBRL(baseReceita)}`,
                 color: undefined,
               },
               {
@@ -868,7 +887,7 @@ export function ProdutosClient({ rows, rowsPlanilha, prevRows, mes, ano, meses, 
                   </p>
                   {top10Chart[0]!.fullName.startsWith("NF-e sem classifica") && (
                     <p style={{ fontSize:11,color:"var(--text-3)",margin:"5px 0 0" }}>
-                      Classifique os itens para visualizar a distribuição por categoria.
+                      Este valor já compõe o CMV da casa. A classificação serve para detalhar a distribuição por categoria.
                     </p>
                   )}
                 </div>

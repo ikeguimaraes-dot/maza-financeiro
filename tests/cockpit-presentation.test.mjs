@@ -49,3 +49,14 @@ test("minigráficos não ligam meses separados por ausência de dados", () => {
 test("série constante permanece centralizada", () => {
   assert.equal(sparklinePaths([10, 10, 10])[0], "M2.0,16.0 L50.0,16.0 L98.0,16.0");
 });
+
+test("CMV empresa divide compras e mão de obra pelo faturamento bruto", () => {
+  const row = { ...complete, receita_bruta: 1000, receita_liquida: 800, cmv_compras: 300, mao_de_obra: 200 };
+  assert.equal(metricPresentation(row, "cmv_empresa_pct").value, .5);
+  assert.equal(metricPresentation({ ...row, receita_bruta: 0 }, "cmv_empresa_pct").value, null);
+  assert.equal(metricPresentation({ ...row, tem_folha: false }, "cmv_empresa_pct").value, null);
+  assert.equal(metricPresentation({ ...row, cmv_compras: null }, "cmv_empresa_pct").value, null);
+  assert.equal(metricPresentation({ ...row, cmv_compras: 0, mao_de_obra: 0 }, "cmv_empresa_pct").value, 0);
+  assert.equal(metricDelta("cmv_empresa_pct", .5, .6).unit, "p.p.");
+  assert.equal(metricDelta("cmv_empresa_pct", .5, .6).tone, "success");
+});

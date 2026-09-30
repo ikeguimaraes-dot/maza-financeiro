@@ -19,8 +19,8 @@ const selectStyle: React.CSSProperties = { padding: "7px 10px", borderRadius: 8,
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const MESES_LONG = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
-type Conta = { conta: string; esperada_mensal: boolean; meses: Record<string, number>; total: number };
-type Resp = { linha: string; ano: number; empresa: string | null; meses: string[]; contas: Conta[]; esperadas: string[]; total: number; meses_com_dados: string[]; ultimo_mes_unidade: string | null };
+type Conta = { pagamentos_confirmados?: Record<string, boolean>; conta: string; esperada_mensal: boolean; meses: Record<string, number>; total: number };
+type Resp = { fonte_planilha?: boolean; observacao?: string; pendente?: boolean; base_recebido?: Record<string, number>; linha: string; ano: number; empresa: string | null; meses: string[]; contas: Conta[]; esperadas: string[]; total: number; meses_com_dados: string[]; ultimo_mes_unidade: string | null };
 
 export function LinhaDrePage({ linha }: { linha: string }) {
   const { unit } = useUnit();
@@ -33,13 +33,16 @@ export function LinhaDrePage({ linha }: { linha: string }) {
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!unit?.id) return;
     let vivo = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
     (async () => {
       setLoading(true); setErro(null);
       try {
         const params = new URLSearchParams({ linha, ano: String(ano) });
         if (unit?.id) params.set("unidade", unit.id);
-        const r = await fetch(`${API_BASE}/api/dre/linha-detalhe?${params}`);
+        const r = await fetch(`${API_BASE}/api/dre/linha-detalhe?${params}`, { signal: controller.signal });
         const j = (await r.json()) as Resp & { error?: string };
         if (!vivo) return;
         if (!r.ok) { setErro(j.error ?? `HTTP ${r.status}`); return; }
@@ -62,29 +65,31 @@ export function LinhaDrePage({ linha }: { linha: string }) {
           }
         }
       } catch (e) { if (vivo) setErro(String(e)); }
-      finally { if (vivo) setLoading(false); }
+      finally { clearTimeout(timeout); if (vivo) setLoading(false); }
     })();
-    return () => { vivo = false; };
+    return () => { vivo = false; clearTimeout(timeout); controller.abort(); };
   }, [linha, ano, unit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refMes = (m: number) => `${ano}-${String(m).padStart(2, "0")}-01`;
   const mesRef = refMes(mes);
   const mesAntRef = mes > 1 ? refMes(mes - 1) : null;
 
+  const mostrarTotalAnual = linha === "Impostos" || linha === "Despesas Financeiras";
+
   // SEÇÃO 1 — detalhe do mês selecionado
   const detalheMes = useMemo(() => {
-    if (!data) return { linhas: [] as { conta: string; valor: number; esperada: boolean; falta: boolean }[], total: 0, totalAnt: 0, faltando: 0 };
+    if (!data) return { linhas: [] as { conta: string; valor: number; esperada: boolean; falta: boolean; pago?: boolean }[], total: 0, totalAnt: 0, faltando: 0 };
     const linhasMes = data.contas.map((c) => {
       const valor = c.meses[mesRef] ?? 0;
       const falta = c.esperada_mensal && valor === 0;
-      return { conta: c.conta, valor, esperada: c.esperada_mensal, falta };
-    }).filter((x) => x.valor > 0 || x.esperada) // mostra quem tem valor + esperadas (mesmo zeradas)
+      return { conta: c.conta, valor, esperada: c.esperada_mensal, falta, pago: c.pagamentos_confirmados?.[mesRef] };
+    }).filter((x) => x.valor !== 0 || x.esperada || linha === "Manutenção") // mostra quem tem valor + esperadas (mesmo zeradas)
       .sort((a, b) => (a.falta === b.falta ? b.valor - a.valor : a.falta ? 1 : -1));
     const total = data.contas.reduce((s, c) => s + (c.meses[mesRef] ?? 0), 0);
     const totalAnt = mesAntRef ? data.contas.reduce((s, c) => s + (c.meses[mesAntRef] ?? 0), 0) : 0;
     const faltando = linhasMes.filter((x) => x.falta).length;
     return { linhas: linhasMes, total, totalAnt, faltando };
-  }, [data, mesRef, mesAntRef]);
+  }, [data, mesRef, mesAntRef, linha]);
 
   const delta = useMemo(() => {
     if (!mesAntRef || detalheMes.totalAnt === 0) return null;
@@ -112,7 +117,7 @@ export function LinhaDrePage({ linha }: { linha: string }) {
       <header style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: -0.6, margin: 0 }}>{linha}</h1>
-          <p style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>{unit?.name ?? "Todas as unidades"} · despesas por competência (regime de caixa)</p>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>{unit?.name ?? "Todas as unidades"} · valores por competência</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <select value={mes} onChange={(e) => setMes(Number(e.target.value))} style={selectStyle}>
@@ -130,19 +135,22 @@ export function LinhaDrePage({ linha }: { linha: string }) {
         <div style={{ textAlign: "center", padding: "50px 0", color: C.alerta, fontSize: 14 }}>Erro: {erro}</div>
       ) : (
         <>
+          {data?.observacao && <p style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,padding:16,fontSize:13,color:C.text2}}>{data.observacao}{data.base_recebido?.[mesRef] != null && <><br />Recebido no mês: {fmt(data.base_recebido[mesRef]!)}</>}</p>}
           {/* SEÇÃO 1 — resumo do mês */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 16 }}>
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 18px" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 }}>{MESES_LONG[mes - 1]} {ano}</div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: C.text, marginTop: 6 }}>{fmt(detalheMes.total)}</div>
-              {delta ? (
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 }}>{mostrarTotalAnual ? `Total de ${linha.toLocaleLowerCase("pt-BR")} · ${ano}` : `${MESES_LONG[mes - 1]} ${ano}`}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: C.text, marginTop: 6 }}>{data?.pendente ? "—" : fmt(mostrarTotalAnual ? matriz.totalAno : detalheMes.total)}</div>
+              {mostrarTotalAnual ? (
+                <div style={{ fontSize: 12, marginTop: 4, color: C.text3 }}>Soma de todas as descrições da tabela anual</div>
+              ) : delta ? (
                 <div style={{ fontSize: 12, marginTop: 4, color: delta.abs > 0 ? C.alerta : C.receita }}>
                   {delta.abs > 0 ? "↑" : "↓"} {fmt(delta.abs)} ({delta.pct > 0 ? "+" : ""}{delta.pct.toFixed(1)}%) vs {MESES[mes - 2]}
                 </div>
               ) : <div style={{ fontSize: 12, marginTop: 4, color: C.text3 }}>{mesAntRef ? "sem base no mês anterior" : "sem mês anterior"}</div>}
             </div>
             <div style={{ background: detalheMes.faltando > 0 ? "rgba(248,113,113,0.06)" : C.surface, border: `1px solid ${detalheMes.faltando > 0 ? "rgba(248,113,113,0.3)" : C.border}`, borderRadius: 10, padding: "16px 18px" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 }}>Contas esperadas faltando</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 }}>{data?.pendente ? "Tributos aguardando configuração" : "Contas esperadas faltando"}</div>
               <div style={{ fontSize: 26, fontWeight: 700, color: detalheMes.faltando > 0 ? C.alerta : C.text, marginTop: 6 }}>{detalheMes.faltando}</div>
               <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>neste mês</div>
             </div>
@@ -170,8 +178,8 @@ export function LinhaDrePage({ linha }: { linha: string }) {
                     <td style={{ padding: "9px 16px", textAlign: "right", color: x.falta ? C.alerta : C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{x.falta ? "—" : fmt(x.valor)}</td>
                     <td style={{ padding: "9px 16px", fontSize: 12 }}>
                       {x.falta
-                        ? <span style={{ color: C.alerta, fontWeight: 600 }}>— falta lançar</span>
-                        : <span style={{ color: C.receita }}>✓{x.esperada ? " esperada" : ""}</span>}
+                        ? <span style={{ color: C.alerta, fontWeight: 600 }}>{data?.pendente ? "Aguardando alíquota" : "— falta lançar"}</span>
+                        : <span style={{ color: data?.fonte_planilha ? C.text3 : C.receita }}>{data?.fonte_planilha ? (x.pago ? "Pagamento confirmado" : "Pagamento não confirmado") : `✓${x.esperada ? " esperada" : ""}`}</span>}
                     </td>
                   </tr>
                 ))}
@@ -179,7 +187,7 @@ export function LinhaDrePage({ linha }: { linha: string }) {
               <tfoot>
                 <tr style={{ background: C.surface2 }}>
                   <td style={{ padding: "10px 16px", fontWeight: 700, color: C.text }}>Total do mês</td>
-                  <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700, color: C.text }}>{fmt(detalheMes.total)}</td>
+                  <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700, color: C.text }}>{data?.pendente ? "—" : fmt(detalheMes.total)}</td>
                   <td />
                 </tr>
               </tfoot>
@@ -207,7 +215,7 @@ export function LinhaDrePage({ linha }: { linha: string }) {
                       {matriz.meses.map((m) => {
                         const v = c.meses[m] ?? 0;
                         const falta = c.esperada_mensal && v === 0;
-                        return <td key={m} style={{ padding: "7px 10px", textAlign: "right", whiteSpace: "nowrap", color: falta ? C.alerta : v > 0 ? C.text2 : C.text3, background: falta ? "rgba(248,113,113,0.07)" : "transparent", fontWeight: falta ? 700 : 400 }}>{falta ? "falta" : v > 0 ? fmtK(v) : "—"}</td>;
+                        return <td key={m} style={{ padding: "7px 10px", textAlign: "right", whiteSpace: "nowrap", color: falta ? C.alerta : v > 0 ? C.text2 : C.text3, background: falta ? "rgba(248,113,113,0.07)" : "transparent", fontWeight: falta ? 700 : 400 }}>{falta ? (data?.pendente ? "pendente" : "falta") : v > 0 ? fmtK(v) : "—"}</td>;
                       })}
                       <td style={{ padding: "7px 12px", textAlign: "right", color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{c.total > 0 ? fmt(c.total) : "—"}</td>
                     </tr>
@@ -218,7 +226,7 @@ export function LinhaDrePage({ linha }: { linha: string }) {
                     <tr style={{ background: C.surface2 }}>
                       <td style={{ padding: "9px 12px", fontWeight: 700, color: C.text, position: "sticky", left: 0, background: C.surface2 }}>Total</td>
                       {matriz.meses.map((m) => <td key={m} style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{matriz.totalPorMes[m] ? fmtK(matriz.totalPorMes[m]!) : "—"}</td>)}
-                      <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{fmt(matriz.totalAno)}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{data?.pendente ? "—" : fmt(matriz.totalAno)}</td>
                     </tr>
                   </tfoot>
                 )}

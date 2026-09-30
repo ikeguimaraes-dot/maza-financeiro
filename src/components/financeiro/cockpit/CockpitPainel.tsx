@@ -10,10 +10,12 @@ import { EvolutionChart } from "./EvolutionChart";
 import { metricDelta, metricPresentation, sparklinePaths } from "./presentation";
 import type { KpiSnapshotRow, DreSnapshotRow, PlanoContaRow, MetaRow, FonteSaudeRow } from "./types";
 import styles from "./cockpit.module.css";
+import type { DespesaResumo } from "./despesa";
 
 export type CockpitProps = {
   unidade: string; competencia: string; janela: string[]; kpiRows: KpiSnapshotRow[];
-  metas: MetaRow[]; dreRows: DreSnapshotRow[]; planoContas: PlanoContaRow[]; fontes: FonteSaudeRow[];
+  metas: MetaRow[]; dreRows: DreSnapshotRow[]; planoContas: PlanoContaRow[]; fontes?: FonteSaudeRow[];
+  despesa: DespesaResumo;
 };
 
 const CARDS = [
@@ -24,10 +26,11 @@ const CARDS = [
   { key: "cmv_compras_pct", label: "CMV de compras", icon: Utensils, format: (v: number) => formatPct(v * 100), tone: "compact" },
   { key: "mo_pct", label: "Mão de obra", icon: Users, format: (v: number) => formatPct(v * 100), tone: "compact" },
   { key: "clientes", label: "Clientes atendidos", icon: Users, format: (v: number) => v.toLocaleString("pt-BR"), tone: "compact" },
+  { key: "cmv_empresa_pct", label: "CMV empresa", icon: Layers, format: (v: number) => formatPct(v * 100), tone: "compact" },
   { key: "ticket_medio", label: "Ticket médio", icon: ReceiptText, format: formatBRL, tone: "compact" },
 ] as const;
 
-export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dreRows, planoContas, fontes }: CockpitProps) {
+export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dreRows, planoContas, fontes, despesa }: CockpitProps) {
   const rows = agruparPorCompetencia(kpiRows, janela, unidade);
   const current = rows.get(competencia) ?? null;
   const previousMonth = janela[janela.indexOf(competencia) - 1];
@@ -46,7 +49,16 @@ export function CockpitPainel({ unidade, competencia, janela, kpiRows, metas, dr
   const unclassified = dreRows.filter((row) => row.conta_codigo === "9.99" && (unidade === "consolidado" || row.unit_id === unidade)).reduce((sum, row) => sum + Number(row.valor), 0);
 
   return <div className={styles.dashboard}>
-    <section className={styles.primaryGrid} aria-label="Principais indicadores">{CARDS.slice(0, 4).map(card)}</section>
+    <section className={styles.primaryGrid} aria-label="Principais indicadores">{CARDS.slice(0, 4).map(card)}
+      <article className={`maza-enter ${styles.metric}`} aria-label="Despesa">
+        <div className={styles.metricHeading}><span>Despesa</span><span className={styles.metricIcon}><ReceiptText size={16} /></span></div>
+        <div className={styles.metricValue}>{despesa.temDados ? formatBRLCompact(despesa.total) : "—"}</div>
+        <p className={styles.metricNote}>Folha Empresa (pagamento + bonificação) + Contas a Pagar</p>
+        <p className={styles.metricNote}>Folha: {formatBRL(despesa.folha)}<br />Contas a Pagar: {formatBRL(despesa.contas)}</p>
+        {despesa.parcial && <p className={styles.partial}>Parcial · {despesa.parcial}</p>}
+        <div className={styles.metricMeta}>Total dos títulos do mês, pagos e em aberto.</div>
+      </article>
+    </section>
     <div className={styles.middleGrid}><EvolutionChart janela={janela} rows={rows} /><CostBreakdown row={current} /></div>
     <section className={styles.secondaryGrid} aria-label="Indicadores operacionais">{CARDS.slice(4).map(card)}</section>
     <div className={styles.bottomGrid}>
@@ -70,6 +82,7 @@ function MetricCard({ definition, presentation, delta, series, meta }: {
   return <article className={`maza-enter ${styles.metric}`} data-tone={definition.tone}>
     <div className={styles.metricHeading}><span>{definition.label}</span><span className={styles.metricIcon}><Icon size={16} strokeWidth={1.7} /></span></div>
     <div className={styles.metricValue}>{presentation.value == null ? "—" : definition.format(presentation.value)}</div>
+    {definition.key === "cmv_empresa_pct" && <p className={styles.metricNote}>(Mercadorias compradas + mão de obra) ÷ faturamento bruto</p>}
     {presentation.missing && <p className={styles.metricNote}>{presentation.missing}</p>}
     {presentation.partial && <p className={styles.partial}>{presentation.partial}</p>}
     <div className={styles.metricBottom}>

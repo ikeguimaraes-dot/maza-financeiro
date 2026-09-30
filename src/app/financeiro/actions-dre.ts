@@ -1,4 +1,5 @@
 "use server";
+import { unitDisplayName } from "@maza/auth/unit-display";
 
 import { createSupabaseServerClient } from "@maza/db/supabase/server";
 
@@ -257,7 +258,7 @@ export async function getUnitsComDre(): Promise<UnitComDre[]> {
       const brand = brandMap.get(u.brand_id);
       return {
         unit_id: u.id,
-        unit_name: u.name,
+        unit_name: unitDisplayName(u),
         brand_id: u.brand_id,
         brand_name: brand?.name ?? "—",
         brand_slug: brand?.slug ?? "",

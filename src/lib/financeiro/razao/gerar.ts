@@ -1,3 +1,4 @@
+import { comprasSemDuplicidade } from "./deduplicar"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { competenciaTitulo } from "@/lib/financeiro/dates"
 import { applyBatch, replacement, type Mutation, type Row } from "@/lib/financeiro/db/atomic"
@@ -395,22 +396,6 @@ export async function gerarLancamentosTitulos(
       if (fornecedorId) fornecedorIdPorChaveNota.set(nota.chave, fornecedorId)
     }
 
-    // ALIMENTOS/BEBIDAS de contas_pagar só é descartado (já vem por
-    // NF_PEDIDOS) quando a unidade realmente TEM NF_PEDIDOS naquela
-    // competência — a IKY não tem planilha de NF_PEDIDOS nenhuma, então
-    // esse descarte incondicional zerava seu CMV inteiro. Carregado uma
-    // vez por execução, não por título.
-    const nfPedidosRows = await fetchAllPaginado((from, to) =>
-      db.from("titulos_a_pagar")
-        .select("unit_id,d_competencia")
-        .eq("origem", "nf_pedidos")
-        .range(from, to)
-    ) as Array<{ unit_id: string; d_competencia: string | null }>
-    const competenciasComNfPedidos = new Set(
-      nfPedidosRows.filter(r => r.d_competencia).map(r => `${r.unit_id}|${r.d_competencia}`)
-    )
-    const temNfPedidosEstaCompetencia = competenciasComNfPedidos.has(`${unitId}|${inicio}`)
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lancamentosRows: any[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -429,7 +414,9 @@ export async function gerarLancamentosTitulos(
         : classificar(t)
     }
 
+    const despesasUnicas = new Set(comprasSemDuplicidade(todosOsTitulos, nome => fornecedorIdPorNomeTitulo.get(nome)).map(t => t.id));
     function gerarLancamento(t: Titulo): void {
+      if (!despesasUnicas.has(t.id)) return;
       const nomeFornecedor = t.fantasia_fornecedor ?? t.razao_fornecedor ?? null
       const dataTitulo = t.d_vencimento ?? t.d_lancamento ?? inicio
       lancamentosRows.push({
@@ -448,15 +435,7 @@ export async function gerarLancamentosTitulos(
       })
     }
 
-    // CONTAS_A_PAGAR duplica ALIMENTOS/BEBIDAS que já vêm por NF_PEDIDOS
-    // (mesma compra, dois ângulos) — ignora pra não contar duas vezes, MAS
-    // só quando a unidade tem NF_PEDIDOS pra cobrir (ver Set acima). Sem
-    // NF_PEDIDOS, contas_pagar é a ÚNICA fonte de CMV — descartar
-    // incondicionalmente zerava o CMV de quem não tem essa planilha.
-    const titulosProcessaveis = titulos.filter((t) => {
-      const categoria = (t.c_gerencial ?? "").toUpperCase()
-      return !(t.origem === "contas_pagar" && (categoria === "ALIMENTOS" || categoria === "BEBIDAS") && temNfPedidosEstaCompetencia)
-    })
+    const titulosProcessaveis = titulos;
 
     // Agrupa por (fornecedor_id, número da nota) — a nota pode vir parcelada
     // em várias linhas de título (2P. X 1/2, 2P. X 2/2, ...) e nenhuma
@@ -471,7 +450,7 @@ export async function gerarLancamentosTitulos(
       if (!t.n_nota_fiscal) { titulosSemMatchPossivel.push({ titulo: t, nNota: null }); continue }
       const fornecedorId = fornecedorIdPorNomeTitulo.get((t.fantasia_fornecedor ?? t.razao_fornecedor ?? "").toUpperCase().trim())
       if (!fornecedorId) { titulosSemMatchPossivel.push({ titulo: t, nNota: t.n_nota_fiscal }); continue }
-      const chave = `${fornecedorId}|${t.n_nota_fiscal}`
+      const chave = `${t.origem}|${fornecedorId}|${t.n_nota_fiscal}`
       const arr = gruposComNumero.get(chave) ?? []
       arr.push(t)
       gruposComNumero.set(chave, arr)
@@ -495,8 +474,8 @@ export async function gerarLancamentosTitulos(
       // valor_total_nf_origem é o valor CHEIO da nota, repetido em toda
       // parcela — usa ele quando existir (uma vez, não somado — já é o
       // total). Some as parcelas (v_titulo) só cobre linha sem esse campo.
-      const valorTotalOrigem = membros.map((m) => m.valor_total_nf_origem).find((v): v is number => v != null)
-      const valorGrupo = valorTotalOrigem ?? membros.reduce((s, m) => s + valorTitulo(m), 0)
+      const totaisDeclarados = [...new Set(membros.map(m => Number(m.valor_total_nf_origem)).filter(v => v > 0))];
+      const valorGrupo = primeiro.origem === "contas_pagar" && totaisDeclarados.length === 1 ? totaisDeclarados[0]! : membros.reduce((s, m) => s + valorTitulo(m), 0)
 
       // Dedup: mesmo fornecedor_id (catálogo, exato) + número de NF + valor
       // ±2% + mesma competência → já foi gerado via XML (com detalhe por
@@ -504,17 +483,23 @@ export async function gerarLancamentosTitulos(
       // diferente não é a mesma compra.
       let matchConfirmado: { chave: string; diffValor: number; valorNfe: number } | null = null
       const candidatas = notasPorNumero.get(nNota) ?? []
+      let matchCount = 0;
       for (const nota of candidatas) {
         if (fornecedorIdPorChaveNota.get(nota.chave) !== fornecedorId) continue
-        if (competenciaPorChave.get(nota.chave) !== inicio) continue
+        // The due month may differ from the purchase month. Only cross months
+        // when the source has the same document date, supplier and number.
+        const entrada = primeiro.d_lancamento;
+        const mesmaEntrada = entrada && nota.emissao && entrada === nota.emissao.slice(0, 10);
+        if (!mesmaEntrada && competenciaPorChave.get(nota.chave) !== inicio) continue
         const diffValor = Math.abs(nota.valor_total - valorGrupo) / Math.max(valorGrupo, 0.01)
         if (diffValor > 0.02) continue
+        matchCount++;
         if (!matchConfirmado || diffValor < matchConfirmado.diffValor) {
           matchConfirmado = { chave: nota.chave, diffValor, valorNfe: nota.valor_total }
         }
       }
 
-      if (matchConfirmado) {
+      if (matchConfirmado && matchCount === 1) {
         for (const t of membros) {
           sugestoesRows.push({
             unit_id: unitId, competencia: inicio, titulo_id: t.id, chave_nfe: matchConfirmado.chave,
@@ -720,7 +705,8 @@ export async function recalcularSnapshot(
   db: any,
   unitId: string,
   competencia: string,
-  projected?: Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>
+  projected?: Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>,
+  pendentesDoLote?: string[]
 ): Promise<SnapshotResultado> {
   try {
     const { inicio, fim } = competenciaRange(competencia)
@@ -821,7 +807,7 @@ export async function recalcularSnapshot(
         .eq("unit_id", unitId).eq("status", "sugerida")
         .range(from, to)
     ) as Array<{ titulo_id: string }>
-    const titulosPendentes = new Set(sugestoesPendentes.map(s => s.titulo_id))
+    const titulosPendentes = new Set([...sugestoesPendentes.map(s => s.titulo_id), ...(pendentesDoLote ?? [])])
     const possivelDuplaContagem = lancamentos
       .filter(l => l.origem === "titulo" && titulosPendentes.has(l.origem_id))
       .reduce((s, l) => s + Number(l.valor), 0)
@@ -905,7 +891,8 @@ export async function gerarRazao(
   if (nfeEntrada.ok && titulos.ok && folha.ok && receita.ok) {
     const manual = await fetchAllPaginado((from, to) => db.from("lancamentos").select("conta_codigo,valor,origem,origem_id").eq("unit_id", unitId).eq("competencia", competencia).in("origem", ["manual", "inventario"]).range(from, to))
     const projected = [...manual, ...operations.filter(op => op.table === "lancamentos" && op.operation === "insert").flatMap(op => op.rows ?? [])]
-    snapshot = await recalcularSnapshot(staged, unitId, competencia, projected as Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>)
+    const pendentes = operations.filter(op => op.table === "reconciliacoes_sugeridas").flatMap(op => op.rows ?? []).filter(r => r.status === "sem_xml").map(r => String(r.titulo_id));
+    snapshot = await recalcularSnapshot(staged, unitId, competencia, projected as Array<{ conta_codigo: string; valor: number; origem: string; origem_id: string }>, pendentes)
     if (snapshot.ok) {
       for (const op of operations) if (op.table === "kpi_snapshot") op.rows?.forEach(row => { row.revisao_fonte = revision })
       const { error } = await db.rpc("financeiro_aplicar_lote", { p_operations: operations, p_expected: { unit_id: unitId, revisao: revision } })

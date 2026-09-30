@@ -1,3 +1,4 @@
+import { unitDisplayName } from "./unit-display";
 import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
@@ -22,54 +23,20 @@ async function lerCookieUnidade(): Promise<string | undefined> {
  * AuthProvider. Se cookie ausente, inválido (UUID que não existe) ou
  * apontando pra unit que o user não acessa, cai pra primeira unit acessível.
  *
- * Falha em qualquer query NÃO derruba o request — loga e retorna null.
+ * Erros de consulta são propagados; indisponibilidade não vira uma unidade vazia.
  */
+// Request-scoped memoization: shared by layout and page, never across users.
+export const getAccessibleUnits = cache(async (): Promise<Unit[]> => {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) throw new Error("Banco de dados indisponível");
+  const { data, error } = await supabase.from("units").select("*").eq("active", true).order("name");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Unit[]).map(unit => ({ ...unit, name: unitDisplayName(unit) }));
+});
+
 export const getCurrentUnit = cache(async (): Promise<Unit | null> => {
-  try {
-    const supabase = await createSupabaseServerClient();
-    if (!supabase) {
-      console.warn("[getCurrentUnit] supabase indisponível (env vars vazias)");
-      return null;
-    }
-
-    const cookieId = await lerCookieUnidade();
-
-    // 1) Tenta resolver pela unit no cookie. Se RLS bloquear ou não existir,
-    //    cai no fallback abaixo.
-    if (cookieId) {
-      const { data, error } = await supabase
-        .from("units")
-        .select("*")
-        .eq("id", cookieId)
-        .eq("active", true)
-        .maybeSingle();
-      if (error) {
-        console.warn("[getCurrentUnit] cookie lookup error:", error.message);
-      }
-      if (data) return data as Unit;
-    }
-
-    // 2) Fallback: primeira unit ativa que o user pode ver (RLS aplica).
-    const { data, error } = await supabase
-      .from("units")
-      .select("*")
-      .eq("active", true)
-      .order("name")
-      .limit(1);
-    if (error) {
-      console.error("[getCurrentUnit] fallback query error:", error.message);
-      return null;
-    }
-    const first = data?.[0];
-    if (!first) {
-      console.warn("[getCurrentUnit] user não tem unit acessível (RLS sem match)");
-      return null;
-    }
-    return first as Unit;
-  } catch (e) {
-    console.error("[getCurrentUnit] exceção:", e);
-    return null;
-  }
+  const [units, cookieId] = await Promise.all([getAccessibleUnits(), lerCookieUnidade()]);
+  return units.find(unit => unit.id === cookieId) ?? units[0] ?? null;
 });
 
 export type UnidadeAtual = { unit: Unit | null; cookiePresente: boolean };

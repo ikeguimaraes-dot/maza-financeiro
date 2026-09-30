@@ -3,8 +3,8 @@
 import { useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import JSZip from "jszip"
-import { importNfe, type NfeImportResult } from "@/app/financeiro/dre/cmv/actions"
-import { inferDirection, parseNfeXml, type NfeDirection, type ParsedNfe } from "@/lib/nfe/parser"
+import { importNfe, finalizarImportacaoNfe, type NfeImportResult } from "@/app/financeiro/dre/cmv/actions"
+import { parseNfeXml, type NfeDirection, type ParsedNfe } from "@/lib/nfe/parser"
 
 type Props = { direction: NfeDirection; onClose: () => void; onSuccess: () => void }
 type Status = "idle" | "reading" | "ready" | "uploading" | "done" | "error"
@@ -32,11 +32,7 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
         catch { invalid++ }
       }
       if (!parsed.length) throw new Error("Nenhum XML de NF-e válido foi encontrado.")
-      const inferred = inferDirection(parsed)
-      if (inferred && inferred !== fixedDirection) {
-        throw new Error(`Este pacote parece ser de ${inferred === "entrada" ? "entrada" : "saída"}. Envie-o na página correta.`)
-      }
-      setNotes(parsed); setRejected(invalid); setStatus("ready")
+      setNotes(parsed.sort((a, b) => Number(!!a.eventoCancelamento) - Number(!!b.eventoCancelamento))); setRejected(invalid); setStatus("ready")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); setStatus("error")
     }
@@ -46,12 +42,14 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
     if (!direction) { setError("Confirme se o pacote é de entrada ou de saída."); return }
     setStatus("uploading"); setError("")
     // Mantém cada Server Action pequena: pacotes de saída podem ter milhares de XMLs.
+    try {
     const aggregate: NfeImportResult = { ok: true, importadas: 0, duplicadas: 0, canceladas: 0, itens: 0, naoImportadas: 0, cnpjsDesconhecidos: [], produtosCriados: 0, vinculosCriados: 0 }
     const cnpjMap = new Map<string, { nome: string | null; notas: number; valor: number }>()
     const batchSize = 75
     for (let i = 0; i < notes.length; i += batchSize) {
       const response = await importNfe({
         arquivo: fileName,
+        adiarRecalculo: true,
         direcao: direction,
         notas: notes.slice(i, i + batchSize),
         rejeitadas: i === 0 ? rejected : 0,
@@ -73,7 +71,9 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
       }
     }
     aggregate.cnpjsDesconhecidos = [...cnpjMap.entries()].map(([cnpj, v]) => ({ cnpj, ...v }))
+    await finalizarImportacaoNfe();
     setResult(aggregate); setStatus("done")
+    } catch (e) { setError(`Os lotes já gravados foram preservados. ${e instanceof Error ? e.message : String(e)}`); setStatus("error"); }
   }
 
   const active = notes.filter(note => !note.cancelada)
@@ -110,7 +110,7 @@ export function NfeImportModal({ direction: fixedDirection, onClose, onSuccess }
       {status === "uploading" && <p style={{ padding:28, textAlign:"center", color:"var(--text-3)" }}>Salvando notas e atualizando o CMV…</p>}
       {status === "done" && result && <div style={{ padding:"12px 0" }}>
         <h3 style={{ color:"#22c55e", margin:"0 0 8px" }}>Importação concluída</h3>
-        <p style={{ fontSize:13, color:"var(--text-2)" }}>{result.importadas} notas importadas · {result.itens} itens · {result.duplicadas} duplicadas ignoradas · {result.canceladas} canceladas{result.naoImportadas > 0 ? ` · ${result.naoImportadas} não importadas` : ""}</p>
+        <p style={{ fontSize:13, color:"var(--text-2)" }}>{result.importadas} notas importadas · {result.itens} itens · {result.duplicadas} notas atualizadas · {result.canceladas} canceladas{result.naoImportadas > 0 ? ` · ${result.naoImportadas} não importadas` : ""}</p>
         {(result.produtosCriados > 0 || result.vinculosCriados > 0) && (
           <p style={{ fontSize:12, color:"var(--text-3)", marginTop: 4 }}>
             Catálogo: {result.produtosCriados} produto{result.produtosCriados !== 1 ? "s" : ""} novo{result.produtosCriados !== 1 ? "s" : ""} · {result.vinculosCriados} item{result.vinculosCriados !== 1 ? "s" : ""} vinculado{result.vinculosCriados !== 1 ? "s" : ""}

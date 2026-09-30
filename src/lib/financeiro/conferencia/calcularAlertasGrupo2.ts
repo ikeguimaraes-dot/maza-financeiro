@@ -1,3 +1,4 @@
+import { cache } from "react";
 // Lógica pura da tela de Conferência — GRUPO 2 (Cobertura): falta dado
 // pra o número ser confiável. Mesmo princípio do GRUPO 1 — calculado na
 // leitura, nunca grava nada.
@@ -7,24 +8,24 @@ import { type Alerta, type AlertaOcorrencia, montarAlerta, round2, competenciaFi
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any
 
-async function getKpiSnapshot(db: Db, unitId: string, competencia: string) {
+const getKpiSnapshot = cache(async function getKpiSnapshot(db: Db, unitId: string, competencia: string) {
   const { data } = await db.from("kpi_snapshot")
     .select("receita_liquida,tem_nfe,tem_folha,confianca_pct")
     .eq("unit_id", unitId).eq("competencia", competencia).maybeSingle()
   return data as { receita_liquida: number | null; tem_nfe: boolean; tem_folha: boolean; confianca_pct: number | null } | null
-}
+})
 
-async function existeLancamento(db: Db, unitId: string, competencia: string): Promise<boolean> {
+const existeLancamento = cache(async function existeLancamento(db: Db, unitId: string, competencia: string): Promise<boolean> {
   const { data } = await db.from("lancamentos").select("id")
     .eq("unit_id", unitId).eq("competencia", competencia).limit(1)
   return (data?.length ?? 0) > 0
-}
+})
 
 // Soma lancamentos por grupo de plano_contas (custo = cmv+mao_de_obra+
 // despesa_operacional; deducao = grupo deducao) e a receita bruta real do
 // mês, direto de receita_dias — não de kpi_snapshot, pra não depender de
 // snapshot recém-regenerado. Serve às 2.9/2.10.
-async function getCustoDeducaoReceita(db: Db, unitId: string, competencia: string) {
+const getCustoDeducaoReceita = cache(async function getCustoDeducaoReceita(db: Db, unitId: string, competencia: string) {
   const fim = competenciaFim(competencia)
   const linhas = await fetchAllPaginado((from, to) =>
     db.from("lancamentos").select("valor,conta_codigo")
@@ -53,7 +54,7 @@ async function getCustoDeducaoReceita(db: Db, unitId: string, competencia: strin
   const receitaBruta = dias.reduce((s, d) => s + Number(d.receita_bruta ?? 0), 0)
 
   return { custo, deducao, receitaBruta }
-}
+})
 
 // ── 2.1 · Competência com lançamento mas sem NF-e ───────────────────────────
 // Antes exigia receita_liquida > 0 pra disparar — isso escondia exatamente

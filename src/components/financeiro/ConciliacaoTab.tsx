@@ -332,17 +332,17 @@ export function ConciliacaoTab({ unitId, mes, ano }: Props) {
                 </thead>
                 <tbody>
                   {notasFiltradas.map((n: NotaConciliacao) => {
-                    const isOpen = expandedNotas.has(n.nr_danfe)
+                    const isOpen = expandedNotas.has(n.chave)
                     const somaBoletos = n.boletos.reduce((s, b) => s + (b.v_titulo ?? 0), 0)
                     const semBoleto = n.boletos.length === 0
                     return (
-                      <Fragment key={n.nr_danfe}>
+                      <Fragment key={n.chave}>
                         <tr
                           style={{
                             borderTop: "1px solid var(--border)", cursor: "pointer",
                             background: semBoleto ? "rgba(239,68,68,0.04)" : "transparent",
                           }}
-                          onClick={() => toggleNota(n.nr_danfe)}
+                          onClick={() => toggleNota(n.chave)}
                         >
                           <td style={{ padding: "8px 0 8px 12px", verticalAlign: "middle" }}>
                             <span style={chevronStyle(isOpen)}>›</span>

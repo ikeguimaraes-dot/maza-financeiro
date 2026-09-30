@@ -11,6 +11,8 @@ import {
 } from "recharts";
 import { useUnit } from "@maza/auth/context";
 import { TopProdutosTable } from "@/components/financeiro/TopProdutosTable";
+import { MetasReceita } from "@/components/financeiro/MetasReceita";
+import { metaMensalSemanal } from "@/lib/receita/metas";
 
 // Pelo shell, as APIs passam pelo rewrite /financeiro/api/*. No domínio direto
 // do sub-app (e no dev :3001), os Route Handlers vivem em /api/*.
@@ -167,6 +169,7 @@ function useCountUp(target: number, duration = 600): number {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ReceitaPage() {
   const { unit } = useUnit();
+  const [aba, setAba] = useState<"receita" | "metas">("receita");
   const today = new Date();
   const [mes, setMes] = useState(today.getMonth() + 1);
   const [ano, setAno] = useState(today.getFullYear());
@@ -182,7 +185,7 @@ export default function ReceitaPage() {
   const [ambientes,      setAmbientes]      = useState<Ambiente[]>([]);
   const [turnos,         setTurnos]         = useState<Turno[]>([]);
   const [grupos,         setGrupos]         = useState<Grupo[]>([]);
-  const [metaReceita,    setMetaReceita]    = useState<number | null>(null);
+  const [metaLegada,     setMetaReceita]    = useState<number | null>(null);
   const [metasDiaSemana, setMetasDiaSemana] = useState<MetaDiaSemana[]>([]);
   const [metasOverride,  setMetasOverride]  = useState<MetaOverride[]>([]);
   const [metaEdits,      setMetaEdits]      = useState<Map<string, number | null>>(new Map());
@@ -328,9 +331,9 @@ export default function ReceitaPage() {
   const totalDevedor  = workdaysDeduped.reduce((s, w) => s + w.devedor, 0);
   const totalDesconto = workdays.reduce((s, w) => s + (w.desconto ?? 0), 0);
   const totalGorjeta  = workdays.reduce((s, w) => s + (w.gorjeta  ?? 0), 0);
-  const totalLiquida  = totalBruto - totalDesconto;
   const totalClientes = workdays.reduce((s, w) => s + (w.clientes ?? 0), 0);
   const ticketMedio   = totalClientes > 0 ? totalBruto / totalClientes : null;
+  const metaReceita = metaMensalSemanal(ano, mes, metasDiaSemana, metasOverride) ?? metaLegada;
   const atingMeta     = metaReceita && metaReceita > 0 ? (totalBruto / metaReceita) * 100 : null;
 
   const metaByDiaSemana   = new Map<number, number>(metasDiaSemana.map((m) => [m.dia_semana, m.meta]));
@@ -472,6 +475,12 @@ export default function ReceitaPage() {
         </div>
       </header>
 
+      <nav aria-label="Abas de Receita" style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {(["receita", "metas"] as const).map(tab => <button key={tab} type="button" aria-pressed={aba === tab} onClick={() => setAba(tab)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.border}`, background: aba === tab ? C.brand : C.surface, color: aba === tab ? "#fff" : C.text, cursor: "pointer" }}>{tab === "metas" ? "Metas" : "Receita"}</button>)}
+      </nav>
+      {aba === "metas" && (unit ? <MetasReceita key={unit.id} unitId={unit.id} unitName={unit.name} apiBase={API_BASE} ano={ano} mes={mes} onSaved={() => { void loadData(); }} realizados={dayGroups.map(g => ({ data: g.date, valor: g.totalReceita }))} overrides={metasOverride} receitaLoading={loading} receitaError={dbError} /> : <p>Selecione uma unidade para definir as metas.</p>)}
+      {aba === "receita" && <>
+
       {/* Import panel */}
       {showImport && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
@@ -532,7 +541,11 @@ export default function ReceitaPage() {
               alert={totalBruto > 0 && totalDesconto / totalBruto > 0.08} />
             <KpiCardAnimated label="Gorjeta"         rawValue={totalGorjeta}  format={fmt} sparkData={sparkReceita}
               sub={totalBruto > 0 ? pct((totalGorjeta / totalBruto) * 100) + " cobrado" : undefined} />
-            <KpiCardAnimated label="Receita Líquida" rawValue={totalLiquida}  format={fmt} sparkData={sparkReceita} />
+            <KpiCardAnimated label="Performance da meta" rawValue={atingMeta ?? 0}
+              format={atingMeta != null ? (n) => `${n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : () => "—"}
+              sparkData={[]}
+              sub={atingMeta != null ? `Meta do mês: ${fmt(metaReceita!)}` : "Defina uma meta maior que zero na aba Metas"}
+              alert={atingMeta != null && atingMeta < 100} ok={atingMeta != null && atingMeta >= 100} />
             <KpiCardAnimated label="Clientes"        rawValue={totalClientes}
               format={(n) => Math.round(n).toLocaleString("pt-BR")} sparkData={sparkClientes} />
             <KpiCardAnimated label="Ticket Médio"    rawValue={ticketMedio ?? 0}
@@ -841,6 +854,7 @@ export default function ReceitaPage() {
           </div>
         </>
       )}
+      </>}
     </div>
   );
 }

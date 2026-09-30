@@ -3,15 +3,15 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
 
-const fraunces = localFont({
-  src: [{ path: "./fonts/Fraunces.ttf", style: "normal", weight: "100 900" }, { path: "./fonts/Fraunces-Italic.ttf", style: "italic", weight: "100 900" }],
-  variable: "--font-fraunces", display: "swap",
-});
-const instrumentSans = localFont({ src: "./fonts/InstrumentSans.ttf", weight: "400 700", variable: "--font-instrument-sans", display: "swap" });
+const geist = localFont({ src: "./fonts/Geist.woff2", weight: "100 900", variable: "--font-geist", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Maza Financeiro",
   description: "Módulo financeiro do grupo Maza.",
+  icons: {
+    icon: [{ url: "/financeiro/brand/phi-icon.png", type: "image/png", sizes: "64x64" }],
+    shortcut: "/financeiro/brand/phi-icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -23,7 +23,7 @@ export default function RootLayout({
     <html
       lang="pt-BR"
       suppressHydrationWarning
-      className={`${fraunces.variable} ${instrumentSans.variable} h-full antialiased`}
+      className={`${geist.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground flex flex-col">
         <ThemeProvider>{children}</ThemeProvider>

@@ -75,6 +75,10 @@ export function AuthProvider({
    * user navega — resultando em "voltar pra Madonna" (o fallback alfabético
    * de getCurrentUnit) ao trocar pra Meet & Eat e mudar de página.
    */
+  useEffect(() => {
+    document.documentElement.dataset.unitTheme = unitId === "674eac8c-5a38-4a42-aa60-0a666387909b" ? "delivery" : "restaurante";
+  }, [unitId]);
+
   const setUnitId = (id: string) => {
     if (id === unitId) return;
     setUnitIdState(id);

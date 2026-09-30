@@ -13,6 +13,7 @@ export function previewData(partial = false): CockpitProps {
     return { unit_id: "preview", competencia, receita_bruta: receita * 1.06, receita_liquida: receita, cmv_compras: cmv, mao_de_obra: folha, despesas_operacionais: receita * .16, ebitda: resultado * 1.22, resultado_liquido: resultado, cmv_compras_pct: cmv / receita, mo_pct: .23, prime_cost_pct: (cmv + folha) / receita, ebitda_pct: resultado * 1.22 / receita, clientes: 2470 + index * 141, ticket_medio: receita * 1.06 / (2470 + index * 141), cmv_por_cliente: null, tem_nfe: !partial, tem_folha: true, pct_classificado: .93, fontes_ok: 4, fontes_total: 5, confianca_pct: partial ? .58 : .86, possivel_dupla_contagem: partial ? 2400 : 0 };
   });
   return {
+    despesa: { folha: 98164, contas: 180000, total: 278164, temDados: true, parcial: null },
     unidade: "preview", competencia: "2026-09", janela: PREVIEW_MONTHS, kpiRows,
     metas: [{ chave: "receita_liquida", valor: 450000, tipo: "valor", origem: "manual" }, { chave: "prime_cost_pct", valor: .6, tipo: "percentual", origem: "manual" }],
     planoContas: [

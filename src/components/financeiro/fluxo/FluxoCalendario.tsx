@@ -17,6 +17,7 @@ import { formatBRL } from "@/lib/financeiro/utils"
 import type { DiaFluxo } from "@/lib/financeiro/fluxo/calcularFluxo"
 
 type Props = {
+  saldoDisponivel?: boolean
   dias: DiaFluxo[]
   hoje: string
   diaCruzaZero: string | null
@@ -26,7 +27,7 @@ function formatDiaCurto(iso: string): string {
   return new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
 }
 
-export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
+export function FluxoCalendario({ dias, hoje, diaCruzaZero, saldoDisponivel = true }: Props) {
   const reducedMotion = useReducedMotion();
   const data = dias.map((d) => ({
     data: d.data,
@@ -35,7 +36,7 @@ export function FluxoCalendario({ dias, hoje, diaCruzaZero }: Props) {
     entradaPrevista: d.entradasPrevistas,
     saidaRealizada: -d.saidasRealizadas,
     saidaPrevista: -d.saidasPrevistas,
-    saldoFinal: d.saldoFinal,
+    saldoFinal: saldoDisponivel ? d.saldoFinal : null,
   }))
 
   return (

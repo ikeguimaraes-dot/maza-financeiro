@@ -1,4 +1,4 @@
-import { applyBatch, replacement } from "@/lib/financeiro/db/atomic"
+import { refreshUnits } from "@/lib/financeiro/razao/refresh"
 import { competenciaTitulo } from "@/lib/financeiro/dates"
 import { createFinanceiroClient } from "@/lib/financeiro/db/client";
 export const runtime = "nodejs"
@@ -130,7 +130,8 @@ export async function POST(req: Request) {
   }
 
   if (records.some(r => !r.d_competencia)) return Response.json({ error: "Há títulos sem competência, lançamento ou vencimento; nenhum dado foi alterado." }, { status: 422 })
-  const scopes = new Map(records.map(r => [`${r.unit_id}|${r.d_competencia}`, { unit_id: r.unit_id, import_unit_id: r.unit_id, d_competencia: r.d_competencia, origem: "contas_pagar" }]))
-  await applyBatch(db, [...scopes.values()].flatMap(scope => replacement("titulos_a_pagar", scope, records.filter(r => r.unit_id === scope.unit_id && r.d_competencia === scope.d_competencia))))
+  const { error: saveError } = await db.rpc("financeiro_importar_titulos", { p_rows: records });
+  if (saveError) return Response.json({ error: saveError.message }, { status: 422 });
+  await refreshUnits(db, [...new Set(records.map(row => row.unit_id))]);
   return Response.json({ ok: true, inserted: records.length, ref_meses: [...new Set(records.map(r => r.d_competencia))] })
 }

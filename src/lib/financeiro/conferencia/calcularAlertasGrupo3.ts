@@ -1,3 +1,4 @@
+import { cache } from "react";
 // Lógica pura da tela de Conferência — GRUPO 3 (Valor fora de faixa).
 // Nenhum destes alertas conclui que o número está ERRADO — só que o valor
 // foge da faixa esperada e merece uma conferência da composição.
@@ -18,12 +19,12 @@ type KpiValores = {
   ebitda_pct: number | null
 }
 
-async function getKpiValores(db: Db, unitId: string, competencia: string): Promise<KpiValores | null> {
+const getKpiValores = cache(async function getKpiValores(db: Db, unitId: string, competencia: string): Promise<KpiValores | null> {
   const { data } = await db.from("kpi_snapshot")
     .select("receita_liquida,cmv_compras,cmv_compras_pct,mo_pct,prime_cost_pct,ebitda,ebitda_pct")
     .eq("unit_id", unitId).eq("competencia", competencia).maybeSingle()
   return data
-}
+})
 
 // ── 3.1 · CMV fora da faixa esperada (28%–40%) ──────────────────────────────
 const CMV_PISO = 0.28

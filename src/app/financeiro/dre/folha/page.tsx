@@ -8,11 +8,10 @@ import { useResource } from "@/lib/hooks/use-resource"
 import { useEffect, useState, useMemo, useRef } from "react"
 import { useUnit } from "@maza/auth/context"
 import { DominioImportModal } from "@/components/financeiro/folha/DominioImportModal"
-import {
-  AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
-} from "recharts"
+import { FolhaEmpresa } from "@/components/financeiro/folha/FolhaEmpresa"
+import { ResumoFolha } from "@/components/financeiro/folha/ResumoFolha"
+import { ComparacaoFolha } from "@/components/financeiro/folha/ComparacaoFolha"
+import { mesAnterior } from "@/lib/folha/comparacao"
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface Colaborador {
@@ -127,28 +126,19 @@ const fmt = (v: number) =>
 
 const fmtK = (v: number) => fmt(v)
 
-const labelMes = (periodo: string) => {
-  const [ano, mes] = periodo.split("-") as [string, string]
-  return `${MESES[parseInt(mes) - 1] ?? ""}/${ano.slice(2)}`
-}
-
-// ── Tooltip customizado ───────────────────────────────────────────────────
-const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { color: string; name: string; value: number }[]; label?: string }) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs shadow-lg">
-      <p className="text-gray-400 mb-1">{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }} className="font-medium">
-          {fmtK(p.value)}
-        </p>
-      ))}
-    </div>
-  )
-}
-
 // ── Componente principal ──────────────────────────────────────────────────
 export default function FolhaPage() {
+  const [aba, setAba] = useState<"empresa" | "dominio">("empresa")
+  const { unit } = useUnit()
+  return <>
+    <nav aria-label="Abas da folha" className="flex gap-2 px-6 pt-4 bg-[var(--bg)] border-b border-[var(--border)]">
+      {([['empresa', 'Folha Empresa'], ['dominio', 'Folha Contábil']] as const).map(([valor, label]) => <button key={valor} aria-current={aba === valor ? "page" : undefined} onClick={() => setAba(valor)} className={`px-4 py-3 text-sm border-b-2 ${aba === valor ? "border-[var(--border-active)] text-[var(--brand)]" : "border-transparent text-[var(--text-3)] hover:text-[var(--text)]"}`}>{label}</button>)}
+    </nav>
+    {aba === "empresa" ? (unit ? <FolhaEmpresa key={unit.id} unitId={unit.id} unitLabel={unit.name} /> : <p className="p-6">Selecione uma unidade para consultar a folha.</p>) : <FolhaDominio />}
+  </>
+}
+
+function FolhaDominio() {
   const now = new Date()
   const { unit } = useUnit()
   const unitId = unit?.id ?? null
@@ -209,16 +199,16 @@ export default function FolhaPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#0d0d0c] text-gray-200 p-6">
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] p-6">
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <p className="text-xs text-gray-500 mb-0.5">DRE › Pessoal</p>
-          <h1 className="text-lg font-medium text-gray-100">Folha de Pessoal</h1>
+          <p className="text-xs text-[var(--text-3)] mb-0.5">DRE › Pessoal</p>
+          <h1 className="text-lg font-medium text-[var(--text)]">Folha de Pessoal</h1>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-700/50 bg-gray-800/60 text-gray-300">
+          <span className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-2)]">
             {unitLabel}
           </span>
 
@@ -226,7 +216,7 @@ export default function FolhaPage() {
           <select
             value={mes}
             onChange={(e) => setMes(Number(e.target.value))}
-            className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none"
+            className="bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-2)] focus:outline-none"
           >
             {MESES.map((m, i) => (
               <option key={i + 1} value={i + 1}>{m}</option>
@@ -237,7 +227,7 @@ export default function FolhaPage() {
           <select
             value={ano}
             onChange={(e) => setAno(Number(e.target.value))}
-            className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none"
+            className="bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-2)] focus:outline-none"
           >
             {[2024, 2025, 2026].map((a) => (
               <option key={a} value={a}>{a}</option>
@@ -248,7 +238,7 @@ export default function FolhaPage() {
           <button
             type="button"
             onClick={() => setDominioModalAberto(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-purple-600 bg-purple-700/30 text-purple-200 hover:bg-purple-700/50 transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border-active)] bg-[var(--brand-soft)] text-[var(--brand)] hover:bg-[var(--brand-soft)] transition-colors"
           >
             Importar extrato Domínio
           </button>
@@ -257,12 +247,12 @@ export default function FolhaPage() {
 
       {/* ── Loading / Error ──────────────────────────────────────────────── */}
       {loading && (
-        <div className="flex items-center justify-center py-24 text-gray-500 text-sm">
+        <div className="flex items-center justify-center py-24 text-[var(--text-3)] text-sm">
           Carregando dados de {unitLabel}…
         </div>
       )}
       {error && (
-        <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-4 text-red-400 text-sm mb-6">
+        <div className="bg-[var(--color-danger-bg)] border border-[var(--color-danger)] rounded-xl p-4 text-[var(--color-danger)] text-sm mb-6">
           Erro ao carregar: {error}
         </div>
       )}
@@ -270,8 +260,7 @@ export default function FolhaPage() {
       {!loading && !error && data && (
         <>
           {/* ── Cards resumo ──────────────────────────────────────────────── */}
-          <div className="grid grid-cols-5 gap-3 mb-6">
-            {[
+          <ResumoFolha cards={[
               {
                 label: "Total folha",
                 value: fmtK(data.resumo.totalFolha),
@@ -306,79 +295,16 @@ export default function FolhaPage() {
                 sub: `${data.gorjeta.headcount} beneficiados`,
                 highlight: false,
               },
-            ].map((card) => (
-              <div
-                key={card.label}
-                className={`rounded-xl p-4 border ${
-                  card.highlight
-                    ? "bg-purple-900/20 border-purple-800/40"
-                    : "bg-gray-800/40 border-gray-700/40"
-                }`}
-              >
-                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">
-                  {card.label}
-                </p>
-                <p className={`text-xl font-medium ${card.highlight ? "text-purple-300" : "text-gray-100"}`}>
-                  {card.value}
-                </p>
-                <p className="text-[10px] text-gray-600 mt-1">{card.sub}</p>
-              </div>
-            ))}
-          </div>
+            ]} />
 
-          {/* ── Gráficos ──────────────────────────────────────────────────── */}
+          <ComparacaoFolha titulo="Gorjeta" competencia={`${ano}-${String(mes).padStart(2, "0")}`}
+            atual={data.gorjeta.historico.find(h => h.periodo === `${ano}-${String(mes).padStart(2, "0")}`)?.total ?? null}
+            anterior={data.gorjeta.historico.find(h => h.periodo === mesAnterior(`${ano}-${String(mes).padStart(2, "0")}`))?.total ?? null} />
+
           <div className="grid grid-cols-1 gap-4 mb-6">
-            {/* Evolução gorjeta */}
-            <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-4">
-              <p className="text-xs font-medium text-gray-300 mb-4">Evolução da gorjeta — últimos 12 meses</p>
-              {data.gorjeta.historico.length > 0 ? (
-                <ResponsiveContainer width="100%" height={160}>
-                  <AreaChart data={data.gorjeta.historico.map(h => ({
-                    periodo: labelMes(h.periodo),
-                    gorjeta: Math.round(h.total),
-                  }))}>
-                    <defs>
-                      <linearGradient id="gradGorjeta" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#7f77dd" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#7f77dd" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a28" />
-                    <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} />
-                    <YAxis tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} width={40} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Area type="monotone" dataKey="gorjeta" stroke="#7f77dd" strokeWidth={2} fill="url(#gradGorjeta)" name="Gorjeta" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-40 text-gray-600 text-xs">
-                  Sem histórico disponível
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── Breakdown: aviso de cadastro + Top Funções ─────────────────── */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            {/* Divisão por área não disponível */}
-            <div className="bg-amber-900/10 border border-amber-800/30 rounded-xl p-4 flex flex-col justify-center">
-              <p className="text-xs font-medium text-amber-400 mb-2">Divisão por área não disponível</p>
-              <p className="text-xs text-gray-400 leading-relaxed">
-                O extrato Domínio traz todos os colaboradores no mesmo centro de custo. Para ver
-                custo por cozinha, salão e administrativo, é preciso cadastrar a área de cada
-                colaborador.
-              </p>
-              {data.cadastroColaboradores.noCadastro < data.cadastroColaboradores.noExtrato && (
-                <p className="text-[10px] text-gray-500 mt-3">
-                  {data.cadastroColaboradores.noExtrato} colaboradores no extrato de folha,{" "}
-                  {data.cadastroColaboradores.noCadastro} no cadastro.
-                </p>
-              )}
-            </div>
-
             {/* Top funções */}
-            <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-4">
-              <p className="text-xs font-medium text-gray-300 mb-4">Top funções por custo</p>
+            <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-xl p-4">
+              <p className="text-xs font-medium text-[var(--text-2)] mb-4">Top funções por custo</p>
               <div className="space-y-3">
                 {data.topFuncoes.slice(0, 8).map((f) => {
                   const pct = data.resumo.totalFolha > 0
@@ -387,15 +313,15 @@ export default function FolhaPage() {
                   return (
                     <div key={f.funcao}>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-gray-400 truncate max-w-[160px]">{f.funcao}</span>
+                        <span className="text-xs text-[var(--text-3)] truncate max-w-[160px]">{f.funcao}</span>
                         <div className="flex items-center gap-3">
-                          <span className="text-[10px] text-gray-500">{f.headcount} pess.</span>
-                          <span className="text-xs font-medium text-gray-300">{fmtK(f.custo)}</span>
+                          <span className="text-[10px] text-[var(--text-3)]">{f.headcount} pess.</span>
+                          <span className="text-xs font-medium text-[var(--text-2)]">{fmtK(f.custo)}</span>
                         </div>
                       </div>
-                      <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
+                      <div className="h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-indigo-500/60"
+                          className="h-full rounded-full bg-[var(--brand-soft)]"
                           style={{ width: `${Math.min(pct, 100)}%` }}
                         />
                       </div>
@@ -409,11 +335,11 @@ export default function FolhaPage() {
           {/* ── Gorjeta ──────────────────────────────────────────────────── */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
-              <p className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+              <p className="text-[10px] font-medium text-[var(--text-3)] uppercase tracking-wider">
                 Gorjeta
               </p>
               {data.gorjeta.periodo && (
-                <span className="text-[10px] text-purple-400 bg-purple-900/20 border border-purple-800/30 px-2 py-0.5 rounded">
+                <span className="text-[10px] text-[var(--brand)] bg-[var(--brand-soft)] border border-[var(--border-active)] px-2 py-0.5 rounded">
                   {data.gorjeta.periodo}
                 </span>
               )}
@@ -426,21 +352,21 @@ export default function FolhaPage() {
                 { label: "Total líquido (após INSS)", value: fmtK(data.gorjeta.totalLiquido) },
                 { label: "Colaboradores beneficiados", value: data.gorjeta.headcount },
               ].map((c) => (
-                <div key={c.label} className="bg-gray-800/40 border border-gray-700/40 rounded-xl p-4">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">{c.label}</p>
-                  <p className="text-lg font-medium text-gray-100">{c.value}</p>
+                <div key={c.label} className="bg-[var(--surface-2)] border border-[var(--border)] rounded-xl p-4">
+                  <p className="text-[10px] text-[var(--text-3)] uppercase tracking-wider mb-1.5">{c.label}</p>
+                  <p className="text-lg font-medium text-[var(--text)]">{c.value}</p>
                 </div>
               ))}
             </div>
 
             {/* Tabela breakdown por cargo */}
             {data.gorjeta.breakdownCargo.length > 0 && (
-              <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl overflow-hidden">
+              <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-xl overflow-hidden">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="bg-gray-800/60 border-b border-gray-700/40">
+                    <tr className="bg-[var(--surface-2)] border-b border-[var(--border)]">
                       {["Cargo", "Pontos", "Pessoas", "Total bruto", "Média / pessoa"].map((h) => (
-                        <th key={h} className="text-left px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider font-medium last:text-right">
+                        <th key={h} className="text-left px-4 py-2.5 text-[10px] text-[var(--text-3)] uppercase tracking-wider font-medium last:text-right">
                           {h}
                         </th>
                       ))}
@@ -448,18 +374,18 @@ export default function FolhaPage() {
                   </thead>
                   <tbody>
                     {data.gorjeta.breakdownCargo.map((row, i) => (
-                      <tr key={row.cargo} className={`border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-gray-800/10"}`}>
-                        <td className="px-4 py-2.5 text-gray-300 font-medium">{row.cargo || "—"}</td>
-                        <td className="px-4 py-2.5 text-gray-400">
+                      <tr key={row.cargo} className={`border-b border-[var(--border)] hover:bg-[var(--surface-2)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--surface-2)]"}`}>
+                        <td className="px-4 py-2.5 text-[var(--text-2)] font-medium">{row.cargo || "—"}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)]">
                           {row.pontos > 0 ? (
-                            <span className="bg-purple-900/30 text-purple-400 border border-purple-800/30 px-2 py-0.5 rounded text-[10px]">
+                            <span className="bg-[var(--brand-soft)] text-[var(--brand)] border border-[var(--border-active)] px-2 py-0.5 rounded text-[10px]">
                               {row.pontos} pts
                             </span>
                           ) : "—"}
                         </td>
-                        <td className="px-4 py-2.5 text-gray-400">{row.headcount}</td>
-                        <td className="px-4 py-2.5 text-gray-200 font-medium">{fmt(row.valor_total)}</td>
-                        <td className="px-4 py-2.5 text-gray-400 text-right">{fmt(row.valor_medio)}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)]">{row.headcount}</td>
+                        <td className="px-4 py-2.5 text-[var(--text)] font-medium">{fmt(row.valor_total)}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)] text-right">{fmt(row.valor_medio)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -468,7 +394,7 @@ export default function FolhaPage() {
             )}
 
             {data.gorjeta.breakdownCargo.length === 0 && (
-              <div className="bg-gray-800/20 border border-gray-700/30 rounded-xl p-6 text-center text-gray-600 text-sm">
+              <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-xl p-6 text-center text-[var(--text-3)] text-sm">
                 Sem dados de gorjeta para {MESES[mes - 1]}/{ano}
               </div>
             )}
@@ -477,7 +403,7 @@ export default function FolhaPage() {
           {/* ── Tabela detalhada de colaboradores ─────────────────────────── */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+              <p className="text-[10px] font-medium text-[var(--text-3)] uppercase tracking-wider">
                 Colaboradores ({colabFiltrados.length})
               </p>
               <div className="flex items-center gap-2">
@@ -487,13 +413,13 @@ export default function FolhaPage() {
                   placeholder="Buscar nome, função…"
                   value={buscaColab}
                   onChange={(e) => setBuscaColab(e.target.value)}
-                  className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-purple-700/60 w-48"
+                  className="bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-2)] placeholder-[var(--text-3)] focus:outline-none focus:border-[var(--border-active)] w-48"
                 />
                 {/* Ordenação */}
                 <select
                   value={sortColab}
                   onChange={(e) => setSortColab(e.target.value as "nome" | "custo")}
-                  className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none"
+                  className="bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text-2)] focus:outline-none"
                 >
                   <option value="custo">Ordenar: Custo ↓</option>
                   <option value="nome">Ordenar: Nome</option>
@@ -501,12 +427,12 @@ export default function FolhaPage() {
               </div>
             </div>
 
-            <div className="bg-gray-800/30 border border-gray-700/40 rounded-xl overflow-hidden">
+            <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-xl overflow-hidden">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-gray-800/60 border-b border-gray-700/40">
+                  <tr className="bg-[var(--surface-2)] border-b border-[var(--border)]">
                     {["Nome", "Função", "Tipo", "Admissão", "Salário", "Custo total", "% folha"].map((h) => (
-                      <th key={h} className="text-left px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider font-medium last:text-right">
+                      <th key={h} className="text-left px-4 py-2.5 text-[10px] text-[var(--text-3)] uppercase tracking-wider font-medium last:text-right">
                         {h}
                       </th>
                     ))}
@@ -523,27 +449,27 @@ export default function FolhaPage() {
                     return (
                       <tr
                         key={c.id}
-                        className={`border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-gray-800/10"}`}
+                        className={`border-b border-[var(--border)] hover:bg-[var(--surface-2)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--surface-2)]"}`}
                       >
-                        <td className="px-4 py-2.5 text-gray-200 font-medium">
-                          <button type="button" onClick={() => setColaboradorAberto(c)} className="text-left text-purple-300 hover:text-purple-200 hover:underline underline-offset-2">
+                        <td className="px-4 py-2.5 text-[var(--text)] font-medium">
+                          <button type="button" onClick={() => setColaboradorAberto(c)} className="text-left text-[var(--brand)] hover:text-[var(--brand)] hover:underline underline-offset-2">
                             {c.nome}
                           </button>
                         </td>
-                        <td className="px-4 py-2.5 text-gray-400 max-w-[160px] truncate">
+                        <td className="px-4 py-2.5 text-[var(--text-3)] max-w-[160px] truncate">
                           {c.funcao}
                         </td>
-                        <td className="px-4 py-2.5 text-gray-500">{c.tipo}</td>
-                        <td className="px-4 py-2.5 text-gray-500">{admissao}</td>
-                        <td className="px-4 py-2.5 text-gray-300">{fmt(c.salario)}</td>
-                        <td className="px-4 py-2.5 text-gray-100 font-medium">{fmt(c.custo_total)}</td>
-                        <td className="px-4 py-2.5 text-gray-500 text-right">{pct.toFixed(1)}%</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)]">{c.tipo}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)]">{admissao}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-2)]">{fmt(c.salario)}</td>
+                        <td className="px-4 py-2.5 text-[var(--text)] font-medium">{fmt(c.custo_total)}</td>
+                        <td className="px-4 py-2.5 text-[var(--text-3)] text-right">{pct.toFixed(1)}%</td>
                       </tr>
                     )
                   })}
                   {colabFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-gray-600">
+                      <td colSpan={7} className="px-4 py-8 text-center text-[var(--text-3)]">
                         Nenhum colaborador encontrado
                       </td>
                     </tr>
@@ -552,17 +478,17 @@ export default function FolhaPage() {
                 {/* Totalizador */}
                 {colabFiltrados.length > 0 && (
                   <tfoot>
-                    <tr className="bg-gray-800/60 border-t border-gray-700/40">
-                      <td colSpan={4} className="px-4 py-2.5 text-[10px] text-gray-500 uppercase tracking-wider">
+                    <tr className="bg-[var(--surface-2)] border-t border-[var(--border)]">
+                      <td colSpan={4} className="px-4 py-2.5 text-[10px] text-[var(--text-3)] uppercase tracking-wider">
                         Total ({colabFiltrados.length} colaboradores)
                       </td>
-                      <td className="px-4 py-2.5 text-gray-300 font-medium text-xs">
+                      <td className="px-4 py-2.5 text-[var(--text-2)] font-medium text-xs">
                         {fmt(colabFiltrados.reduce((s, c) => s + (c.salario ?? 0), 0))}
                       </td>
-                      <td className="px-4 py-2.5 text-gray-100 font-medium text-xs">
+                      <td className="px-4 py-2.5 text-[var(--text)] font-medium text-xs">
                         {fmt(colabFiltrados.reduce((s, c) => s + (c.custo_total ?? 0), 0))}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-[10px] text-gray-500">
+                      <td className="px-4 py-2.5 text-right text-[10px] text-[var(--text-3)]">
                         {data.resumo.totalFolha > 0
                           ? `${((colabFiltrados.reduce((s, c) => s + c.custo_total, 0) / data.resumo.totalFolha) * 100).toFixed(0)}%`
                           : "—"}
@@ -577,16 +503,16 @@ export default function FolhaPage() {
       )}
       {colaboradorAberto && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-5" onMouseDown={() => setColaboradorAberto(null)}>
-          <div className="w-full max-w-6xl h-[90vh] bg-[#151514] border border-gray-700 rounded-2xl overflow-hidden flex flex-col" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700/60">
+          <div className="w-full max-w-6xl h-[90vh] bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden flex flex-col" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
               <div>
-                <h2 className="text-base font-semibold text-gray-100">{colaboradorAberto.nome}</h2>
-                <p className="text-xs text-gray-500">{colaboradorAberto.funcao} · competência {ano}-{String(mes).padStart(2, "0")}</p>
+                <h2 className="text-base font-semibold text-[var(--text)]">{colaboradorAberto.nome}</h2>
+                <p className="text-xs text-[var(--text-3)]">{colaboradorAberto.funcao} · competência {ano}-{String(mes).padStart(2, "0")}</p>
               </div>
-              <button type="button" onClick={() => setColaboradorAberto(null)} className="text-gray-400 hover:text-white text-xl">×</button>
+              <button type="button" onClick={() => setColaboradorAberto(null)} className="text-[var(--text-3)] hover:text-[var(--text)] text-xl">×</button>
             </div>
             <div className="grid grid-cols-[340px_1fr] min-h-0 flex-1">
-              <aside className="overflow-y-auto p-5 border-r border-gray-700/60 space-y-5">
+              <aside className="overflow-y-auto p-5 border-r border-[var(--border)] space-y-5">
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     ["Salário base", colaboradorAberto.salario], ["Proventos", colaboradorAberto.total_proventos],
@@ -595,24 +521,24 @@ export default function FolhaPage() {
                     ["Base FGTS", colaboradorAberto.base_fgts], ["FGTS mês", colaboradorAberto.fgts_mes],
                     ["Base IRRF", colaboradorAberto.base_irrf],
                   ].map(([label, value]) => (
-                    <div key={String(label)} className="rounded-lg bg-gray-800/50 p-3">
-                      <p className="text-[10px] uppercase tracking-wide text-gray-500">{label}</p>
-                      <p className={`mt-1 text-sm font-medium ${label === "Gorjeta" ? "text-purple-300" : "text-gray-100"}`}>{fmt(Number(value ?? 0))}</p>
+                    <div key={String(label)} className="rounded-lg bg-[var(--surface-2)] p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-[var(--text-3)]">{label}</p>
+                      <p className={`mt-1 text-sm font-medium ${label === "Gorjeta" ? "text-[var(--brand)]" : "text-[var(--text)]"}`}>{fmt(Number(value ?? 0))}</p>
                     </div>
                   ))}
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">Verbas mapeadas</p>
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--text-3)] mb-2">Verbas mapeadas</p>
                   {colaboradorAberto.verbas?.length ? colaboradorAberto.verbas.map((verba, index) => (
-                    <div key={`${verba.codigo ?? verba.descricao}-${index}`} className="py-2 border-b border-gray-800 text-xs">
-                      <p className="text-gray-300">{verba.codigo ? `${verba.codigo} · ` : ""}{verba.descricao}</p>
-                      <p className="text-gray-500">{verba.provento ? `Provento ${fmt(verba.provento)}` : ""}{verba.desconto ? `Desconto ${fmt(verba.desconto)}` : ""}</p>
+                    <div key={`${verba.codigo ?? verba.descricao}-${index}`} className="py-2 border-b border-[var(--border)] text-xs">
+                      <p className="text-[var(--text-2)]">{verba.codigo ? `${verba.codigo} · ` : ""}{verba.descricao}</p>
+                      <p className="text-[var(--text-3)]">{verba.provento ? `Provento ${fmt(verba.provento)}` : ""}{verba.desconto ? `Desconto ${fmt(verba.desconto)}` : ""}</p>
                     </div>
-                  )) : <p className="text-xs text-gray-600">Sem rubricas detalhadas neste arquivo.</p>}
+                  )) : <p className="text-xs text-[var(--text-3)]">Sem rubricas detalhadas neste arquivo.</p>}
                 </div>
               </aside>
-              <section className="min-w-0 bg-[#0d0d0c] flex items-center justify-center">
-                <p className="text-sm text-gray-500 px-6 text-center">
+              <section className="min-w-0 bg-[var(--bg)] flex items-center justify-center">
+                <p className="text-sm text-[var(--text-3)] px-6 text-center">
                   O extrato Domínio é um relatório consolidado — não há PDF individual por colaborador.
                 </p>
               </section>

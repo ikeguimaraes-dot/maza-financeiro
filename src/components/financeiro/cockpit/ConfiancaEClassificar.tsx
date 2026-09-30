@@ -3,13 +3,9 @@ import { ArrowUpRight, ShieldCheck, ListChecks } from "lucide-react";
 import { formatBRL, formatPct } from "@/lib/financeiro/utils";
 import type { KpiSnapshotRow, FonteSaudeRow } from "./types";
 import styles from "./cockpit.module.css";
+import { FontesSaude } from "./FontesSaude";
 
-type Props = { unidade: string; atual: KpiSnapshotRow; fontes: FonteSaudeRow[]; competencia: string; valorNaoClassificado: number };
-const SOURCE_STATUS: Record<string, { label: string; color: string }> = {
-  viva: { label: "Atualizada", color: "var(--color-success)" },
-  atrasada: { label: "Atrasada", color: "var(--color-warning)" },
-  morta: { label: "Sem atualização", color: "var(--color-danger)" },
-};
+type Props = { unidade: string; atual: KpiSnapshotRow; fontes?: FonteSaudeRow[]; competencia: string; valorNaoClassificado: number };
 
 export function ConfiancaEClassificar({ atual, fontes, valorNaoClassificado }: Props) {
   const confidence = atual.confianca_pct;
@@ -25,7 +21,7 @@ export function ConfiancaEClassificar({ atual, fontes, valorNaoClassificado }: P
           <div className={styles.healthRing} style={{ background: `conic-gradient(${color} ${percentage}%, var(--surface-2) 0)` }}><strong>{confidence == null ? "—" : formatPct(confidence * 100, 0)}</strong></div>
           <div><span className="maza-badge" data-tone={confidence == null ? undefined : low ? "warning" : "success"}>{confidence == null ? "Em apuração" : low ? "Requer atenção" : "Boa cobertura"}</span><p>{classified == null ? "Classificação em apuração" : `${formatPct(classified * 100, 0)} dos lançamentos classificados`}<br />{atual.fontes_ok ?? "—"} de {atual.fontes_total ?? "—"} fontes atualizadas</p></div>
         </div>
-        <details className={styles.sources}><summary>Consultar fontes de dados ({fontes.length})</summary>{fontes.map((source) => <div key={source.fonte}><span>{source.fonte.replace(/_/g, " ")}</span><span style={{ color: SOURCE_STATUS[source.status_fonte]?.color ?? "var(--text-3)" }}>{SOURCE_STATUS[source.status_fonte]?.label ?? source.status_fonte}{source.dias_sem_atualizacao != null ? ` · ${source.dias_sem_atualizacao}d` : ""}</span></div>)}</details>
+        <FontesSaude fontes={fontes} key={`${atual.unit_id}:${atual.competencia}`} />
       </div>
     </section>
     <section className="maza-panel">

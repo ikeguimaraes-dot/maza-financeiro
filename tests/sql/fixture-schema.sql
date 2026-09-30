@@ -104,3 +104,5 @@ CREATE UNIQUE INDEX reconciliacoes_sugeridas_pkey ON public.reconciliacoes_suger
 CREATE UNIQUE INDEX reconciliacoes_sugeridas_titulo_id_chave_nfe_key ON public.reconciliacoes_sugeridas USING btree (titulo_id, chave_nfe);
 CREATE UNIQUE INDEX titulos_a_pagar_pkey ON public.titulos_a_pagar USING btree (id);
 CREATE UNIQUE INDEX uq_titulos_chave ON public.titulos_a_pagar USING btree (n_titulo, parcela, fantasia_empresa, ref_mes) NULLS NOT DISTINCT;
+
+ALTER TABLE public.contas_bancarias ADD PRIMARY KEY(id);

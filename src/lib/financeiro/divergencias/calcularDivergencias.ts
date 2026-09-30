@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { competenciaTitulo } from "@/lib/financeiro/dates"
 // Lógica pura de leitura pra tela /financeiro/dre/divergencias — NÃO grava
 // lançamento nenhum. Decisão do Ike (FASE 7): parar de ajustar heurística
@@ -83,7 +84,7 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100
 }
 
-export async function calcularDivergenciasContasPagarNotas(
+export const calcularDivergenciasContasPagarNotas = cache(async function calcularDivergenciasContasPagarNotas(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   unitId: string,
@@ -313,4 +314,4 @@ export async function calcularDivergenciasContasPagarNotas(
       },
     },
   }
-}
+})

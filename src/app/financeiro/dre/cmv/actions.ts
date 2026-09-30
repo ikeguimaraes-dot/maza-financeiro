@@ -1,4 +1,5 @@
 "use server"
+import { unitDisplayName } from "@maza/auth/unit-display";
 
 import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar"
 
@@ -71,13 +72,15 @@ export async function getProdutoImportUnits(): Promise<ProdutoImportUnit[]> {
   if (!db) throw new Error("Conexao administrativa com o banco nao configurada")
   const { data, error } = await db.from("units").select("id,name").order("name")
   if (error) throw new Error(error.message)
-  return data ?? []
+  return ((data ?? []) as ProdutoImportUnit[]).map(unit => ({ ...unit, name: unitDisplayName(unit) }))
 }
 
 export type NfeImportPayload = {
   arquivo: string
   direcao: "entrada" | "saida"
+  adiarRecalculo?: boolean
   notas: Array<{
+    eventoCancelamento?: boolean; xmlOriginal?: string;
     chave: string; numero: string | null; serie: string | null; emissao: string
     emitenteCnpj: string | null; emitenteNome: string | null
     destinatarioCnpj: string | null; destinatarioNome: string | null
@@ -131,6 +134,19 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     // destinatário nas entradas) — nunca pela unidade selecionada no menu, e
     // nunca por um CNPJ "dominante" do pacote. Nota cujo CNPJ não bate com
     // nenhuma unit cadastrada não é importada.
+    // Events only update an existing document; they never invent its identity or value.
+    payload.notas = [...payload.notas].sort((a, b) => Number(!!a.eventoCancelamento) - Number(!!b.eventoCancelamento));
+    for (const note of payload.notas.filter(n => n.eventoCancelamento)) {
+      const original = payload.notas.find(n => !n.eventoCancelamento && n.chave === note.chave);
+      if (original) {
+        Object.assign(note, { numero: original.numero, serie: original.serie, emissao: original.emissao, valorTotal: original.valorTotal, emitenteCnpj: original.emitenteCnpj, emitenteNome: original.emitenteNome, destinatarioCnpj: original.destinatarioCnpj, destinatarioNome: original.destinatarioNome });
+        continue;
+      }
+      const { data: document, error } = await raw.from("nfe_documentos").select("*").eq("chave", note.chave).eq("direcao", payload.direcao).single();
+      if (error || !document) throw new Error(`Importe primeiro a NF-e original do cancelamento ${note.chave}.`);
+      Object.assign(note, { numero: document.numero, serie: document.serie, emissao: document.emissao, valorTotal: document.valor_total,
+        emitenteCnpj: document.emitente_cnpj, emitenteNome: document.emitente_nome, destinatarioCnpj: document.destinatario_cnpj, destinatarioNome: document.destinatario_nome });
+    }
     const ownCnpjOf = (note: NfeImportNota) =>
       payload.direcao === "saida" ? note.emitenteCnpj : note.destinatarioCnpj
     const ownNomeOf = (note: NfeImportNota) =>
@@ -180,11 +196,16 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     const keys = resolvidas.map(note => note.chave)
     const targetUnitIds = [...new Set(resolvidas.map(note => note.unitId))]
     const { data: existing, error: existingError } = await raw
-      .from("nfe_documentos").select("unit_id,chave").in("unit_id", targetUnitIds).in("chave", keys)
+      .from("nfe_documentos").select("unit_id,chave,cancelada,status_sefaz").in("unit_id", targetUnitIds).in("chave", keys)
     if (existingError) return { ...empty, error: `Migração 025 pendente: ${existingError.message}`, naoImportadas, cnpjsDesconhecidos }
     const existingKeys = new Set(
       (existing ?? []).map((row: { unit_id: string; chave: string }) => `${row.unit_id} ${row.chave}`)
     )
+    const canceledKeys = new Set((existing ?? []).filter((row: { cancelada: boolean }) => row.cancelada).map((row: { unit_id: string; chave: string }) => `${row.unit_id} ${row.chave}`));
+    for (const note of resolvidas) if (canceledKeys.has(`${note.unitId} ${note.chave}`)) {
+      note.cancelada = true;
+      if (!note.eventoCancelamento) note.statusSefaz = existing.find((r: { unit_id: string; chave: string }) => r.unit_id === note.unitId && r.chave === note.chave)?.status_sefaz ?? note.statusSefaz;
+    }
     const canceladas = resolvidas.filter(note => note.cancelada).length
     const validas = resolvidas.filter(note => !note.cancelada)
     const operations: Mutation[] = []
@@ -211,6 +232,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
         emitente_cnpj: note.emitenteCnpj, emitente_nome: note.emitenteNome,
         destinatario_cnpj: note.destinatarioCnpj, destinatario_nome: note.destinatarioNome,
         valor_total: note.valorTotal, status_sefaz: note.statusSefaz, cancelada: note.cancelada,
+        ...(note.xmlOriginal ? (note.eventoCancelamento ? { xml_cancelamento: note.xmlOriginal } : { xml_original: note.xmlOriginal }) : {}),
       }] })
       const rows = note.cancelada ? [] : note.itens.map((item, index) => ({
         unit_id: note.unitId, chave_nfe: note.chave, fornecedor_nome: note.emitenteNome, nr_danfe: note.numero,
@@ -226,7 +248,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
       operations.push(...replacement("produtos_relatorio", { unit_id: note.unitId, chave_nfe: note.chave }, rows))
       itemCount += rows.length
     }
-    await applyBatch(db, operations)
+    await applyBatch(db, operations, { refresh: false })
     const notasParaProdutos = validas
 
     // Catálogo automático: escopado às chaves deste lote (não reprocessa o
@@ -235,6 +257,7 @@ export async function importNfe(payload: NfeImportPayload): Promise<NfeImportRes
     // catálogo completo" na aba Catálogo cobre qualquer lacuna.
     const chavesDoLote = [...new Set(notasParaProdutos.map(note => note.chave))]
     const catalogo = chavesDoLote.length ? await gerarCatalogoAutomatico(chavesDoLote) : null
+    if (!payload.adiarRecalculo) await finalizarImportacaoNfe(targetUnitIds);
 
     return {
       ok: true, importadas: validas.length, duplicadas: existingKeys.size, canceladas, itens: itemCount,
@@ -251,12 +274,13 @@ export async function substituirProdutosPlanilha(rows: ProdutoInsert[]): Promise
   try {
     if (!rows.length) throw new Error("Planilha sem produtos válidos.")
     const db = await createFinanceiroClient()
-    const scopes = new Map<string, { unit_id: string; mes_lancamento: number; ano_lancamento: number; chave_nfe: null }>()
     for (const r of rows) {
       if (!r.unit_id || !Number.isInteger(r.mes_lancamento) || r.mes_lancamento < 1 || r.mes_lancamento > 12 || !Number.isInteger(r.ano_lancamento)) throw new Error("Unidade ou período inválido.")
-      scopes.set(`${r.unit_id}|${r.ano_lancamento}|${r.mes_lancamento}`, { unit_id: r.unit_id, mes_lancamento: r.mes_lancamento, ano_lancamento: r.ano_lancamento, chave_nfe: null })
     }
-    await applyBatch(db, [...scopes.values()].flatMap(scope => replacement("produtos_relatorio", scope, rows.filter(r => r.unit_id === scope.unit_id && r.mes_lancamento === scope.mes_lancamento && r.ano_lancamento === scope.ano_lancamento))))
+    const { error } = await db.rpc("financeiro_importar_produtos", { p_rows: rows });
+    if (error) throw new Error(error.message);
+    const { refreshUnits } = await import("@/lib/financeiro/razao/refresh");
+    await refreshUnits(db, [...new Set(rows.map(r => r.unit_id))]);
     return { ok: true, count: rows.length }
   } catch (error) { return { ok: false, count: 0, error: error instanceof Error ? error.message : String(error) } }
 }
@@ -1855,4 +1879,14 @@ export async function getEvolucaoPorCompra(unitId: string | null): Promise<Produ
   } catch {
     return []
   }
+}
+
+export async function finalizarImportacaoNfe(unitIds?: string[]): Promise<void> {
+  await requireUser();
+  const db = await createFinanceiroClient();
+  const { data, error } = await db.from("units").select("id");
+  if (error) throw new Error(error.message);
+  const ids = (data ?? []).map(row => row.id).filter(id => !unitIds || unitIds.includes(id));
+  const { refreshUnits } = await import("@/lib/financeiro/razao/refresh");
+  await refreshUnits(db, ids);
 }

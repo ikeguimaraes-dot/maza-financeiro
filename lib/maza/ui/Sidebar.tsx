@@ -1,8 +1,11 @@
 "use client";
+import { unitDisplayName } from "@maza/auth/unit-display";
 
 import { usePathname } from "next/navigation";
+import Link from "next/link";
+import { shouldUseFinanceiroRouter } from "./nav/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Check, LogOut, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronLeft, Building2, LayoutGrid, Check, LogOut, X } from "lucide-react";
 import { useMobileNavigation } from "@/components/ui/useMobileNavigation";
 import type { CurrentUser } from "@maza/auth/server";
 import type { Unit } from "@maza/db/types/database";
@@ -10,6 +13,7 @@ import { useAuth, useUnit } from "@maza/auth/context";
 import { convertRemoteGroups, flattenHrefs, type NavGroup, type NavItem, type RemoteNavGroup } from "./nav/types";
 
 function getZone(pathname: string): string {
+  pathname = pathname.split(/[?#]/, 1)[0] ?? pathname;
   if (pathname === "/dashboard") return "financeiro";
   if (pathname === "/orquestrador" || pathname.startsWith("/orquestrador/")) {
     return "inteligencia";
@@ -38,10 +42,15 @@ function NavigationLink({
   style?: CSSProperties;
 }) {
   const destination = getNavigationHref(href, pathname, shellUrl);
+  if (shouldUseFinanceiroRouter(href, pathname)) {
+    return <Link href={destination} prefetch={false} aria-current={pathname === href ? "page" : undefined} style={style}>{children}</Link>;
+  }
   return <a href={destination} aria-current={pathname === href ? "page" : undefined} style={style}>{children}</a>;
 }
 
 const STORAGE_KEY = "maza_sidebar_groups";
+
+
 
 // ── Main Sidebar component ──────────────────────────────────────────────────
 
@@ -79,6 +88,20 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
 }) {
   const navGroups = useMemo(() => convertRemoteGroups(rawNavGroups), [rawNavGroups]);
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(true);
+  const [revealGroup, setRevealGroup] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      // Restore the desktop preference after hydration.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCollapsed(localStorage.getItem("phi_sidebar_collapsed") !== "false");
+    } catch {}
+  }, []);
+  const changeCollapsed = (next: boolean) => {
+    setCollapsed(next);
+    if (next) setRevealGroup(null);
+    try { localStorage.setItem("phi_sidebar_collapsed", String(next)); } catch {}
+  };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -149,16 +172,22 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
         ref={sidebarRef}
         id="maza-sidebar"
         aria-label="Navegação principal"
-        className={`shell-sidebar ${mobileOpen ? "open" : ""}`}
+        className={`shell-sidebar ${mobileOpen ? "open" : ""} ${collapsed ? "is-compact" : ""}`}
         style={{
           width: 240, flexShrink: 0,
           background: "var(--sidebar)", borderRight: "1px solid var(--sidebar-border)",
           display: "flex", flexDirection: "column",
         }}
       >
+        <button type="button" className="phi-sidebar-toggle" aria-label={collapsed ? "Expandir menu" : "Recolher menu"} aria-expanded={!collapsed} aria-controls="phi-menu-expanded" onClick={() => changeCollapsed(!collapsed)}>
+          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+        </button>
         <div className="maza-brand">
-          <span className="maza-brand-symbol" aria-hidden="true">m</span>
-          <div><div className="maza-brand-word">maza.</div><div className="maza-brand-caption">Gestão com propósito</div></div>
+          {/* Plain image keeps the asset URL inside the financial zone proxy. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/financeiro/brand/phi-logo.png" alt="Phi" className="phi-sidebar-logo" width={144} height={66} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/financeiro/brand/phi-icon.png" alt="Phi" className="phi-compact-logo" width={36} height={36} />
           <button type="button" className="maza-icon-button maza-sidebar-close" aria-label="Fechar menu" onClick={closeMobile}><X size={18} /></button>
         </div>
 
@@ -176,7 +205,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
         )}
 
         {/* (a) Unit switcher — unchanged */}
-        <div style={{ padding: "12px 16px" }}>
+        <div className="phi-unit-switcher" style={{ padding: "12px 16px" }}>
           <div ref={ref} style={{ position: "relative" }}>
             <button
               onClick={() => setOpen((v) => !v)}
@@ -191,12 +220,13 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
                 transition: "border-color var(--t)",
               }}
             >
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0 }}>
+              <Building2 className="phi-unit-icon" size={21} aria-hidden="true" />
+              <span className="phi-unit-label" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0 }}>
                 <span style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 700, letterSpacing: 0.8 }}>
                   UNIDADE
                 </span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
-                  {unit?.name ?? (units.length ? "Selecionar…" : hasRegisteredUnits ? "Sem acesso" : "Nenhuma cadastrada")}
+                  {unit ? unitDisplayName(unit) : (units.length ? "Selecionar…" : hasRegisteredUnits ? "Sem acesso" : "Nenhuma cadastrada")}
                 </span>
               </span>
               <ChevronDown
@@ -206,6 +236,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
             </button>
             {open && units.length > 0 && (
               <div
+                className="phi-unit-dropdown"
                 style={{
                   position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50,
                   background: "var(--surface-2)", border: "1px solid var(--border-strong)",
@@ -227,7 +258,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
                         textAlign: "left", transition: "background var(--t)",
                       }}
                     >
-                      <span>{u.name}</span>
+                      <span>{unitDisplayName(u)}</span>
                       {active && <Check size={14} style={{ color: "var(--brand)" }} />}
                     </button>
                   );
@@ -238,10 +269,23 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
         </div>
 
         {/* (b) Navigation — driven by effectiveGroups */}
-        <SidebarNav pathname={pathname} groups={effectiveGroups} shellUrl={shellUrl} />
+        <nav className="phi-compact-nav" aria-label="Módulos">
+          {effectiveGroups.map(group => {
+            const Icon = group.icon ?? group.items[0]?.icon ?? LayoutGrid;
+            const label = group.title ?? group.items[0]?.label ?? "Menu";
+            const active = flattenHrefs([group]).some(item => pathname === item.href || pathname.startsWith(item.href + "/"));
+            return <button key={group.id} type="button" title={label} aria-label={label} disabled={!group.habilitado} data-active={active} onClick={() => {
+              setRevealGroup(group.id);
+              changeCollapsed(false);
+            }}><Icon size={22} strokeWidth={1.7} /></button>;
+          })}
+        </nav>
+        <div id="phi-menu-expanded" className="phi-expanded-nav">
+          <SidebarNav pathname={pathname} groups={effectiveGroups} shellUrl={shellUrl} revealGroup={revealGroup} />
+        </div>
 
         {/* (c) User footer — unchanged */}
-        <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sidebar-border)", display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="phi-sidebar-user" style={{ padding: "12px 14px", borderTop: "1px solid var(--sidebar-border)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ position: "relative" }}>
             <div
               style={{
@@ -260,7 +304,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
               }}
             />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="phi-user-label" style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {displayName}
             </div>
@@ -288,7 +332,7 @@ export function SidebarPresentation({ navGroups: rawNavGroups, shellUrl, navOffl
 
 // ── SidebarNav ──────────────────────────────────────────────────────────────
 
-function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: NavGroup[]; shellUrl: string }) {
+function SidebarNav({ pathname, groups, shellUrl, revealGroup }: { pathname: string; groups: NavGroup[]; shellUrl: string; revealGroup: string | null }) {
   // Flatten all leaf hrefs for active-detection
   const allHrefs = useMemo(() => flattenHrefs(groups), [groups]);
 
@@ -330,6 +374,12 @@ function SidebarNav({ pathname, groups, shellUrl }: { pathname: string; groups: 
     return m;
   });
   const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (!revealGroup) return;
+    // Open the module chosen in the compact rail.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpenMap(prev => ({ ...prev, [revealGroup]: true }));
+  }, [revealGroup]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

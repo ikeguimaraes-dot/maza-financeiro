@@ -1,3 +1,5 @@
+import { SeletorCompetencia } from "@/components/financeiro/SeletorCompetencia";
+import { competenciasDisponiveis } from "@/lib/financeiro/competencias";
 import { PageHeading } from "@/components/ui/PageHeading"
 import Link from "next/link"
 
@@ -10,7 +12,7 @@ import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallba
 
 export const dynamic = "force-dynamic"
 
-const PERIODOS = [30, 60, 90] as const
+
 
 function hojeIso(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -22,13 +24,7 @@ function hojeIso(): string {
   return `${parts.year}-${parts.month}-${parts.day}`
 }
 
-function somarDias(dataIso: string, dias: number): string {
-  const d = new Date(`${dataIso}T12:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + dias)
-  return d.toISOString().slice(0, 10)
-}
-
-type SearchParams = Promise<{ conta?: string; dias?: string }>
+type SearchParams = Promise<{ conta?: string; competencia?: string }>
 
 export default async function FluxoCaixaPage({ searchParams }: { searchParams: SearchParams }) {
   await requireUser()
@@ -40,19 +36,20 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
   const unitId = unit?.id ?? null
   const unitName = unit?.name ?? "—"
 
-  const periodoDias = sp.dias && (PERIODOS as readonly number[]).includes(Number(sp.dias)) ? Number(sp.dias) : 90
-  const dataInicio = hojeIso()
-  const dataFim = somarDias(dataInicio, periodoDias)
+  const competencias = competenciasDisponiveis(sp.competencia);
+  const competencia = sp.competencia && competencias.includes(sp.competencia) ? sp.competencia : `${hojeIso().slice(0, 7)}-01`;
+  const dataInicio = competencia;
+  const dataFim = new Date(Date.UTC(Number(competencia.slice(0,4)), Number(competencia.slice(5,7)), 0)).toISOString().slice(0,10);
 
   const contas = unitId ? await getContasBancarias(unitId) : []
   const contaId = sp.conta && contas.some((c) => c.id === sp.conta) ? sp.conta : null
 
   const dados = unitId ? await getFluxoCaixa(unitId, contaId, dataInicio, dataFim) : null
 
-  const href = (contaVal: string | null, diasVal: number) => {
+  const href = (contaVal: string | null) => {
     const params = new URLSearchParams()
     if (contaVal) params.set("conta", contaVal)
-    params.set("dias", String(diasVal))
+    params.set("competencia", competencia)
     return `/financeiro/fluxo?${params.toString()}`
   }
   const linkStyle = (ativo: boolean): React.CSSProperties => ({
@@ -70,18 +67,14 @@ export default async function FluxoCaixaPage({ searchParams }: { searchParams: S
         <AvisoUnidadeFallback cookiePresente={cookiePresente} />
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Link href={href(null, periodoDias)} style={linkStyle(contaId === null)}>Todas as contas</Link>
+            <Link href={href(null)} style={linkStyle(contaId === null)}>Todas as contas</Link>
             {contas.map((c) => (
-              <Link key={c.id} href={href(c.id, periodoDias)} style={linkStyle(c.id === contaId)}>
+              <Link key={c.id} href={href(c.id)} style={linkStyle(c.id === contaId)}>
                 {c.apelido ?? c.banco}
               </Link>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {PERIODOS.map((d) => (
-              <Link key={d} href={href(contaId, d)} style={linkStyle(d === periodoDias)}>{d} dias</Link>
-            ))}
-          </div>
+          <SeletorCompetencia valor={competencia} opcoes={competencias} />
         </div>
       </div>
 

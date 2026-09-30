@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 import { normalizarCategoria, CATEGORIAS_MAPEADAS } from "./normalizarCategoria";
 
 const MES_DA_ABA: Record<string, string> = {
-  MAIO: "05", JUNHO: "06", JULHO: "07", AGOSTO: "08",
+  JANEIRO: "01", FEVEREIRO: "02", MARCO: "03", ABRIL: "04", MAIO: "05", JUNHO: "06", JULHO: "07", AGOSTO: "08", SETEMBRO: "09", OUTUBRO: "10", NOVEMBRO: "11", DEZEMBRO: "12",
 };
 
 export type ResultadoParseWorkbook = {
@@ -74,8 +74,10 @@ export function contemIkyDelivery(textoOriginal: string): boolean {
 }
 
 function abaParaCompetencia(nomeAba: string): string | null {
-  const mes = MES_DA_ABA[nomeAba.toUpperCase().trim()];
-  return mes ? `2026-${mes}-01` : null;
+  const nome = nomeAba.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+  const mes = MES_DA_ABA[(nome.split(/[\s/\-]+/)[0] ?? "")];
+  const ano = nome.match(/20\d{2}/)?.[0] ?? "2026";
+  return mes ? `${ano}-${mes}-01` : null;
 }
 
 export function parseContasAPagarWorkbook(arrayBuffer: ArrayBuffer): ResultadoParseWorkbook {

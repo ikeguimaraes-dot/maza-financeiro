@@ -26,6 +26,8 @@ export type ParsedNfe = {
   valorTotal: number
   statusSefaz: string | null
   cancelada: boolean
+  eventoCancelamento?: boolean
+  xmlOriginal?: string
   itens: NfeItem[]
 }
 
@@ -56,6 +58,14 @@ const digits = (value: unknown): string | null => {
 // Lê tanto nfeProc (NF-e autorizada) quanto NFe isolada.
 export function parseNfeXml(xml: string, arquivo: string): ParsedNfe {
   const root = parser.parse(xml)
+  const evento = root?.procEventoNFe?.evento?.infEvento;
+  const retorno = root?.procEventoNFe?.retEvento?.infEvento;
+  if (evento && String(evento.tpEvento) === "110111" && ["135", "155"].includes(String(retorno?.cStat))) {
+    const chave = digits(evento.chNFe);
+    if (!chave || chave.length !== 44) throw new Error("Evento sem chave fiscal válida");
+    return { arquivo, chave, numero: null, serie: null, emissao: str(evento.dhEvento) ?? "", emitenteCnpj: null, emitenteNome: null, destinatarioCnpj: null, destinatarioNome: null,
+      valorTotal: 0, statusSefaz: String(retorno.cStat), cancelada: true, eventoCancelamento: true, xmlOriginal: xml, itens: [] };
+  }
   const nfe = root?.nfeProc?.NFe ?? root?.NFe
   const inf = nfe?.infNFe
   if (!inf?.ide || !inf?.emit) throw new Error("XML não contém uma NF-e válida")
@@ -72,6 +82,7 @@ export function parseNfeXml(xml: string, arquivo: string): ParsedNfe {
 
   return {
     arquivo,
+    xmlOriginal: xml,
     chave,
     numero: str(inf.ide.nNF),
     serie: str(inf.ide.serie),
@@ -82,7 +93,7 @@ export function parseNfeXml(xml: string, arquivo: string): ParsedNfe {
     destinatarioNome: str(inf.dest?.xNome),
     valorTotal: num(inf.total?.ICMSTot?.vNF) ?? 0,
     statusSefaz: status,
-    cancelada: status === "101" || status === "135" || status === "155",
+    cancelada: status === "101" || status === "155",
     itens: det.map((entry: Record<string, unknown>) => {
       const prod = (entry.prod ?? {}) as Record<string, unknown>
       return {
@@ -108,7 +119,9 @@ export function inferDirection(notes: ParsedNfe[]): NfeDirection | null {
     for (const value of values) if (value) counts.set(value, (counts.get(value) ?? 0) + 1)
     return Math.max(0, ...counts.values())
   }
-  if (mostFrequent(active.map(note => note.emitenteCnpj)) >= threshold) return "saida"
-  if (mostFrequent(active.map(note => note.destinatarioCnpj)) >= threshold) return "entrada"
+  const emitente = mostFrequent(active.map(note => note.emitenteCnpj)) >= threshold;
+  const destinatario = mostFrequent(active.map(note => note.destinatarioCnpj)) >= threshold;
+  if (emitente && !destinatario) return "saida"
+  if (destinatario && !emitente) return "entrada"
   return null
 }

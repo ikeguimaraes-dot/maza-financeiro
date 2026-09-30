@@ -1,3 +1,6 @@
+import { SeletorCompetencia } from "@/components/financeiro/SeletorCompetencia";
+import { ultimaCompetencia } from "@/lib/financeiro/competencia-atual";
+import { competenciasDisponiveis } from "@/lib/financeiro/competencias";
 import { PageHeading } from "@/components/ui/PageHeading";
 import Link from "next/link";
 import { requireUser } from "@maza/auth/server";
@@ -11,19 +14,21 @@ import { competenciaLabel } from "@/lib/financeiro/utils";
 
 export const dynamic = "force-dynamic";
 
-// Mesmo range com dado real carregado nesta fase.
-const COMPETENCIAS = ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"] as const;
+
+
 
 const ORIGENS: Array<{ id: OrigemTitulo; nome: string }> = [
   { id: "contas_pagar", nome: "Contas a Pagar" },
-  { id: "nf_pedidos", nome: "NF_PEDIDOS" },
+  { id: "nf_pedidos", nome: "Compras da planilha" },
 ];
 
-type SearchParams = Promise<{ competencia?: string; origem?: string }>;
+type SearchParams = Promise<{ competencia?: string; origem?: string; visao?: string }>;
 
 export default async function ContasAPagarPage({ searchParams }: { searchParams: SearchParams }) {
   await requireUser();
   const sp = await searchParams;
+
+  const COMPETENCIAS = competenciasDisponiveis(sp.competencia);
 
   // Unidade é contexto global (cookie do shell) — competência e origem
   // continuam sendo filtros legítimos desta tela.
@@ -32,9 +37,10 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
   const unitNome = unit?.name ?? "—";
   const comp = sp.competencia && (COMPETENCIAS as readonly string[]).includes(sp.competencia)
     ? sp.competencia
-    : COMPETENCIAS[COMPETENCIAS.length - 1]!;
+    : await ultimaCompetencia(unitId);
   const origem: OrigemTitulo = sp.origem === "nf_pedidos" ? "nf_pedidos" : "contas_pagar";
 
+  const visao = sp.visao === "vencimento" ? "vencimento" : "competencia";
   const mes = parseInt(comp.slice(5, 7), 10);
   const ano = parseInt(comp.slice(0, 4), 10);
 
@@ -42,6 +48,7 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
     const params = new URLSearchParams();
     params.set("competencia", competenciaVal);
     params.set("origem", origemVal);
+    params.set("visao", visao);
     return `/financeiro/pagar?${params.toString()}`;
   };
   const linkStyle = (ativo: boolean): React.CSSProperties => ({
@@ -52,7 +59,7 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
     border: "1px solid var(--border)",
   });
 
-  const dados = unitId ? await getPagar(unitId, comp, origem) : null;
+  const dados = unitId ? await getPagar(unitId, comp, origem, visao) : null;
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -61,24 +68,20 @@ export default async function ContasAPagarPage({ searchParams }: { searchParams:
         <AvisoUnidadeFallback cookiePresente={cookiePresente} />
 
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {COMPETENCIAS.map((c) => (
-              <Link key={c} href={href(c, origem)} style={linkStyle(c === comp)}>
-                {competenciaLabel(c)}
-              </Link>
-            ))}
-          </div>
+          <SeletorCompetencia valor={comp} opcoes={COMPETENCIAS} />
         </div>
 
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <Link href={`/financeiro/pagar?competencia=${comp}&origem=${origem}&visao=competencia`} style={linkStyle(visao === "competencia")}>Por competência</Link>
+          <Link href={`/financeiro/pagar?competencia=${comp}&origem=${origem}&visao=vencimento`} style={linkStyle(visao === "vencimento")}>Por vencimento</Link>
           <span style={{ fontSize: 11, color: "var(--text-3)", marginRight: 4 }}>Fonte:</span>
           {ORIGENS.map((o) => (
             <Link key={o.id} href={href(comp, o.id)} style={linkStyle(o.id === origem)}>{o.nome}</Link>
           ))}
           <span style={{ fontSize: 11, color: "var(--text-3)", marginLeft: 8 }}>
             {origem === "contas_pagar"
-              ? "o que se paga — não some com NF_PEDIDOS, que descreve a mesma compra por outro ângulo"
-              : "planilha de pedidos — não some com Contas a Pagar, é a mesma compra por outro ângulo"}
+              ? "obrigações de pagamento; as compras da planilha podem representar as mesmas notas"
+              : "compras informadas em planilha; não são pagamentos nem novas dívidas"}
           </span>
         </div>
       </div>

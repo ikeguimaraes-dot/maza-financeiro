@@ -15,10 +15,11 @@ import { calcularPagar, type OrigemTitulo, type PagarResultado } from "@/lib/fin
 export async function getPagar(
   unitId: string,
   competencia: string,
-  origem: OrigemTitulo
+  origem: OrigemTitulo,
+  visao: "competencia" | "vencimento" = "competencia"
 ): Promise<PagarResultado | null> {
   await requireUser()
   const db = await createFinanceiroClient()
   if (!db) return null
-  return calcularPagar(db, unitId, competencia, origem)
+  return calcularPagar(db, unitId, competencia, origem, visao)
 }

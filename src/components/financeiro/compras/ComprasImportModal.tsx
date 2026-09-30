@@ -109,7 +109,7 @@ export function ComprasImportModal({ tipo, unitIdBase, onClose, onSuccess }: Pro
             <p style={{ fontSize: 13, color: "var(--text-2)" }}>{resultado.inseridos} títulos importados</p>
             {resultado.roteadosParaIky > 0 && (
               <p style={{ fontSize: 12, color: "#f59e0b", marginTop: 6 }}>
-                {resultado.roteadosParaIky} linha{resultado.roteadosParaIky !== 1 ? "s" : ""} roteada{resultado.roteadosParaIky !== 1 ? "s" : ""} pra IKY Delivery (categoria continha &quot;IKY DELIVERY&quot;) — R${resultado.valorRoteadoParaIky.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                {resultado.roteadosParaIky} linha{resultado.roteadosParaIky !== 1 ? "s" : ""} roteada{resultado.roteadosParaIky !== 1 ? "s" : ""} pra Delivery (categoria continha &quot;IKY DELIVERY&quot;) — R${resultado.valorRoteadoParaIky.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
               </p>
             )}
           </div>

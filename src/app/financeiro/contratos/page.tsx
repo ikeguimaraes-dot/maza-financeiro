@@ -5,22 +5,19 @@ import { createClient } from "@supabase/supabase-js";
 
 const API_BASE = "/financeiro";
 
-// ── Tokens exatos do protótipo ──────────────────────────────────────────────
+// Cores herdadas do tema compartilhado, inclusive no modo escuro.
 const VARS = {
-  "--bg": "#0E1014", "--surface": "#15181F", "--surface-2": "#1B1F28", "--surface-3": "#222734",
-  "--border": "#272C37", "--border-soft": "#1F2530",
-  "--text": "#ECEEF1", "--text-2": "#AAB1BD", "--muted": "#727A88",
-  "--gold": "#C9A24B", "--gold-2": "#E0BE72", "--gold-soft": "rgba(201,162,75,.13)",
-  "--green": "#48BC8C", "--green-soft": "rgba(72,188,140,.13)",
-  "--amber": "#E3A93C", "--amber-soft": "rgba(227,169,60,.14)",
-  "--red": "#E2594E", "--red-soft": "rgba(226,89,78,.13)",
-  "--blue": "#6E8BFB", "--blue-soft": "rgba(110,139,251,.13)",
+  "--gold": "var(--brand)", "--gold-2": "var(--brand-strong)", "--gold-soft": "var(--brand-soft)",
+  "--green": "var(--color-success)", "--green-soft": "var(--color-success-bg)",
+  "--amber": "var(--color-warning)", "--amber-soft": "var(--color-warning-bg)",
+  "--red": "var(--color-danger)", "--red-soft": "var(--color-danger-bg)",
+  "--blue": "var(--color-info)", "--blue-soft": "var(--color-info-bg)",
 } as React.CSSProperties;
 const R = 14;
 const C = {
   bg: "var(--bg)", surface: "var(--surface)", surface2: "var(--surface-2)", surface3: "var(--surface-3)",
   border: "var(--border)", borderSoft: "var(--border-soft)",
-  text: "var(--text)", text2: "var(--text-2)", muted: "var(--muted)",
+  text: "var(--text)", text2: "var(--text-2)", muted: "var(--text-3)",
   gold: "var(--gold)", gold2: "var(--gold-2)", goldSoft: "var(--gold-soft)",
   green: "var(--green)", greenSoft: "var(--green-soft)",
   amber: "var(--amber)", amberSoft: "var(--amber-soft)",
@@ -43,8 +40,8 @@ function tone(t: Tone): { color: string; soft: string } {
 
 // ── Domínio ─────────────────────────────────────────────────────────────────
 const UNITS = [
-  { key: "674eac8c-5a38-4a42-aa60-0a666387909b", label: "Meet & Eat" },
-  { key: "f9c6c7fc-2ecc-4f79-98ce-c3118b670182", label: "Madonna" },
+  { key: "674eac8c-5a38-4a42-aa60-0a666387909b", label: "Delivery" },
+  { key: "674eac8c-5a38-4a42-aa60-0a666387909c", label: "Restaurante" },
   { key: "kph", label: "KPH Holding" },
 ] as const;
 const unitLabel = (id: string | null) => (id ? UNITS.find((u) => u.key === id)?.label ?? "—" : "KPH Holding");
@@ -122,7 +119,7 @@ const sb = () => (_sb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "
 
 // ── CSS (animações/hover que inline não cobre) ──────────────────────────────
 const CSS = `
-@keyframes ctrPulse{0%{box-shadow:0 0 0 0 rgba(227,169,60,.45)}70%{box-shadow:0 0 0 7px rgba(227,169,60,0)}100%{box-shadow:0 0 0 0 rgba(227,169,60,0)}}
+@keyframes ctrPulse{0%{box-shadow:0 0 0 0 var(--color-warning-bg)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .ctr-row{position:relative;transition:.14s}
 .ctr-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.14s}
 .ctr-row:hover{background:var(--surface-2)}
@@ -132,11 +129,11 @@ const CSS = `
 .ctr-file{transition:.14s}
 .ctr-file:hover{border-color:var(--gold);background:var(--surface-3)}
 .ctr-in{transition:.15s}
-.ctr-in:focus{border-color:rgba(201,162,75,.5);background:var(--surface-2)}
+.ctr-in:focus{border-color:var(--brand);background:var(--surface-2)}
 .ctr-chip{transition:.15s}
 .ctr-chip:hover{color:var(--text);border-color:var(--muted)}
 .ctr-prim{transition:.16s}
-.ctr-prim:hover{transform:translateY(-1px);box-shadow:0 10px 24px -6px rgba(201,162,75,.6)}
+.ctr-prim:hover{transform:translateY(-1px);box-shadow:0 10px 24px -6px var(--brand-soft)}
 .ctr-tl-row{transition:.14s}
 .ctr-tl-row:hover{background:var(--surface-2)}
 `;
@@ -219,7 +216,7 @@ export default function ContratosPage() {
   }, [porUnidade, busca, catFiltro]);
 
   return (
-    <div style={{ ...VARS, margin: "-32px -28px", minHeight: "100vh", padding: "0 0 80px", color: C.text, fontFamily: "var(--font-inter), system-ui, sans-serif", fontSize: 14, lineHeight: 1.5, background: C.bg, backgroundImage: "radial-gradient(900px 400px at 88% -8%, rgba(201,162,75,.07), transparent 60%), radial-gradient(700px 500px at -5% 110%, rgba(110,139,251,.05), transparent 55%)" }}>
+    <div style={{ ...VARS, margin: "-32px -28px", minHeight: "100vh", padding: "0 0 80px", color: C.text, fontFamily: "var(--font-inter), system-ui, sans-serif", fontSize: 14, lineHeight: 1.5, background: C.bg }}>
       <style>{CSS}</style>
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "0 32px" }}>
         {/* Header */}
@@ -268,7 +265,7 @@ export default function ContratosPage() {
                     <span style={{ flex: 1, fontSize: 13.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       <b style={{ fontWeight: 600 }}>{c.titulo}</b> · {unitLabel(c.unit_id)}{aviso ? ` — exige ${c.aviso_previo_dias} dias de aviso para encerrar` : ""}
                     </span>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", color: urgent ? "#EE8077" : "#E8B84F" }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", color: urgent ? C.red : C.amber }}>
                       {key < 0 ? `${Math.abs(key)} dias atrás` : `em ${key} dias`}
                     </span>
                     <span style={{ color: C.muted }}>→</span>
@@ -417,7 +414,7 @@ function Timeline({ lista, hoje, onClick }: { lista: Contrato[]; hoje: Date; onC
             <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 14 }}>{c.titulo}</div>
             <div style={{ position: "relative", height: 24 }}>
               <div style={{ position: "absolute", top: -6, bottom: -6, left: `${pos(hoje.getTime())}%`, width: 2, background: C.text, opacity: .55, zIndex: 3 }} />
-              <div style={{ position: "absolute", height: 24, borderRadius: 6, display: "flex", alignItems: "center", padding: "0 9px", fontSize: 11, fontWeight: 600, color: "#0E1014", overflow: "hidden", whiteSpace: "nowrap", left: `${left}%`, width: `${width}%`, background: bt.color, opacity: .92 }}>
+              <div style={{ position: "absolute", height: 24, borderRadius: 6, display: "flex", alignItems: "center", padding: "0 9px", fontSize: 11, fontWeight: 600, color: "var(--primary-foreground)", overflow: "hidden", whiteSpace: "nowrap", left: `${left}%`, width: `${width}%`, background: bt.color, opacity: .92 }}>
                 {c.valor && c.valor > 0 ? fmtRS(c.valor) : ""}
               </div>
             </div>
@@ -492,7 +489,7 @@ function Drawer({ id, hoje, onClose, onChanged }: { id: string; hoje: Date; onCl
                 <span>{fmtData(c.data_inicio)}</span><span>{c.vigencia_indeterminada || !c.data_fim ? "sem término definido" : fmtData(c.data_fim)}</span>
               </div>
               {avisoWin && (
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: C.amberSoft, border: "1px solid rgba(227,169,60,.28)", borderRadius: 10, padding: "12px 14px", marginTop: 14, fontSize: 12.5, color: "#EFC368" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: C.amberSoft, border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", marginTop: 14, fontSize: 12.5, color: C.amber }}>
                   <span style={{ flexShrink: 0, marginTop: 1 }}><Icon name="warn" /></span>
                   <span>Para encerrar este contrato é preciso avisar com <b>{c.aviso_previo_dias} dias</b> de antecedência. A janela {(d.avisoDays ?? 0) < 0 ? `já abriu há ${Math.abs(d.avisoDays ?? 0)} dias` : `abre em ${d.avisoDays} dias`}.</span>
                 </div>
@@ -520,7 +517,7 @@ function Drawer({ id, hoje, onClose, onChanged }: { id: string; hoje: Date; onCl
             <div style={drSecLab}>Documentos &nbsp;({arquivos.length})</div>
             {arquivos.length === 0 ? <p style={{ fontSize: 12.5, color: C.muted }}>Nenhum arquivo anexado.</p> : arquivos.map((a) => (
               <div key={a.id} className="ctr-file" onClick={() => baixar(a.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface2, border: `1px solid ${C.borderSoft}`, borderRadius: 10, padding: "12px 14px", marginBottom: 8, cursor: "pointer" }}>
-                <span style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, color: "#EE8077", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 10, fontWeight: 700 }}>PDF</span>
+                <span style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, color: C.red, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 10, fontWeight: 700 }}>PDF</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.nome}</div>
                   <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{a.tipo === "aditivo" ? "Aditivo · " : a.tipo === "anexo" ? "Anexo · " : ""}{fmtBytes(a.tamanho_bytes)}</div>
@@ -695,12 +692,12 @@ function Seg({ value, onChange, options }: { value: string; onChange: (v: string
 }
 function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button className="ctr-chip" onClick={onClick} style={{ background: on ? C.goldSoft : C.surface, border: `1px solid ${on ? "rgba(201,162,75,.45)" : C.border}`, color: on ? C.gold2 : C.text2, fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, padding: "8px 13px", borderRadius: 9, cursor: "pointer", whiteSpace: "nowrap" }}>{children}</button>
+    <button className="ctr-chip" onClick={onClick} style={{ background: on ? C.goldSoft : C.surface, border: `1px solid ${on ? "var(--brand)" : C.border}`, color: on ? C.gold2 : C.text2, fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, padding: "8px 13px", borderRadius: 9, cursor: "pointer", whiteSpace: "nowrap" }}>{children}</button>
   );
 }
 function Stat({ dot, lab, val, sub, valColor, alert }: { dot: string; lab: string; val: React.ReactNode; sub: React.ReactNode; valColor?: string; alert?: boolean }) {
   return (
-    <div style={{ background: alert ? `linear-gradient(180deg, ${C.redSoft}, transparent), ${C.surface}` : C.surface, border: `1px solid ${alert ? "rgba(226,89,78,.3)" : C.borderSoft}`, borderRadius: R, padding: "17px 18px 16px", overflow: "hidden" }}>
+    <div style={{ background: alert ? `linear-gradient(180deg, ${C.redSoft}, transparent), ${C.surface}` : C.surface, border: `1px solid ${alert ? "var(--color-danger)" : C.borderSoft}`, borderRadius: R, padding: "17px 18px 16px", overflow: "hidden" }}>
       <div style={{ fontSize: 11.5, color: C.muted, letterSpacing: ".04em", display: "flex", alignItems: "center", gap: 7 }}>
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: dot }} />{lab}
       </div>
@@ -743,7 +740,7 @@ function Icon({ name, big }: { name: string; big?: boolean }) {
 }
 
 // ── Estilos compartilhados ──────────────────────────────────────────────────
-const btnPrimary: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", background: "linear-gradient(180deg,#D7B25E,#C19736)", color: "#1A1407", border: "none", fontFamily: "inherit", fontWeight: 600, fontSize: 13.5, padding: "10px 17px", borderRadius: 11, boxShadow: "0 6px 18px -6px rgba(201,162,75,.5)" };
+const btnPrimary: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", background: "var(--brand)", color: "var(--primary-foreground)", border: "none", fontFamily: "inherit", fontWeight: 600, fontSize: 13.5, padding: "10px 17px", borderRadius: 11, boxShadow: "var(--shadow-brasa)" };
 const btnGhost: React.CSSProperties = { background: C.surface2, border: `1px solid ${C.border}`, color: C.text2, fontFamily: "inherit", fontWeight: 500, fontSize: 13.5, padding: "10px 17px", borderRadius: 11, cursor: "pointer" };
 const fgInput: React.CSSProperties = { width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 9, color: C.text, fontFamily: "inherit", fontSize: 13.5, padding: "9px 12px", outline: "none", boxSizing: "border-box" };
 const chk: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.text2, alignSelf: "end", paddingBottom: 14 };

@@ -1,3 +1,4 @@
+import { saldoTitulo, type Pagamento } from "../pagar/pagamentos"
 import { hojeSaoPaulo } from "@/lib/financeiro/dates"
 // Fluxo de caixa — DESEMBOLSO, não competência. Não lê lancamentos nem
 // dre_snapshot (são projeções por competência); lê as fontes com data de
@@ -69,6 +70,7 @@ export type RecebivelPorForma = {
 }
 
 export type ResultadoFluxo = {
+  saldoBaseDisponivel: boolean
   unitId: string
   contaId: string | null
   dataInicio: string
@@ -106,7 +108,6 @@ export type ResultadoFluxo = {
   }
 }
 
-
 export async function calcularFluxo(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
@@ -118,48 +119,70 @@ export async function calcularFluxo(
   const hoje = hojeSaoPaulo()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim) || !Number.isFinite(Date.parse(dataInicio)) || !Number.isFinite(Date.parse(dataFim)) || dataInicio > dataFim || (Date.parse(dataFim) - Date.parse(dataInicio)) / 86400000 > 366) throw new Error("Selecione um intervalo válido de até 366 dias.")
 
-  // ── Contas bancárias (saldo inicial consolidado) ──────────────────────
   let queryContas = db.from("contas_bancarias").select("id,saldo_inicial,data_saldo_inicial").eq("unit_id", unitId).eq("ativo", true)
   if (contaId) queryContas = queryContas.eq("id", contaId)
-  const contas = await fetchAllPaginado((from: number, to: number) => queryContas.range(from, to)) as Array<{
-    id: string; saldo_inicial: number; data_saldo_inicial: string
-  }>
+  let queryMov = db.from("movimentacoes_caixa").select("conta_id,data,tipo,valor,origem,origem_id,conciliado").eq("unit_id", unitId).lte("data", dataFim)
+  if (contaId) queryMov = queryMov.eq("conta_id", contaId)
+  const queryRecebiveis = db.from("recebiveis_cartao").select("id").eq("unit_id", unitId)
+  const MAIOR_PRAZO_MAIS_FOLGA = 40
+  const [contas, movimentacoes, titulos, pagamentos, folhaLinhas, folhaCompetencias, receitaDias, recebiveisCartao] = await Promise.all([
+    fetchAllPaginado((from: number, to: number) => queryContas.range(from, to)) as Promise<Array<{
+      id: string; saldo_inicial: number; data_saldo_inicial: string
+    }>>,
+    fetchAllPaginado((from: number, to: number) => queryMov.range(from, to)) as Promise<Array<{
+      conta_id: string | null; data: string; tipo: string; valor: number; origem: string; origem_id: string | null; conciliado: boolean
+    }>>,
+    fetchAllPaginado((from: number, to: number) =>
+      db.from("titulos_a_pagar")
+        .select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal,v_titulo,d_vencimento,d_lancamento,d_competencia,c_gerencial,liquidacao_origem,d_liquidacao,d_liquidacao_atual")
+        .eq("unit_id", unitId)
+        .eq("origem", "contas_pagar")
+        .range(from, to)
+    ) as Promise<Array<{
+      id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
+      n_nota_fiscal: string | null; v_titulo: number | null
+      d_vencimento: string | null; d_lancamento: string | null; d_competencia: string | null
+      c_gerencial: string | null; liquidacao_origem: string | null; d_liquidacao: string | null; d_liquidacao_atual: string | null
+    }>>,
+    fetchAllPaginado((from, to) => db.from("titulo_pagamentos").select("id,titulo_id,data,valor,comprovante,estornado_em").eq("unit_id", unitId).range(from, to)) as Promise<Pagamento[]>,
+    fetchAllPaginado((from: number, to: number) =>
+      db.from("payroll_extrato_dominio_linha").select("competencia,natureza,rubrica_codigo,valor").eq("unit_id", unitId).range(from, to)
+    ) as Promise<Array<{ competencia: string; natureza: string; rubrica_codigo: number; valor: number }>>,
+    fetchAllPaginado((from: number, to: number) =>
+      db.from("payroll_extrato_dominio_competencia").select("competencia,valor_fgts,valor_fgts_rescisorio").eq("unit_id", unitId).range(from, to)
+    ) as Promise<Array<{ competencia: string; valor_fgts: number | null; valor_fgts_rescisorio: number | null }>>,
+    fetchAllPaginado((from: number, to: number) =>
+      db.from("receita_dias").select("id,data")
+        .eq("unit_id", unitId)
+        .gte("data", somarDias(dataInicio, -MAIOR_PRAZO_MAIS_FOLGA))
+        .lte("data", dataFim)
+        .range(from, to)
+    ) as Promise<Array<{ id: string; data: string }>>,
+    fetchAllPaginado((from: number, to: number) => queryRecebiveis.range(from, to)) as Promise<Array<{ id: number }>>
+  ]);
+
+  // ── Contas bancárias (saldo inicial consolidado) ──────────────────────
+
   const saldoInicialConsolidado = contas.reduce((s, c) => s + Number(c.saldo_inicial ?? 0), 0)
 
   // ── Movimentações realizadas (extrato) ────────────────────────────────
-  let queryMov = db.from("movimentacoes_caixa").select("conta_id,data,tipo,valor,origem,origem_id,conciliado").eq("unit_id", unitId).lte("data", dataFim)
-  if (contaId) queryMov = queryMov.eq("conta_id", contaId)
-  const movimentacoes = await fetchAllPaginado((from: number, to: number) => queryMov.range(from, to)) as Array<{
-    conta_id: string | null; data: string; tipo: string; valor: number; origem: string; origem_id: string | null; conciliado: boolean
-  }>
+
   const titulosConciliadosIds = new Set(
     movimentacoes.filter((m) => m.origem === "titulo" && m.conciliado).map((m) => m.origem_id)
   )
 
-  if (contas.some(c => c.data_saldo_inicial > dataInicio)) throw new Error("O início do período deve ser igual ou posterior à data do saldo inicial das contas.")
+  const saldoBaseDisponivel = contas.length > 0 && contas.every(c => c.data_saldo_inicial <= dataInicio)
   const basePorConta = new Map(contas.map(c => [c.id, c.data_saldo_inicial]))
   const movimentosAposBase = movimentacoes.filter(m => !m.conta_id || (basePorConta.has(m.conta_id) && m.data >= basePorConta.get(m.conta_id)!))
   const saldoAntesPeriodo = movimentosAposBase.filter(m => m.data < dataInicio).reduce((saldo, m) => saldo + (m.tipo === "entrada" ? 1 : -1) * Math.abs(Number(m.valor)), saldoInicialConsolidado)
   const entradasRealizadasPorDia = new Map<string, number>()
   const saidasRealizadasPorDia = new Map<string, number>()
-  for (const m of movimentosAposBase) {
+  for (const m of movimentacoes) {
     const mapa = m.tipo === "entrada" ? entradasRealizadasPorDia : saidasRealizadasPorDia
     mapa.set(m.data, (mapa.get(m.data) ?? 0) + Math.abs(Number(m.valor ?? 0)))
   }
 
   // ── Títulos a pagar ────────────────────────────────────────────────────
-  const titulos = await fetchAllPaginado((from: number, to: number) =>
-    db.from("titulos_a_pagar")
-      .select("id,fantasia_fornecedor,razao_fornecedor,n_nota_fiscal,v_titulo,d_vencimento,d_lancamento,d_competencia,c_gerencial,liquidacao_origem,d_liquidacao,d_liquidacao_atual")
-      .eq("unit_id", unitId)
-      .in("origem", ["nf_pedidos", "contas_pagar"])
-      .range(from, to)
-  ) as Array<{
-    id: string; fantasia_fornecedor: string | null; razao_fornecedor: string | null
-    n_nota_fiscal: string | null; v_titulo: number | null
-    d_vencimento: string | null; d_lancamento: string | null; d_competencia: string | null
-    c_gerencial: string | null; liquidacao_origem: string | null; d_liquidacao: string | null; d_liquidacao_atual: string | null
-  }>
 
   const saidasPrevistasPorDia = new Map<string, number>()
   let valorPago = 0, valorNaoPago = 0, valorIndefinido = 0
@@ -170,8 +193,11 @@ export async function calcularFluxo(
   const porCompetenciaVencimento = new Map<string, { total: number; comVencimento: number }>()
 
   for (const t of titulos) {
-    const valor = Math.abs(Number(t.v_titulo ?? 0))
-    const status = classificarLiquidacao(t.liquidacao_origem)
+    const historico = pagamentos.filter(p => p.titulo_id === t.id);
+    const valores = saldoTitulo(Number(t.v_titulo ?? 0), t.liquidacao_origem, historico);
+    const valor = historico.length ? valores.saldo : Math.abs(Number(t.v_titulo ?? 0));
+    if (historico.length) valorPago += valores.pago;
+    const status = historico.length ? (valores.saldo === 0 ? "pago" : "nao_pago") : classificarLiquidacao(t.liquidacao_origem)
 
     const compKey = t.d_competencia ?? "sem-competencia"
     const stat = porCompetenciaVencimento.get(compKey) ?? { total: 0, comVencimento: 0 }
@@ -184,7 +210,7 @@ export async function calcularFluxo(
       // Título pago é fato histórico — fallback de data serve só pra registrar
       // quando o dinheiro já saiu, nunca pra projetar (já aconteceu).
       const dataEfetivaPago = t.d_liquidacao ?? t.d_liquidacao_atual
-      if (!contaId && dataEfetivaPago && !titulosConciliadosIds.has(t.id)) {
+      if (!historico.length && !contaId && dataEfetivaPago && !titulosConciliadosIds.has(t.id)) {
         saidasRealizadasPorDia.set(dataEfetivaPago, (saidasRealizadasPorDia.get(dataEfetivaPago) ?? 0) + valor)
       }
       continue
@@ -224,12 +250,6 @@ export async function calcularFluxo(
   }
 
   // ── Folha (extrato Domínio) — dia de pagamento estimado ───────────────
-  const folhaLinhas = await fetchAllPaginado((from: number, to: number) =>
-    db.from("payroll_extrato_dominio_linha").select("competencia,natureza,rubrica_codigo,valor").eq("unit_id", unitId).range(from, to)
-  ) as Array<{ competencia: string; natureza: string; rubrica_codigo: number; valor: number }>
-  const folhaCompetencias = await fetchAllPaginado((from: number, to: number) =>
-    db.from("payroll_extrato_dominio_competencia").select("competencia,valor_fgts,valor_fgts_rescisorio").eq("unit_id", unitId).range(from, to)
-  ) as Array<{ competencia: string; valor_fgts: number | null; valor_fgts_rescisorio: number | null }>
 
   const RUBRICA_DESCONTO_ENCARGO = 843
   const folhaPorCompetencia = new Map<string, number>()
@@ -251,14 +271,7 @@ export async function calcularFluxo(
   // crédito) — sem isso o fetch cresce sem limite conforme mais competências
   // são importadas, e venda antiga (que já devia ter virado caixa há meses)
   // voltaria a aparecer como "a receber" de novo.
-  const MAIOR_PRAZO_MAIS_FOLGA = 40
-  const receitaDias = await fetchAllPaginado((from: number, to: number) =>
-    db.from("receita_dias").select("id,data")
-      .eq("unit_id", unitId)
-      .gte("data", somarDias(dataInicio, -MAIOR_PRAZO_MAIS_FOLGA))
-      .lte("data", dataFim)
-      .range(from, to)
-  ) as Array<{ id: string; data: string }>
+
   const dataPorWorkdayId = new Map(receitaDias.map((r) => [r.id, r.data]))
   const workdayIds = receitaDias.map((r) => r.id)
 
@@ -313,8 +326,7 @@ export async function calcularFluxo(
   // ── Recebíveis de cartão (antecipação) — hoje sempre vazia; dado real só
   // chega com o extrato bancário / integração de adquirente (fase futura).
   // Consultada já no padrão certo pra quando existir. ─────────────────────
-  const queryRecebiveis = db.from("recebiveis_cartao").select("id").eq("unit_id", unitId)
-  const recebiveisCartao = await fetchAllPaginado((from: number, to: number) => queryRecebiveis.range(from, to)) as Array<{ id: number }>
+
   const antecipacaoRegistrada = recebiveisCartao.length > 0
 
   // ── Série diária ───────────────────────────────────────────────────────
@@ -403,7 +415,7 @@ export async function calcularFluxo(
   const valorTotalTitulos = valorPago + valorNaoPago + valorIndefinido
 
   return {
-    unitId, contaId, dataInicio, dataFim, hoje, dias,
+    unitId, contaId, dataInicio, dataFim, hoje, dias, saldoBaseDisponivel,
     resumo: {
       saldoHoje: diaHoje ? diaHoje.saldoFinal : null,
       aPagarVencido: contaId ? 0 : round2(aPagarVencido),

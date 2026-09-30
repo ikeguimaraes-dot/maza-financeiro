@@ -22,6 +22,11 @@ export function PagarConteudo({ dados, competenciaLabel, unitId, mes, ano }: Pro
 
   return (
     <>
+      {dados.titulos.some(t => t.duplicidade) && <details style={{ padding: 16, marginBottom: 16, border: "1px solid var(--color-warning)", borderRadius: 8 }}>
+        <summary>Conferência necessária: {dados.titulos.filter(t => t.duplicidade).length} linhas com possível duplicidade. Os totais ainda precisam ser validados.</summary>
+        <p>Mesma nota, fornecedor, parcela e datas aparecem mais de uma vez. Nenhuma linha foi apagada ou considerada quitada automaticamente.</p>
+        <ul>{dados.titulos.filter(t => t.duplicidade).map(t => <li key={t.id}>{t.fornecedor} · NF {t.nNota} · vencimento {t.vencimento ?? "não informado"} · {t.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} · marcação {t.liquidacaoOrigem ?? "vazia"}</li>)}</ul>
+      </details>}
       {/* Tab nav */}
       <nav style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border)", marginBottom: 24 }}>
         {(["titulos", "conciliacao", "protestos"] as const).map(t => {

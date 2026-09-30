@@ -1,3 +1,6 @@
+import { indicadoresReceita, type DiaIndicador, type PagamentoIndicador } from "@/lib/dre/receita-indicadores";
+import { fetchAllPaginado } from "@/lib/financeiro/razao/gerar";
+import { contasOperacionais, type TituloOperacional, type FolhaOperacional } from "@/lib/dre/regras-operacionais";
 import { getServiceClient, jsonOk, jsonError, corsOptions, resolveEmpresa } from "@/lib/dre/api";
 
 export const runtime = "nodejs";
@@ -21,6 +24,42 @@ export async function GET(req: Request) {
     const ano = Number(searchParams.get("ano")) || new Date().getFullYear();
 
     const supabase = await getServiceClient();
+    if (["Marketing", "Taxas Cartão"].includes(linha)) {
+      const unitId = searchParams.get("unidade");
+      if (!unitId || !/^[0-9a-f-]{36}$/i.test(unitId)) return jsonError("Selecione uma unidade válida", 400);
+      const [dias, ultimo] = await Promise.all([
+        fetchAllPaginado<DiaIndicador>((from,to) => supabase.from("receita_dias").select("id,data,desconto").eq("unit_id",unitId).gte("data",`${ano}-01-01`).lt("data",`${ano+1}-01-01`).order("id").range(from,to)),
+        supabase.from("receita_dias").select("data").eq("unit_id",unitId).order("data",{ascending:false}).limit(1),
+      ]);
+      if (ultimo.error) throw new Error(ultimo.error.message);
+      const pagamentos: PagamentoIndicador[] = [];
+      if (linha !== "Marketing") for (let i=0; i<dias.length; i+=100) {
+        pagamentos.push(...await fetchAllPaginado<PagamentoIndicador>((from,to) => supabase.from("receita_pagamentos").select("workday_id_fk,forma,valor_recebido").in("workday_id_fk",dias.slice(i,i+100).map(d=>d.id)).order("workday_id_fk").order("forma").range(from,to)));
+      }
+      const indicadores = indicadoresReceita(dias,pagamentos);
+      const meses = Array.from({length:12},(_,i)=>`${ano}-${String(i+1).padStart(2,"0")}-01`);
+      const mesesValores = linha === "Marketing" ? indicadores.descontos : indicadores.taxas;
+      const contas = [{conta:linha === "Marketing" ? "Influencers — descontos da Receita" : "Taxa de cartão — 3% do recebido",esperada_mensal:false,meses:mesesValores,total:Object.values(mesesValores).reduce((s,v)=>s+v,0)}];
+      return jsonOk({linha,ano,empresa:unitId,meses,contas,esperadas:[],total:contas.reduce((s,c)=>s+c.total,0),meses_com_dados:[...new Set(dias.map(d=>`${d.data.slice(0,7)}-01`))].sort(),ultimo_mes_unidade:ultimo.data?.[0]?.data?`${ultimo.data[0].data.slice(0,7)}-01`:null,
+        observacao:linha === "Marketing" ? "Influencers usa o valor dos descontos registrado na Receita, conforme regra definida. Não é somado novamente à receita líquida." : "Estimativa gerencial: 3% sobre todo o recebido, inclusive formas de pagamento que não são cartão.",
+        pendente:false, base_recebido:indicadores.recebido});
+    }
+    if (["Ocupação", "Utilidades", "Administrativo", "Manutenção", "Impostos", "Despesas Financeiras"].includes(linha)) {
+      const unitId = searchParams.get("unidade");
+      if (!unitId || !/^[0-9a-f-]{36}$/i.test(unitId)) return jsonError("Selecione uma unidade válida", 400);
+      const [titulos, folha] = await Promise.all([
+        fetchAllPaginado<TituloOperacional>((from, to) => supabase.from("titulos_a_pagar")
+          .select("id,descricao_c_gerencial,v_titulo,d_competencia,d_lancamento,d_vencimento,ref_mes,liquidacao_origem")
+          .eq("unit_id", unitId).eq("origem", "contas_pagar").order("id").range(from, to)),
+        linha === "Administrativo" ? fetchAllPaginado<FolhaOperacional>((from, to) => supabase.from("folha_empresa")
+          .select("id,competencia,etapa,nome,pagamento,bonificacao").eq("unit_id", unitId)
+          .eq("nome_chave", "CINTIA OLIVEIRA DE CARVALHO").order("id").range(from, to)) : Promise.resolve([]),
+      ]);
+      const datas = [...titulos.map(t => t.d_competencia ?? t.ref_mes ?? t.d_lancamento ?? t.d_vencimento), ...folha.map(f => `${f.competencia}-01`)].filter((d): d is string => !!d).map(d => `${d.slice(0,7)}-01`).sort();
+      const contas = contasOperacionais(linha, titulos.filter(t => (t.d_competencia ?? t.ref_mes ?? t.d_lancamento ?? t.d_vencimento)?.startsWith(`${ano}-`)), folha.filter(f => f.competencia.startsWith(`${ano}-`)));
+      const fontePlanilha = ["Impostos", "Despesas Financeiras"].includes(linha);
+      return jsonOk({ fonte_planilha: fontePlanilha, observacao: fontePlanilha ? "Valores informados na planilha de gastos, separados por unidade e competência. Não há estimativa por alíquota. O lançamento de um valor não confirma sua quitação; marcadores como ** permanecem sem confirmação de pagamento." : undefined, linha, ano, empresa: unitId, meses: Array.from({length:12}, (_,i) => `${ano}-${String(i+1).padStart(2,"0")}-01`), contas, esperadas: [], total: contas.reduce((s,c)=>s+c.total,0), meses_com_dados: [...new Set(datas.filter(d=>d.startsWith(`${ano}-`)))], ultimo_mes_unidade: datas.at(-1) ?? null });
+    }
     let q = supabase
       .from("titulos_a_pagar")
       .select("id, descricao_c_gerencial, v_titulo, ref_mes, empresa")

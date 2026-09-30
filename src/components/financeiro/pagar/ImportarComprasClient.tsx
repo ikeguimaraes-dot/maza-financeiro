@@ -9,7 +9,7 @@ const YOSHIMORI_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909c";
 const IKY_UNIT_ID = "674eac8c-5a38-4a42-aa60-0a666387909b";
 const UNIDADES = [
   { id: YOSHIMORI_UNIT_ID, nome: "Yoshimori" },
-  { id: IKY_UNIT_ID, nome: "IKY Delivery" },
+  { id: IKY_UNIT_ID, nome: "Delivery" },
 ] as const;
 
 type Props = { unitIdInicial: string };
@@ -39,7 +39,7 @@ export function ImportarComprasClient({ unitIdInicial }: Props) {
         <p style={{ fontSize: 13, color: "var(--text-2)", maxWidth: 600, margin: 0 }}>
           A unidade abaixo é a &quot;unidade base&quot; do arquivo — vale pra toda a planilha, exceto
           linhas cuja categoria contenha &quot;IKY DELIVERY&quot;, que são roteadas automaticamente pra
-          IKY Delivery.
+          Delivery.
         </p>
       </header>
 

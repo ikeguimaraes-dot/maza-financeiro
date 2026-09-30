@@ -1,3 +1,5 @@
+import { ultimaCompetencia } from "@/lib/financeiro/competencia-atual";
+import { competenciasDisponiveis } from "@/lib/financeiro/competencias";
 import Link from "next/link"
 
 import { requireUser } from "@maza/auth/server"
@@ -9,15 +11,16 @@ import { AvisoUnidadeFallback } from "@/components/financeiro/AvisoUnidadeFallba
 
 export const dynamic = "force-dynamic"
 
-// Período com dado real carregado nesta fase — mesmo range usado em
-// scripts/regerar-razao.ts pra todas as validações da FASE 7.
-const COMPETENCIAS = ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"] as const
+
+
 
 type SearchParams = Promise<{ competencia?: string }>
 
 export default async function DivergenciasPage({ searchParams }: { searchParams: SearchParams }) {
   await requireUser()
   const sp = await searchParams
+
+  const COMPETENCIAS = competenciasDisponiveis(sp.competencia);
 
   // Unidade é contexto global (cookie do shell), não um seletor local —
   // uma divergência é sempre título↔NF-e de uma unidade específica, mas
@@ -27,7 +30,7 @@ export default async function DivergenciasPage({ searchParams }: { searchParams:
   const unitName = unit?.name ?? "—"
   const competencia = sp.competencia && (COMPETENCIAS as readonly string[]).includes(sp.competencia)
     ? sp.competencia
-    : COMPETENCIAS[COMPETENCIAS.length - 1]!
+    : await ultimaCompetencia(unitId)
 
   const href = (competenciaVal: string) => {
     const params = new URLSearchParams()

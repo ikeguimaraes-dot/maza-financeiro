@@ -1,8 +1,8 @@
 import type { KpiSnapshotRow } from "./types";
 
-export type MetricKey = "receita_liquida" | "resultado_liquido" | "cmv_compras_pct" | "mo_pct" | "prime_cost_pct" | "ebitda_pct" | "clientes" | "ticket_medio";
-const percentages = new Set<MetricKey>(["cmv_compras_pct", "mo_pct", "prime_cost_pct", "ebitda_pct"]);
-const costs = new Set<MetricKey>(["cmv_compras_pct", "mo_pct", "prime_cost_pct"]);
+export type MetricKey = "cmv_empresa_pct" | "receita_liquida" | "resultado_liquido" | "cmv_compras_pct" | "mo_pct" | "prime_cost_pct" | "ebitda_pct" | "clientes" | "ticket_medio";
+const percentages = new Set<MetricKey>(["cmv_empresa_pct", "cmv_compras_pct", "mo_pct", "prime_cost_pct", "ebitda_pct"]);
+const costs = new Set<MetricKey>(["cmv_empresa_pct", "cmv_compras_pct", "mo_pct", "prime_cost_pct"]);
 
 export function metricPresentation(row: KpiSnapshotRow | null | undefined, key: MetricKey) {
   if (!row) return { value: null, missing: "Sem dados no período", partial: undefined };
@@ -12,9 +12,12 @@ export function metricPresentation(row: KpiSnapshotRow | null | undefined, key: 
   if (percentages.has(key) && !row.receita_bruta) missing = "Receita ainda não importada";
   else if (key === "cmv_compras_pct" && !row.tem_nfe) missing = "Compras ainda não importadas";
   else if (key === "mo_pct" && !row.tem_folha) missing = "Folha ainda não importada";
-  else if (key === "prime_cost_pct" && missingSources) missing = `Faltam dados de ${missingSources}`;
+  else if ((key === "prime_cost_pct" || key === "cmv_empresa_pct") && missingSources) missing = `Faltam dados de ${missingSources}`;
   else if ((key === "resultado_liquido" || key === "ebitda_pct") && missingSources) partial = `Parcial · faltam ${missingSources}`;
-  const raw = row[key];
+  const raw = key === "cmv_empresa_pct"
+    ? row.receita_bruta != null && row.receita_bruta > 0 && row.cmv_compras != null && row.mao_de_obra != null
+      ? (Number(row.cmv_compras) + Number(row.mao_de_obra)) / Number(row.receita_bruta) : null
+    : row[key];
   const value = missing || raw == null || !Number.isFinite(Number(raw)) ? null : Number(raw);
   return { value, missing: missing ?? (value == null ? "Sem dados no período" : undefined), partial };
 }

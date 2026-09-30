@@ -72,14 +72,15 @@ test("lote com falha não perde a versão anterior", async () => {
   assert.equal(db.rows("lancamentos")[0].valor, 100);
 });
 
-test("compras só substituem os escopos presentes, nunca uma unidade alheia", async () => {
+test("compras enviam atualização incremental sem exclusão mensal", async () => {
   const { importarLinhasCompra } = loadTs("src/lib/financeiro/importacao/compras/importarCompras.ts");
   const db = database();
   const row = { dCompetencia: month, vTitulo: 100, ehIkyDelivery: false, fornecedorNome: "Fornecedor", produtoOriginal: "ALIMENTOS", categoriaNormalizada: "ALIMENTOS" };
   const result = await importarLinhasCompra(db, [row], razao.YOSHIMORI_UNIT_ID, "compra", "nf_pedidos");
   assert.equal(result.ok, true);
-  const deletes = db.calls[0].args.p_operations.filter(op => op.operation === "delete");
-  assert.ok(deletes.every(op => op.scope.import_unit_id === razao.YOSHIMORI_UNIT_ID));
+  assert.equal(db.calls[0].name, "financeiro_importar_titulos");
+  assert.equal(db.calls[0].args.p_rows[0].import_unit_id, razao.YOSHIMORI_UNIT_ID);
+  assert.equal(db.calls[0].args.p_rows[0].id, undefined);
   const bad = await importarLinhasCompra(db, [{ ...row, vTitulo: NaN }], unit, "compra", "nf_pedidos");
   assert.equal(bad.ok, false);
 });
@@ -124,10 +125,13 @@ test("caixa reconstrói o saldo anterior à janela e respeita a data-base da con
   assert.equal(result.dias[0].saldoInicial, 900);
   assert.equal(result.dias[0].saldoFinal, 950);
   assert.equal(result.dias[0].saidasPrevistas, 0);
-  await assert.rejects(() => calcularFluxo(db, unit, "banco", "2026-05-01", "2026-06-01"), /saldo inicial/);
+  assert.equal(result.saldoBaseDisponivel, true);
+  const historico = await calcularFluxo(db, unit, "banco", "2026-05-01", "2026-06-01");
+  assert.equal(historico.saldoBaseDisponivel, false);
+  assert.equal(historico.dias.find(d => d.data === "2026-05-31").entradasRealizadas, 9999);
 });
 
-test("correção remove compras roteadas sem apagar importação própria do outro restaurante", async () => {
+test("importação incremental não apaga registros ausentes de outras cargas", async () => {
   const { importarLinhasCompra } = loadTs("src/lib/financeiro/importacao/compras/importarCompras.ts");
   const own = { unit_id: unit, import_unit_id: unit, origem: "nf_pedidos", d_competencia: month, v_titulo: 30 };
   const db = database({ titulos_a_pagar: [own, { ...own, import_unit_id: razao.YOSHIMORI_UNIT_ID, v_titulo: 50 }] });
@@ -140,7 +144,7 @@ test("liquidação vazia continua indefinida", () => {
   const { classificarLiquidacao } = loadTs("src/lib/financeiro/fluxo/liquidacao.ts");
   assert.equal(classificarLiquidacao("  "), "indefinido");
   assert.equal(classificarLiquidacao("OK"), "pago");
-  assert.equal(classificarLiquidacao("*"), "nao_pago");
+  assert.equal(classificarLiquidacao("*"), "indefinido");
 });
 
 test("extração malformada não vira exclusão de seção válida", () => {
@@ -158,4 +162,38 @@ test("falha em uma fonte impede publicação de razão e snapshots parciais", as
   assert.equal(result.snapshot.ok, false);
   assert.deepEqual(db.rows("kpi_snapshot"), original);
   assert.equal(db.calls.length, 0);
+});
+
+test("cliente financeiro recusa sessão não verificada", async () => {
+  const { createFinanceiroClient } = loadTs("src/lib/financeiro/db/client.ts", {
+    react: { cache: fn => fn },
+    "@maza/auth/server": { getCurrentUser: async () => null },
+    "@maza/db/supabase/server": { createSupabaseServerClient: async () => ({}) },
+  });
+  await assert.rejects(createFinanceiroClient(), /Não autorizado/);
+});
+
+
+test("fluxo inicia as oito fontes independentes sem esperar uma pela outra", { timeout: 2000 }, async () => {
+  const { calcularFluxo } = loadTs("src/lib/financeiro/fluxo/calcularFluxo.ts");
+  const db = database();
+  const from = db.from.bind(db);
+  const started = new Set();
+  let release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  db.from = table => {
+    const query = from(table);
+    const then = query.then.bind(query);
+    query.then = async (resolve, reject) => {
+      started.add(table);
+      if (started.size >= 8) release();
+      await barrier;
+      return then(resolve, reject);
+    };
+    return query;
+  };
+  const result = await calcularFluxo(db, unit, null, "2026-08-01", "2026-08-31");
+  assert.equal(result.dias.length, 31);
+  assert.ok(started.has("titulo_pagamentos"));
+  assert.ok(started.has("receita_dias"));
 });

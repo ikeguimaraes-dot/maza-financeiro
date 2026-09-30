@@ -1,4 +1,4 @@
-import { applyBatch, replacement } from "@/lib/financeiro/db/atomic"
+import { refreshUnits } from "@/lib/financeiro/razao/refresh"
 // Lógica pura de gravação das linhas de compra — recebe o client Supabase
 // por parâmetro, igual ao padrão de src/lib/financeiro/razao/gerar.ts,
 // pra ser chamável tanto pela Server Action
@@ -37,16 +37,7 @@ export async function importarLinhasCompra(
         roteadosParaIky += 1
         valorRoteadoParaIky += l.vTitulo
       }
-      const id = crypto.randomUUID()
       return {
-        id,
-        // uq_titulos_chave é um índice legado (n_titulo, parcela,
-        // fantasia_empresa, ref_mes) NULLS NOT DISTINCT, pensado pro
-        // formato antigo de ERP — sem popular esses 4 campos, todas as
-        // linhas novas colidiriam entre si (Postgres trata NULL=NULL
-        // aqui). n_titulo = id da própria linha resolve trivialmente,
-        // sem precisar migrar ou derrubar o índice.
-        n_titulo: id,
         tipo,
         origem,
         unit_id: unitId,
@@ -65,11 +56,9 @@ export async function importarLinhasCompra(
       }
     })
 
-    const months = [...new Set(rows.map(r => r.d_competencia))]
-    await applyBatch(db, months.flatMap(month => replacement("titulos_a_pagar",
-      { import_unit_id: unitIdBase, d_competencia: month, origem },
-      rows.filter(r => r.d_competencia === month)
-    ).map(operation => ({ ...operation, affectedUnits: [unitIdBase, IKY_UNIT_ID] }))))
+    const { error } = await db.rpc("financeiro_importar_titulos", { p_rows: rows });
+    if (error) throw new Error(error.message);
+    if ("from" in db) await refreshUnits(db, [...new Set([unitIdBase, IKY_UNIT_ID, ...rows.map(row => row.unit_id)])]);
 
     return {
       ok: true, inseridos: rows.length, roteadosParaIky,

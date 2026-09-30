@@ -1,5 +1,6 @@
 "use client"
 
+import { PagamentosTitulo } from "./PagamentosTitulo"
 import { useMemo, useState } from "react"
 import type { CSSProperties } from "react"
 import Link from "next/link"
@@ -46,11 +47,11 @@ const inputStyle: CSSProperties = {
 }
 
 const SITUACAO_COR: Record<Situacao, string> = {
-  pago: "#22C55E",
-  vencido: "#EF4444",
+  pago: "var(--color-success)",
+  vencido: "var(--color-danger)",
   a_vencer: "var(--text)",
-  sem_confirmacao: "#F59E0B",
-  sem_data: "#F59E0B",
+  sem_confirmacao: "var(--color-warning)",
+  sem_data: "var(--color-warning)",
 }
 
 function fmtDate(d: string | null): string {
@@ -181,7 +182,7 @@ export function PagarPainel({ dados, competenciaLabel }: Props) {
         </div>
         <div style={cardStyle}>
           <p style={cardLabel}>Pago</p>
-          <p style={cardValue("#22C55E")}>{formatBRL(cards.pago)}</p>
+          <p style={cardValue("var(--color-success)")}>{formatBRL(cards.pago)}</p>
         </div>
         <div style={cardStyle}>
           <p style={cardLabel}>A vencer</p>
@@ -189,16 +190,16 @@ export function PagarPainel({ dados, competenciaLabel }: Props) {
         </div>
         <div style={cardStyle}>
           <p style={cardLabel}>Vencido</p>
-          <p style={cardValue(cards.vencido > 0 ? "#EF4444" : undefined)}>{formatBRL(cards.vencido)}</p>
+          <p style={cardValue(cards.vencido > 0 ? "var(--color-danger)" : undefined)}>{formatBRL(cards.vencido)}</p>
         </div>
         <div style={cardStyle}>
           <p style={cardLabel}>Sem confirmação de pagamento</p>
-          <p style={cardValue(cards.semConfirmacao > 0 ? "#F59E0B" : undefined)}>{formatBRL(cards.semConfirmacao)}</p>
+          <p style={cardValue(cards.semConfirmacao > 0 ? "var(--color-warning)" : undefined)}>{formatBRL(cards.semConfirmacao)}</p>
           <p style={{ fontSize: 10, color: "var(--text-3)", margin: "2px 0 0" }}>não é pago, não é vencido</p>
         </div>
         <div style={cardStyle}>
           <p style={cardLabel}>Sem data de vencimento</p>
-          <p style={cardValue(cards.semDataVencimento > 0 ? "#F59E0B" : undefined)}>{formatBRL(cards.semDataVencimento)}</p>
+          <p style={cardValue(cards.semDataVencimento > 0 ? "var(--color-warning)" : undefined)}>{formatBRL(cards.semDataVencimento)}</p>
           <p style={{ fontSize: 10, color: "var(--text-3)", margin: "2px 0 0" }}>não projetável no fluxo</p>
         </div>
       </div>
@@ -342,14 +343,14 @@ export function PagarPainel({ dados, competenciaLabel }: Props) {
                   return (
                     <>
                       <tr key={r.categoria} style={{ borderTop: "1px solid var(--border)", cursor: "pointer",
-                        background: r.aClassificar ? "rgba(245,158,11,0.06)" : undefined }}
+                        background: r.aClassificar ? "var(--color-warning-bg)" : undefined }}
                         onClick={() => toggleCategoria(r.categoria)}
                       >
                         <td style={{ ...tdS(), width: 20 }}>{expandido ? "▾" : "▸"}</td>
                         <td style={tdS()}>
                           {r.categoria}
                           {r.aClassificar && (
-                            <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: "#F59E0B", textTransform: "uppercase" }}>
+                            <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: "var(--color-warning)", textTransform: "uppercase" }}>
                               a classificar
                             </span>
                           )}
@@ -358,7 +359,7 @@ export function PagarPainel({ dados, competenciaLabel }: Props) {
                         <td style={{ ...tdS("right"), fontWeight: 600 }}>{formatBRL(r.valor)}</td>
                         <td style={tdS()}>
                           {r.aClassificar ? (
-                            <Link href="/financeiro/dre/classificacao" onClick={(e) => e.stopPropagation()} style={{ color: "#F59E0B" }}>
+                            <Link href="/financeiro/dre/classificacao" onClick={(e) => e.stopPropagation()} style={{ color: "var(--color-warning)" }}>
                               9.99 — classificar →
                             </Link>
                           ) : r.contaMapeada}
@@ -418,10 +419,11 @@ function TituloDrawer({ titulo, onClose }: { titulo: TituloPagar; onClose: () =>
           <Campo label="Vencimento" valor={fmtDate(titulo.vencimento)} />
           <Campo label="Valor" valor={formatBRL(titulo.valor)} />
           <Campo label="Situação" valor={<SituacaoBadge situacao={titulo.situacao} />} />
-          <Campo label="liquidacao_origem (bruto)" valor={titulo.liquidacaoOrigem ?? "—"} />
+          <Campo label="Marcador da planilha" valor={titulo.liquidacaoOrigem ?? "—"} />
           <Campo label="Conta do razão" valor={titulo.contaRazao ?? "sem lançamento próprio nesta competência"} />
         </div>
 
+        <PagamentosTitulo key={titulo.id} titulo={titulo} />
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
           <p style={{ ...sectionTitle, margin: "0 0 8px" }}>Reconciliação com NF-e</p>
           {titulo.reconciliacao ? (

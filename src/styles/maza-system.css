@@ -1,5 +1,8 @@
 /* Maza visual system v1. Shared with the Shell and MISE. */
 :root {
+  --font-fraunces: var(--font-geist, Arial, sans-serif);
+  --font-instrument-sans: var(--font-geist, Arial, sans-serif);
+  --font-inter: var(--font-geist, Arial, sans-serif);
   color-scheme: light;
   --background: #f6f5f0; --foreground: #252922;
   --card: #fff; --card-foreground: #252922;
@@ -101,8 +104,8 @@ button, a, input, select, textarea, summary { -webkit-tap-highlight-color: trans
 .maza-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
 .maza-eyebrow { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-3); margin: 0 0 12px; }
 .maza-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
-.maza-page-heading h1 { margin: 0; font-size: clamp(32px, 3.4vw, 48px); font-weight: 450; letter-spacing: -1.8px; line-height: 1.12; }
-.maza-page-heading h1 em { color: var(--brand); font-weight: inherit; }
+.maza-page-heading h1 { margin: 0; font-size: clamp(32px, 3.4vw, 48px); font-weight: 600; letter-spacing: -1.2px; line-height: 1.12; }
+.maza-page-heading h1 em { color: var(--brand); font-weight: inherit; font-style: normal; }
 .maza-page-heading p:not(.maza-eyebrow) { margin: 12px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.6; max-width: 640px; }
 .maza-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 11px 17px; min-height: 44px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); text-decoration: none; transition: background var(--t), transform var(--t), box-shadow var(--t); white-space: nowrap; }
 .maza-button:hover { background: var(--surface-2); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
@@ -152,6 +155,7 @@ button, a, input, select, textarea, summary { -webkit-tap-highlight-color: trans
   border-right: 1px solid var(--sidebar-border); display: flex; flex-direction: column; overflow: hidden;
 }
 .maza-brand { display: flex; align-items: center; gap: 11px; padding: 29px 24px 23px; }
+.phi-sidebar-logo { display: block; width: 144px; height: 66px; object-fit: contain; }
 .maza-brand-symbol { width: 34px; height: 34px; border: 1px solid #758c51; border-radius: 50%; display: grid; place-items: center; color: #d8ef86; font-family: var(--font-display); font-size: 26px; font-style: italic; }
 .maza-brand-word { color: #f3f5ec; font-family: var(--font-display); font-weight: 500; font-size: 35px; letter-spacing: -1.8px; line-height: 1; }
 .maza-brand-caption { margin-top: 5px; color: #98a88e; font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 2.5px; }
@@ -161,8 +165,8 @@ button, a, input, select, textarea, summary { -webkit-tap-highlight-color: trans
 .shell-sidebar .sidebar-nav-scroll a:hover { background: var(--surface-2) !important; color: var(--text) !important; }
 .shell-sidebar .sidebar-nav-scroll > .sidebar-disclosure > summary { font-size: 10px !important; letter-spacing: 1.5px !important; padding: 17px 12px 10px !important; }
 .shell-sidebar .sidebar-nav-scroll > .sidebar-disclosure > summary svg { width: 14px; height: 14px; }
-.shell-sidebar .sidebar-nav-scroll a[aria-current="page"] { background: #d8ef86 !important; color: #26341e !important; border-radius: 10px !important; }
-.shell-sidebar .sidebar-nav-scroll a[aria-current="page"] svg { color: #26341e !important; }
+.shell-sidebar .sidebar-nav-scroll a[aria-current="page"] { background: var(--sidebar-primary) !important; color: var(--sidebar-primary-foreground) !important; border-radius: 10px !important; }
+.shell-sidebar .sidebar-nav-scroll a[aria-current="page"] svg { color: var(--sidebar-primary-foreground) !important; }
 .shell-sidebar .sidebar-nav-scroll a[aria-current="page"] > span[style*="position: absolute"] { display: none; }
 .sidebar-disclosure > summary { list-style: none; }
 .sidebar-disclosure > summary::-webkit-details-marker { display: none; }
@@ -201,4 +205,120 @@ button, a, input, select, textarea, summary { -webkit-tap-highlight-color: trans
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* Compact desktop navigation; mobile keeps the full accessible drawer. */
+.phi-compact-nav, .phi-compact-logo, .phi-unit-icon { display: none; }
+.phi-expanded-nav { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.phi-sidebar-toggle { display: none; }
+@media (min-width: 768px) {
+  .shell-sidebar { margin: 12px 0 12px 12px; border: 1px solid var(--sidebar-border); border-radius: 28px; overflow: visible; transition: width 220ms ease; z-index: 60; }
+  .phi-sidebar-toggle { display: grid; place-items: center; position: absolute; right: -18px; top: 76px; width: 32px; height: 46px; border-radius: 0 13px 13px 0; border: 1px solid var(--sidebar-border); border-left: 0; background: var(--sidebar); color: var(--brand); cursor: pointer; z-index: 2; }
+  .phi-sidebar-toggle:hover { background: var(--surface-2); }
+  .phi-sidebar-toggle:focus-visible, .phi-compact-nav button:focus-visible { outline: 2px solid var(--brand); outline-offset: 4px; }
+  .shell-sidebar.is-compact { width: 82px !important; }
+  .is-compact .maza-brand { justify-content: center; padding: 28px 0 24px; }
+  .is-compact .phi-sidebar-logo { display: none; }
+  .is-compact .phi-compact-logo { display: block; object-fit: contain; }
+  .is-compact .phi-expanded-nav { display: none; }
+  .is-compact .phi-compact-nav { display: flex; flex-direction: column; align-items: center; gap: 12px; flex: 1; min-height: 0; overflow-y: auto; padding: 18px 0; scrollbar-width: thin; }
+  .phi-compact-nav button { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 1px solid transparent; border-radius: 16px; color: var(--text-2); background: transparent; cursor: pointer; transition: background 160ms, color 160ms; }
+  .phi-compact-nav button:hover { color: var(--brand); background: var(--surface-2); }
+  .phi-compact-nav button[data-active="true"] { color: var(--brand); background: var(--brand-soft); border-color: var(--border-strong); }
+  .phi-compact-nav button[data-active="true"]::before { content: ""; position: absolute; left: -17px; top: 12px; bottom: 12px; width: 3px; background: var(--brand); border-radius: 3px; }
+  .phi-compact-nav button:disabled { opacity: .35; cursor: not-allowed; }
+  .is-compact .phi-unit-switcher { padding: 8px 16px 16px !important; border-bottom: 1px solid var(--sidebar-border); }
+  .is-compact .phi-unit-switcher > div > button { padding: 12px !important; justify-content: center !important; }
+  .is-compact .phi-unit-label, .is-compact .phi-unit-switcher > div > button > svg:last-child { display: none !important; }
+  .is-compact .phi-unit-icon { display: block; flex-shrink: 0; }
+  .is-compact .phi-unit-dropdown { left: 60px !important; top: 0 !important; right: auto !important; width: 210px; }
+  .is-compact .phi-sidebar-user { flex-direction: column; padding: 18px 0 !important; margin: 0 12px 10px; }
+  .is-compact .phi-user-label { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-sidebar { transition: none; }
+}
+.phi-compact-logo { filter: brightness(0) invert(1); }
+
+/* Delivery: orange packaging, navy illustration and warm paper. */
+:root[data-unit-theme="delivery"] {
+  --background: #fff8f2; --foreground: #182d45;
+  --card: #ffffff; --card-foreground: #182d45; --popover: #ffffff; --popover-foreground: #182d45;
+  --primary: #b83e10; --primary-foreground: #ffffff;
+  --secondary: #eef1f6; --secondary-foreground: #233d5c;
+  --muted: #f3eee9; --muted-foreground: #69636a; --accent: #ffe2cf; --accent-foreground: #94350f;
+  --border: #eaded4; --input: #c7cdd5; --ring: #c44512;
+  --surface-2: #fff0e4; --surface-3: #ffe2cc; --surface-hover: #fff5ec;
+  --text-2: #4c5d70; --text-3: #69717c;
+  --border-soft: #f0e5db; --border-hover: #d4b8a5; --border-strong: #d7c5b7; --border-active: #f36b2b;
+  --brand: #b83e10; --brand-soft: #fff0e4; --brand-hover: #ffdfc6; --brand-strong: #92310d;
+  --brand-vivid: #ff702f; --brand-secondary: #294d77; --brand-secondary-soft: #e6edf6;
+  --lime: #ffc695; --lime-ink: #612b14;
+  --chart-1: #ec642a; --chart-2: #294d77; --chart-3: #4a8491; --chart-4: #8671a4; --chart-5: #d69943;
+  --sidebar: #182d45; --sidebar-foreground: #fff8f2;
+  --sidebar-primary: #ff9458; --sidebar-primary-foreground: #281c16;
+  --sidebar-accent: #294461; --sidebar-accent-foreground: #fff8f2;
+  --sidebar-border: #344b66; --sidebar-ring: #ff9458;
+  --shadow-brasa: 0 4px 18px #ee642422;
+}
+:root.dark[data-unit-theme="delivery"] {
+  --background: #111d2c; --foreground: #f8efe7;
+  --card: #1a2b40; --card-foreground: #f8efe7; --popover: #20344c; --popover-foreground: #f8efe7;
+  --primary: #ff9458; --primary-foreground: #281c16;
+  --secondary: #273c53; --secondary-foreground: #eee9e3;
+  --muted: #273c53; --muted-foreground: #bbc4cf; --accent: #443025; --accent-foreground: #ffb78b;
+  --border: #344960; --input: #4b6076; --ring: #ff9458;
+  --surface-2: #24374e; --surface-3: #2d445e; --surface-hover: #263b53;
+  --text-2: #c3ccd7; --text-3: #a2b0c1;
+  --border-soft: #2e4159; --border-hover: #59718b; --border-strong: #4a617a; --border-active: #ff9458;
+  --brand: #ff9458; --brand-soft: #443025; --brand-hover: #573a28; --brand-strong: #ffb78b;
+  --brand-secondary: #9cbce6; --brand-secondary-soft: #283f5c;
+  --chart-1: #ff9458; --chart-2: #9cbce6; --chart-3: #87c1c7; --chart-4: #c0a9dd; --chart-5: #e5be7e;
+}
+:root[data-unit-theme="delivery"] .shell-sidebar {
+  --text: #fff8f2; --text-2: #c3cfdf; --text-3: #a9b9cd;
+  --surface: #182d45; --surface-2: #294461; --surface-3: #344f6d; --surface-hover: #294461;
+  --border: #344b66; --border-soft: #2b4059; --border-strong: #547091; --border-hover: #6885a6;
+  --brand: #ff9458; --brand-soft: #48372f; --brand-hover: #594132; --ring: #ff9458;
+  --sidebar: #182d45; --sidebar-border: #344b66;
+}
+:root[data-unit-theme="delivery"] [data-tone="orange"],
+:root[data-unit-theme="delivery"] .mise-kpi[data-kind="soon"] {
+  background: linear-gradient(130deg, #ffe0c7, #ffab76); border-color: #f0b185;
+  --text: #452b1c; --text-2: #63432f; --text-3: #70513c;
+}
+:root[data-unit-theme="delivery"] [data-tone="lime"],
+:root[data-unit-theme="delivery"] .mise-kpi[data-kind="labels"] {
+  background: #e2eaf5; border-color: #c4d3e6;
+  --text: #203952; --text-2: #425975; --text-3: #506782;
+}
+:root.dark[data-unit-theme="delivery"] [data-tone="orange"],
+:root.dark[data-unit-theme="delivery"] .mise-kpi[data-kind="soon"] {
+  background: #493025; border-color: #79513b; --text: #ffe1cc; --text-2: #edc6aa; --text-3: #dbb397;
+}
+:root.dark[data-unit-theme="delivery"] [data-tone="lime"],
+:root.dark[data-unit-theme="delivery"] .mise-kpi[data-kind="labels"] {
+  background: #263f5c; border-color: #425f80; --text: #e3edfa; --text-2: #c3d5ee; --text-3: #b0c4df;
+}
+:root[data-unit-theme="delivery"] ::selection { background: #ffd1b0; color: #182d45; }
+
+/* Delivery sidebar: vivid orange is the main surface, navy provides contrast. */
+:root[data-unit-theme="delivery"] .shell-sidebar {
+  --text: #152c46; --text-2: #20354c; --text-3: #334052;
+  --surface: #ff701f; --surface-2: #ff873f; --surface-3: #ff9c60; --surface-hover: #ff873f;
+  --border: #da5716; --border-soft: #ee641b; --border-strong: #a13d11; --border-hover: #773416;
+  --brand: #152c46; --brand-soft: #ff914e; --brand-hover: #ffa16a; --ring: #152c46;
+  --sidebar: #ff701f; --sidebar-border: #df5916;
+  --sidebar-primary: #152c46; --sidebar-primary-foreground: #fff6ed;
+  --sidebar-accent: #ff873f; --sidebar-accent-foreground: #152c46;
+}
+:root[data-unit-theme="delivery"] .phi-sidebar-logo,
+:root[data-unit-theme="delivery"] .phi-compact-logo {
+  filter: brightness(0) saturate(100%) invert(13%) sepia(22%) saturate(1756%) hue-rotate(172deg) brightness(96%) contrast(92%);
+}
+:root[data-unit-theme="delivery"] .phi-compact-nav button[data-active="true"] {
+  color: #fff6ed; background: #152c46; border-color: #152c46;
+}
+:root[data-unit-theme="delivery"] .shell-sidebar .sidebar-nav-scroll {
+  scrollbar-color: #a94317 transparent;
 }
